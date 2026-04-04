@@ -28,7 +28,7 @@ type sarifResult struct {
 	Message struct {
 		Text string `json:"text"`
 	} `json:"message"`
-	Locations []sarifLocation `json:"locations"`
+	Locations           []sarifLocation   `json:"locations"`
 	PartialFingerprints map[string]string `json:"partialFingerprints"`
 }
 
@@ -38,8 +38,8 @@ type sarifLocation struct {
 			URI string `json:"uri"`
 		} `json:"artifactLocation"`
 		Region struct {
-			StartLine int    `json:"startLine"`
-			EndLine   int    `json:"endLine"`
+			StartLine int `json:"startLine"`
+			EndLine   int `json:"endLine"`
 			Snippet   struct {
 				Text string `json:"text"`
 			} `json:"snippet"`
