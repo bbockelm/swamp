@@ -2,9 +2,7 @@ package agent
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"os"
 	"strings"
 	"sync"
 	"time"
@@ -77,10 +75,7 @@ func (e *K8sExecutor) CanPersist() bool {
 
 // AgentReady returns true if the K8s executor is configured.
 func (e *K8sExecutor) AgentReady() bool {
-	if e.cfg.K8sWorkerImage == "" {
-		return false
-	}
-	return true
+	return e.cfg.K8sWorkerImage != ""
 }
 
 // Start performs startup reconciliation and begins the sync loop.
@@ -464,17 +459,4 @@ func parseTolerations(s string) []map[string]string {
 	return result
 }
 
-// readFileString reads a file and returns its trimmed content.
-func readFileString(path string) (string, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return "", err
-	}
-	return strings.TrimSpace(string(data)), nil
-}
 
-// marshalJSON is a convenience for building pod specs.
-func marshalJSON(v any) []byte {
-	data, _ := json.Marshal(v)
-	return data
-}

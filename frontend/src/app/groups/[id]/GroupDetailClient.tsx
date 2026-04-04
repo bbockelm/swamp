@@ -2,12 +2,13 @@
 
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
-import { useParams, useRouter } from 'next/navigation';
+import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 import { GroupManager } from '@/components/GroupManager';
+import { useResolvedParams } from '@/lib/useResolvedParams';
 
 export default function GroupDetailClient() {
-  const { id } = useParams<{ id: string }>();
+  const { id } = useResolvedParams<{ id: string }>('/groups/[id]');
   const router = useRouter();
   const queryClient = useQueryClient();
   const [editing, setEditing] = useState(false);

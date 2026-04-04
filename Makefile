@@ -1,4 +1,4 @@
-.PHONY: help dev dev-backend dev-frontend build build-backend build-frontend build-prod test lint migrate migrate-down migrate-status docker docker-dev clean
+.PHONY: help dev dev-backend dev-frontend build build-backend build-frontend build-prod prod test lint migrate migrate-down migrate-status docker docker-dev clean
 
 DATABASE_URL ?= postgres://swamp:swamp@localhost:5432/swamp?sslmode=disable
 S3_ENDPOINT ?= http://localhost:9000
@@ -38,6 +38,12 @@ build-prod: build-frontend ## Build single production binary with embedded front
 	cp -r frontend/out internal/frontend/dist
 	CGO_ENABLED=0 go build -tags embed_frontend -o bin/swamp-server ./cmd/server
 	rm -rf internal/frontend/dist
+
+prod: build-prod ## Build and run production binary locally (uses current env)
+	@echo "Starting production binary on :$(APP_PORT)..."
+	APP_ENV=production BASE_URL=http://localhost:$(APP_PORT) ./bin/swamp-server
+
+APP_PORT ?= 8080
 
 # --- Database ---
 

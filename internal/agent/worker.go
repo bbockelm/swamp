@@ -123,7 +123,7 @@ func RunWorker(cfg *config.Config) error {
 
 	if err := runWorkerAgent(ctx, cfg, session, workDir, prompt, streamer); err != nil {
 		reportStatus(serverURL, sessionToken, analysisID, "failed", "Agent execution failed (Phase 1): "+err.Error())
-		uploadResults(serverURL, sessionToken, analysisID, outputDir)
+		_ = uploadResults(serverURL, sessionToken, analysisID, outputDir)
 		return err
 	}
 
@@ -132,7 +132,7 @@ func RunWorker(cfg *config.Config) error {
 	stdoutLog := filepath.Join(outputDir, "agent_stdout.log")
 	if info, err := os.Stat(stdoutLog); err != nil || info.Size() == 0 {
 		reportStatus(serverURL, sessionToken, analysisID, "failed", "Agent produced no output (exited successfully but stdout was empty)")
-		uploadResults(serverURL, sessionToken, analysisID, outputDir)
+		_ = uploadResults(serverURL, sessionToken, analysisID, outputDir)
 		return fmt.Errorf("agent produced no output")
 	}
 
@@ -461,8 +461,8 @@ func uploadSingleResult(serverURL, sessionToken, analysisID, filePath, filename 
 
 	var buf bytes.Buffer
 	writer := multipart.NewWriter(&buf)
-	writer.WriteField("analysis_id", analysisID)
-	writer.WriteField("filename", filename)
+	_ = writer.WriteField("analysis_id", analysisID)
+	_ = writer.WriteField("filename", filename)
 
 	part, err := writer.CreateFormFile("file", filename)
 	if err != nil {

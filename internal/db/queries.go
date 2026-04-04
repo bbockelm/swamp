@@ -1107,7 +1107,6 @@ func (q *Queries) ListProjectFindings(ctx context.Context, projectID string, fil
 	if filters.Offset > 0 {
 		query += fmt.Sprintf(" OFFSET $%d", argN)
 		args = append(args, filters.Offset)
-		argN++
 	}
 
 	rows, err := q.pool.Query(ctx, query, args...)
@@ -1175,7 +1174,6 @@ func (q *Queries) CountProjectFindings(ctx context.Context, projectID string, fi
 	if filters.Search != "" {
 		query += fmt.Sprintf(" AND (f.rule_id ILIKE $%d OR f.file_path ILIKE $%d OR f.message ILIKE $%d)", argN, argN, argN)
 		args = append(args, "%"+filters.Search+"%")
-		argN++
 	}
 
 	var count int
@@ -1337,7 +1335,6 @@ func (q *Queries) ListAllFindings(ctx context.Context, userID string, isAdmin bo
 	if filters.Offset > 0 {
 		selectQuery += fmt.Sprintf(" OFFSET $%d", argN)
 		fetchArgs = append(fetchArgs, filters.Offset)
-		argN++
 	}
 
 	rows, err := q.pool.Query(ctx, selectQuery, fetchArgs...)

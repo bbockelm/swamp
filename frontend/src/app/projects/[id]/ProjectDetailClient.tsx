@@ -2,20 +2,21 @@
 
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api, type SoftwarePackage, type Analysis } from '@/lib/api';
-import { useParams, useRouter, useSearchParams } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { useState } from 'react';
 import Link from 'next/link';
 import { AnalysisStatus } from '@/components/AnalysisStatus';
 import { Pagination, paginate } from '@/components/Pagination';
 import { FindingsTable } from '@/components/FindingsTable';
 import { GitBranchInput } from '@/components/GitBranchInput';
+import { useResolvedParams } from '@/lib/useResolvedParams';
 
 const ANALYSES_PAGE_SIZE = 10;
 
 type Tab = 'packages' | 'analyses' | 'findings' | 'api-keys' | 'settings';
 
 export default function ProjectDetailClient() {
-  const { id } = useParams<{ id: string }>();
+  const { id } = useResolvedParams<{ id: string }>('/projects/[id]');
   const router = useRouter();
   const searchParams = useSearchParams();
   const queryClient = useQueryClient();

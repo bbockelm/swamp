@@ -13,7 +13,7 @@ func Handler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/yaml")
 		w.WriteHeader(http.StatusOK)
-		w.Write(specYAML)
+		_, _ = w.Write(specYAML)
 	}
 }
 
@@ -44,6 +44,6 @@ func SwaggerUIHandler(specURL string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(page))
+		_, _ = w.Write([]byte(page))
 	}
 }

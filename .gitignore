@@ -20,6 +20,7 @@ tmp/
 frontend/.next/
 frontend/out/
 frontend/node_modules/
+frontend/tsconfig.tsbuildinfo
 internal/frontend/dist/
 
 # Environment / secrets

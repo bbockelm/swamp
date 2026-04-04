@@ -2,11 +2,12 @@
 
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, type AnalysisResult } from "@/lib/api";
-import { useParams, useRouter } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { AnalysisStatus } from "@/components/AnalysisStatus";
 import { SARIFViewer } from "@/components/SARIFViewer";
 import { MarkdownReport } from "@/components/MarkdownReport";
 import { useEffect, useRef, useState } from "react";
+import { useResolvedParams } from "@/lib/useResolvedParams";
 
 function timeAgo(dateStr: string): string {
   const seconds = Math.floor((Date.now() - new Date(dateStr).getTime()) / 1000);
@@ -21,10 +22,10 @@ function timeAgo(dateStr: string): string {
 }
 
 export default function AnalysisDetailClient() {
-  const { id: projectId, analysisId } = useParams<{
+  const { id: projectId, analysisId } = useResolvedParams<{
     id: string;
     analysisId: string;
-  }>();
+  }>('/projects/[id]/analyses/[analysisId]');
   const queryClient = useQueryClient();
   const router = useRouter();
 

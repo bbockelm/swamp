@@ -148,7 +148,7 @@ func (s *Service) GetSettings(ctx context.Context) models.BackupSettings {
 
 	hours := 0
 	if freq != "" {
-		fmt.Sscanf(freq, "%d", &hours)
+		_, _ = fmt.Sscanf(freq, "%d", &hours)
 	}
 	return models.BackupSettings{
 		BackupFrequencyHours: hours,
@@ -478,7 +478,7 @@ func nullifyAnalysisDEKs(dump []byte) []byte {
 		}
 
 		// Inside COPY block: tab-separated values, end with \. on a line
-		if bytes.Equal(line, []byte("\\.")) || bytes.Equal(line, []byte("\\.")) {
+		if bytes.Equal(line, []byte("\\.")) {
 			inAnalysesCopy = false
 			dekCol, nonceCol = -1, -1
 			continue
