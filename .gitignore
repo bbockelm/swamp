@@ -1,0 +1,43 @@
+# Binaries
+bin/
+tmp/
+/server
+
+# Staging / agent hints
+/reference
+/scripts
+
+# Go
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+
+# Frontend build artifacts
+frontend/.next/
+frontend/out/
+frontend/node_modules/
+internal/frontend/dist/
+
+# Environment / secrets
+.env
+.env.local
+.swamp-*.key
+
+# IDE
+.idea/
+*.swp
+*.swo
+*~
+
+# macOS
+.DS_Store
+
+# Build logs
+build-errors.log
+
+# VSCode stuff
+/swamp.code-workspace

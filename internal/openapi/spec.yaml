@@ -1,0 +1,1335 @@
+openapi: "3.0.3"
+info:
+  title: SWAMP API
+  description: Software Assurance Marketplace — AI-powered security analysis of Git repositories.
+  version: "1.0.0"
+  license:
+    name: MIT
+
+servers:
+  - url: http://localhost:8080
+    description: Development server
+
+tags:
+  - name: auth
+    description: Authentication and session management
+  - name: groups
+    description: User group management
+  - name: projects
+    description: Project management
+  - name: packages
+    description: Software package management (within projects)
+  - name: analyses
+    description: Security analysis runs
+  - name: results
+    description: Analysis result artifacts
+  - name: api-keys
+    description: API key self-service
+  - name: admin
+    description: Administrative endpoints
+  - name: backups
+    description: Backup management
+  - name: health
+    description: Health checks
+
+paths:
+  /healthz:
+    get:
+      tags: [health]
+      summary: Health check
+      operationId: healthCheck
+      responses:
+        "200":
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+
+  # ── Auth ──────────────────────────────────────────────────
+  /api/v1/auth/mode:
+    get:
+      tags: [auth]
+      summary: Get authentication mode
+      operationId: getAuthMode
+      responses:
+        "200":
+          description: Current authentication mode
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  mode:
+                    type: string
+                    enum: [oidc, dev]
+
+  /api/v1/auth/me:
+    get:
+      tags: [auth]
+      summary: Get current session and user
+      operationId: getCurrentSession
+      responses:
+        "200":
+          description: Current session
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SessionInfo"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/auth/logout:
+    post:
+      tags: [auth]
+      summary: Log out
+      operationId: logout
+      responses:
+        "200":
+          description: Logged out
+
+  /api/v1/auth/dev-login:
+    post:
+      tags: [auth]
+      summary: Developer login (dev mode only)
+      operationId: devLogin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username]
+              properties:
+                username:
+                  type: string
+                display_name:
+                  type: string
+                email:
+                  type: string
+                roles:
+                  type: array
+                  items:
+                    type: string
+      responses:
+        "200":
+          description: Logged in
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SessionInfo"
+
+  /api/v1/auth/oidc/login:
+    get:
+      tags: [auth]
+      summary: Initiate OIDC login
+      operationId: oidcLogin
+      responses:
+        "302":
+          description: Redirect to OIDC provider
+
+  /api/v1/auth/oidc/callback:
+    get:
+      tags: [auth]
+      summary: OIDC callback
+      operationId: oidcCallback
+      parameters:
+        - name: code
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: state
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "302":
+          description: Redirect to application
+
+  /api/v1/auth/agree-aup:
+    post:
+      tags: [auth]
+      summary: Accept the Acceptable Use Policy
+      operationId: agreeAUP
+      security:
+        - cookieAuth: []
+      responses:
+        "200":
+          description: AUP accepted
+
+  # ── Groups ────────────────────────────────────────────────
+  /api/v1/groups:
+    get:
+      tags: [groups]
+      summary: List groups the current user owns or belongs to
+      operationId: listGroups
+      security:
+        - cookieAuth: []
+      responses:
+        "200":
+          description: List of groups
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Group"
+    post:
+      tags: [groups]
+      summary: Create a new group
+      operationId: createGroup
+      security:
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GroupCreate"
+      responses:
+        "201":
+          description: Group created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Group"
+
+  /api/v1/groups/{groupID}:
+    parameters:
+      - $ref: "#/components/parameters/groupID"
+    get:
+      tags: [groups]
+      summary: Get group details
+      operationId: getGroup
+      security:
+        - cookieAuth: []
+      responses:
+        "200":
+          description: Group details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Group"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    put:
+      tags: [groups]
+      summary: Update a group
+      operationId: updateGroup
+      security:
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GroupCreate"
+      responses:
+        "200":
+          description: Group updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Group"
+    delete:
+      tags: [groups]
+      summary: Delete a group
+      operationId: deleteGroup
+      security:
+        - cookieAuth: []
+      responses:
+        "204":
+          description: Group deleted
+
+  /api/v1/groups/{groupID}/members:
+    parameters:
+      - $ref: "#/components/parameters/groupID"
+    get:
+      tags: [groups]
+      summary: List group members
+      operationId: listGroupMembers
+      security:
+        - cookieAuth: []
+      responses:
+        "200":
+          description: List of members
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/GroupMember"
+    post:
+      tags: [groups]
+      summary: Add a group member
+      operationId: addGroupMember
+      security:
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [user_id, role]
+              properties:
+                user_id:
+                  type: string
+                  format: uuid
+                role:
+                  type: string
+                  enum: [admin, member]
+      responses:
+        "201":
+          description: Member added
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GroupMember"
+
+  /api/v1/groups/{groupID}/members/{userID}:
+    parameters:
+      - $ref: "#/components/parameters/groupID"
+      - $ref: "#/components/parameters/userID"
+    delete:
+      tags: [groups]
+      summary: Remove a group member
+      operationId: removeGroupMember
+      security:
+        - cookieAuth: []
+      responses:
+        "204":
+          description: Member removed
+
+  /api/v1/groups/{groupID}/invites:
+    parameters:
+      - $ref: "#/components/parameters/groupID"
+    get:
+      tags: [groups]
+      summary: List group invites
+      operationId: listGroupInvites
+      security:
+        - cookieAuth: []
+      responses:
+        "200":
+          description: List of invites
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/GroupInvite"
+    post:
+      tags: [groups]
+      summary: Create a group invite
+      operationId: createGroupInvite
+      security:
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                email:
+                  type: string
+                  format: email
+                role:
+                  type: string
+                  enum: [admin, member]
+                  default: member
+                allows_registration:
+                  type: boolean
+                  default: false
+      responses:
+        "201":
+          description: Invite created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GroupInvite"
+
+  /api/v1/invites/accept:
+    post:
+      tags: [groups]
+      summary: Accept a group invite
+      operationId: acceptGroupInvite
+      security:
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token]
+              properties:
+                token:
+                  type: string
+      responses:
+        "200":
+          description: Invite accepted
+
+  # ── Projects ──────────────────────────────────────────────
+  /api/v1/projects:
+    get:
+      tags: [projects]
+      summary: List projects the current user has access to
+      operationId: listProjects
+      security:
+        - cookieAuth: []
+      responses:
+        "200":
+          description: List of projects
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Project"
+    post:
+      tags: [projects]
+      summary: Create a new project
+      operationId: createProject
+      security:
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProjectCreate"
+      responses:
+        "201":
+          description: Project created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Project"
+
+  /api/v1/projects/{projectID}:
+    parameters:
+      - $ref: "#/components/parameters/projectID"
+    get:
+      tags: [projects]
+      summary: Get project details
+      operationId: getProject
+      security:
+        - cookieAuth: []
+      responses:
+        "200":
+          description: Project details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Project"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    put:
+      tags: [projects]
+      summary: Update a project (admin access required)
+      operationId: updateProject
+      security:
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProjectCreate"
+      responses:
+        "200":
+          description: Project updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Project"
+    delete:
+      tags: [projects]
+      summary: Delete a project (admin access required)
+      operationId: deleteProject
+      security:
+        - cookieAuth: []
+      responses:
+        "204":
+          description: Project deleted
+
+  # ── Packages ──────────────────────────────────────────────
+  /api/v1/projects/{projectID}/packages:
+    parameters:
+      - $ref: "#/components/parameters/projectID"
+    get:
+      tags: [packages]
+      summary: List packages in a project
+      operationId: listPackages
+      security:
+        - cookieAuth: []
+      responses:
+        "200":
+          description: List of packages
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/SoftwarePackage"
+    post:
+      tags: [packages]
+      summary: Add a package to the project (write access)
+      operationId: createPackage
+      security:
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PackageCreate"
+      responses:
+        "201":
+          description: Package created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoftwarePackage"
+
+  /api/v1/projects/{projectID}/packages/{packageID}:
+    parameters:
+      - $ref: "#/components/parameters/projectID"
+      - $ref: "#/components/parameters/packageID"
+    get:
+      tags: [packages]
+      summary: Get a package
+      operationId: getPackage
+      security:
+        - cookieAuth: []
+      responses:
+        "200":
+          description: Package details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoftwarePackage"
+    put:
+      tags: [packages]
+      summary: Update a package
+      operationId: updatePackage
+      security:
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PackageCreate"
+      responses:
+        "200":
+          description: Package updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoftwarePackage"
+    delete:
+      tags: [packages]
+      summary: Delete a package
+      operationId: deletePackage
+      security:
+        - cookieAuth: []
+      responses:
+        "204":
+          description: Package deleted
+
+  # ── Analyses ──────────────────────────────────────────────
+  /api/v1/projects/{projectID}/analyses:
+    parameters:
+      - $ref: "#/components/parameters/projectID"
+    get:
+      tags: [analyses]
+      summary: List analyses for a project
+      operationId: listAnalyses
+      security:
+        - cookieAuth: []
+      responses:
+        "200":
+          description: List of analyses
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Analysis"
+    post:
+      tags: [analyses]
+      summary: Trigger a new analysis (write access)
+      operationId: createAnalysis
+      security:
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [package_ids]
+              properties:
+                package_ids:
+                  type: array
+                  items:
+                    type: string
+                    format: uuid
+                  minItems: 1
+      responses:
+        "201":
+          description: Analysis created and queued
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Analysis"
+
+  /api/v1/projects/{projectID}/analyses/{analysisID}:
+    parameters:
+      - $ref: "#/components/parameters/projectID"
+      - $ref: "#/components/parameters/analysisID"
+    get:
+      tags: [analyses]
+      summary: Get analysis details
+      operationId: getAnalysis
+      security:
+        - cookieAuth: []
+      responses:
+        "200":
+          description: Analysis details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Analysis"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/projects/{projectID}/analyses/{analysisID}/cancel:
+    parameters:
+      - $ref: "#/components/parameters/projectID"
+      - $ref: "#/components/parameters/analysisID"
+    post:
+      tags: [analyses]
+      summary: Cancel a running analysis
+      operationId: cancelAnalysis
+      security:
+        - cookieAuth: []
+      responses:
+        "200":
+          description: Analysis cancelled
+
+  /api/v1/projects/{projectID}/analyses/{analysisID}/results:
+    parameters:
+      - $ref: "#/components/parameters/projectID"
+      - $ref: "#/components/parameters/analysisID"
+    get:
+      tags: [results]
+      summary: List result artifacts for an analysis
+      operationId: listResults
+      security:
+        - cookieAuth: []
+      responses:
+        "200":
+          description: List of results
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AnalysisResult"
+
+  /api/v1/projects/{projectID}/analyses/{analysisID}/results/{resultID}:
+    parameters:
+      - $ref: "#/components/parameters/projectID"
+      - $ref: "#/components/parameters/analysisID"
+      - $ref: "#/components/parameters/resultID"
+    get:
+      tags: [results]
+      summary: Get result metadata
+      operationId: getResult
+      security:
+        - cookieAuth: []
+      responses:
+        "200":
+          description: Result details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AnalysisResult"
+
+  /api/v1/projects/{projectID}/analyses/{analysisID}/results/{resultID}/download:
+    parameters:
+      - $ref: "#/components/parameters/projectID"
+      - $ref: "#/components/parameters/analysisID"
+      - $ref: "#/components/parameters/resultID"
+    get:
+      tags: [results]
+      summary: Download a result artifact
+      operationId: downloadResult
+      security:
+        - cookieAuth: []
+      responses:
+        "200":
+          description: Artifact file
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+
+  # ── API Keys ──────────────────────────────────────────────
+  /api/v1/api-keys:
+    get:
+      tags: [api-keys]
+      summary: List your API keys
+      operationId: listAPIKeys
+      security:
+        - cookieAuth: []
+      responses:
+        "200":
+          description: List of keys
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/APIKey"
+    post:
+      tags: [api-keys]
+      summary: Create an API key
+      operationId: createAPIKey
+      security:
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name:
+                  type: string
+                expires_in_days:
+                  type: integer
+                  minimum: 1
+      responses:
+        "201":
+          description: API key created (secret is only shown once)
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/APIKey"
+                  - type: object
+                    properties:
+                      secret:
+                        type: string
+                        description: Full key (only returned at creation time)
+
+  /api/v1/api-keys/{keyID}:
+    parameters:
+      - $ref: "#/components/parameters/keyID"
+    delete:
+      tags: [api-keys]
+      summary: Revoke an API key
+      operationId: revokeAPIKey
+      security:
+        - cookieAuth: []
+      responses:
+        "204":
+          description: Key revoked
+
+  # ── Admin ─────────────────────────────────────────────────
+  /api/v1/admin/users:
+    get:
+      tags: [admin]
+      summary: List all users
+      operationId: listUsers
+      security:
+        - cookieAuth: []
+      responses:
+        "200":
+          description: List of users
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/User"
+
+  /api/v1/admin/users/{userID}:
+    parameters:
+      - $ref: "#/components/parameters/userID"
+    get:
+      tags: [admin]
+      summary: Get a user
+      operationId: getUser
+      security:
+        - cookieAuth: []
+      responses:
+        "200":
+          description: User details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+    put:
+      tags: [admin]
+      summary: Update a user
+      operationId: updateUser
+      security:
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                display_name:
+                  type: string
+                email:
+                  type: string
+                status:
+                  type: string
+                  enum: [active, suspended, disabled]
+      responses:
+        "200":
+          description: User updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+    delete:
+      tags: [admin]
+      summary: Delete a user
+      operationId: deleteUser
+      security:
+        - cookieAuth: []
+      responses:
+        "204":
+          description: User deleted
+
+  /api/v1/admin/users/{userID}/roles:
+    parameters:
+      - $ref: "#/components/parameters/userID"
+    post:
+      tags: [admin]
+      summary: Add a role to a user
+      operationId: addUserRole
+      security:
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [role]
+              properties:
+                role:
+                  type: string
+      responses:
+        "201":
+          description: Role added
+
+  /api/v1/admin/users/{userID}/roles/{role}:
+    parameters:
+      - $ref: "#/components/parameters/userID"
+      - name: role
+        in: path
+        required: true
+        schema:
+          type: string
+    delete:
+      tags: [admin]
+      summary: Remove a role from a user
+      operationId: removeUserRole
+      security:
+        - cookieAuth: []
+      responses:
+        "204":
+          description: Role removed
+
+  # ── Backups ───────────────────────────────────────────────
+  /api/v1/admin/backups:
+    get:
+      tags: [backups]
+      summary: List backups
+      operationId: listBackups
+      security:
+        - cookieAuth: []
+      responses:
+        "200":
+          description: List of backups
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Backup"
+
+  /api/v1/admin/backups/trigger:
+    post:
+      tags: [backups]
+      summary: Trigger a new backup
+      operationId: triggerBackup
+      security:
+        - cookieAuth: []
+      responses:
+        "202":
+          description: Backup started
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Backup"
+
+components:
+  securitySchemes:
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: swamp_session
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: API key in Authorization header
+
+  parameters:
+    groupID:
+      name: groupID
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    projectID:
+      name: projectID
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    packageID:
+      name: packageID
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    analysisID:
+      name: analysisID
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    resultID:
+      name: resultID
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    keyID:
+      name: keyID
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    userID:
+      name: userID
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+
+  responses:
+    Unauthorized:
+      description: Not authenticated
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Forbidden:
+      description: Not authorized
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+
+  schemas:
+    Error:
+      type: object
+      properties:
+        error:
+          type: string
+
+    SessionInfo:
+      type: object
+      properties:
+        user:
+          $ref: "#/components/schemas/User"
+        roles:
+          type: array
+          items:
+            type: string
+        aup_agreed:
+          type: boolean
+        expires_at:
+          type: string
+          format: date-time
+
+    User:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        display_name:
+          type: string
+        email:
+          type: string
+          format: email
+        status:
+          type: string
+          enum: [active, suspended, disabled]
+        last_login:
+          type: string
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    Group:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        description:
+          type: string
+        owner_id:
+          type: string
+          format: uuid
+        admin_group_id:
+          type: string
+          format: uuid
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    GroupCreate:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+
+    GroupMember:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        group_id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+        role:
+          type: string
+          enum: [admin, member]
+        added_by:
+          type: string
+          format: uuid
+        created_at:
+          type: string
+          format: date-time
+
+    GroupInvite:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        group_id:
+          type: string
+          format: uuid
+        token:
+          type: string
+          description: Returned only at creation time
+        invited_by:
+          type: string
+          format: uuid
+        email:
+          type: string
+          format: email
+        role:
+          type: string
+        allows_registration:
+          type: boolean
+        used:
+          type: boolean
+        expires_at:
+          type: string
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+
+    Project:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        description:
+          type: string
+        owner_id:
+          type: string
+          format: uuid
+        read_group_id:
+          type: string
+          format: uuid
+        write_group_id:
+          type: string
+          format: uuid
+        admin_group_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [active, archived]
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    ProjectCreate:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+
+    SoftwarePackage:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        project_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        git_url:
+          type: string
+          format: uri
+        git_branch:
+          type: string
+        git_commit:
+          type: string
+        analysis_prompt:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    PackageCreate:
+      type: object
+      required: [name, git_url]
+      properties:
+        name:
+          type: string
+        git_url:
+          type: string
+          format: uri
+        git_branch:
+          type: string
+          default: main
+        analysis_prompt:
+          type: string
+
+    Analysis:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        project_id:
+          type: string
+          format: uuid
+        triggered_by:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [pending, running, completed, failed, cancelled]
+        status_detail:
+          type: string
+        agent_model:
+          type: string
+        environment:
+          type: string
+        started_at:
+          type: string
+          format: date-time
+        completed_at:
+          type: string
+          format: date-time
+        error_message:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    AnalysisResult:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        analysis_id:
+          type: string
+          format: uuid
+        package_id:
+          type: string
+          format: uuid
+        result_type:
+          type: string
+          enum: [sarif, markdown, log, archive]
+        s3_key:
+          type: string
+        filename:
+          type: string
+        content_type:
+          type: string
+        file_size:
+          type: integer
+          format: int64
+        summary:
+          type: string
+        finding_count:
+          type: integer
+        severity_counts:
+          type: object
+          properties:
+            high:
+              type: integer
+            medium:
+              type: integer
+            low:
+              type: integer
+        created_at:
+          type: string
+          format: date-time
+
+    APIKey:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        key_prefix:
+          type: string
+        user_id:
+          type: string
+          format: uuid
+        created_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+        revoked_at:
+          type: string
+          format: date-time
+        last_used_at:
+          type: string
+          format: date-time
+        revoked:
+          type: boolean
+
+    Backup:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        filename:
+          type: string
+        s3_key:
+          type: string
+        status:
+          type: string
+          enum: [pending, running, completed, failed]
+        status_detail:
+          type: string
+        error_msg:
+          type: string
+        initiated_by:
+          type: string
+          format: uuid
+        encrypted:
+          type: boolean
+        size_bytes:
+          type: integer
+          format: int64
+        checksum:
+          type: string
+        duration_secs:
+          type: integer
+        started_at:
+          type: string
+          format: date-time
+        completed_at:
+          type: string
+          format: date-time
+        created_at:
+          type: string
+          format: date-time

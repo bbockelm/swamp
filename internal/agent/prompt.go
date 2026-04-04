@@ -1,0 +1,217 @@
+package agent
+
+import (
+	"fmt"
+	"strings"
+
+	"github.com/bbockelm/swamp/internal/models"
+)
+
+var phase1Template = `You are a security analyst performing a comprehensive vulnerability assessment.
+
+## Target Repository
+- Repository: %s
+- Branch: %s
+%s
+
+## Custom Instructions
+%s
+%s
+## Your Task
+1. Clone the repository and thoroughly review the codebase.
+2. Immediately after cloning, record the exact commit SHA being analyzed:
+   Run ` + "`git rev-parse HEAD`" + ` from inside the cloned repository directory
+   and write the full 40-character SHA to ` + "`output/git_sha.txt`" + ` (just the SHA, no newline or extra text).
+3. Identify security vulnerabilities across the following categories:
+   - OWASP Top 10
+   - CWE categories (buffer overflows, race conditions, path traversal, command injection, etc.)
+   - Dependency vulnerabilities (outdated packages, known CVEs)
+   - Secrets in code (API keys, passwords, tokens, private keys)
+   - Authentication and authorization issues
+   - Cryptographic weaknesses
+4. For each vulnerability found, provide:
+   - Severity level (critical, high, medium, low, informational)
+   - CWE identifier if applicable
+   - Exact file location (file path + line number)
+   - Description of the vulnerability
+   - Recommended fix
+5. Output your findings in three formats:
+   a. A SARIF file at ` + "`output/results.sarif`" + ` following the SARIF 2.1.0 specification
+   b. A Markdown summary at ` + "`output/report.md`" + ` with an executive summary, findings table, and detailed descriptions
+   c. An analyst notes file at ` + "`output/notes.md`" + ` (see below)
+
+## Analyst Notes (output/notes.md)
+Write concise notes about this project that would help a future security analyst reviewing this codebase.
+Include:
+- Key architectural observations (frameworks, auth patterns, data flow)
+- Areas of the code that deserve deeper review in future runs
+- Any suspicious patterns that weren't conclusive enough to report as findings
+- Notes about the build system, dependencies, or deployment model that affect security posture
+- What you focused on and what you did NOT have time to review
+
+Keep it under 2000 words. These notes will be provided to future analysis runs for continuity.
+
+Be thorough but precise. Only report genuine vulnerabilities in the SARIF/report, not style issues or theoretical concerns.
+Focus on finding NEW and DIFFERENT issues not already listed in the prior findings below.`
+
+var phase2Template = `You are a security researcher validating previously identified vulnerabilities.
+
+## Context
+Review the SARIF findings at output/results.sarif and the report at output/report.md.
+
+## Your Task
+1. For each HIGH and CRITICAL severity finding in the SARIF file:
+   a. Determine if the vulnerability is exploitable in practice
+   b. Write a minimal proof-of-concept exploit demonstrating the vulnerability
+   c. Place POC files in output/exploits/ (named by finding ID)
+   d. Document the exploitation steps
+2. Update output/report.md:
+   - Mark findings as CONFIRMED (exploit works), LIKELY (reasonable but not demonstrated), or UNCONFIRMED (could not reproduce)
+   - For each validated finding, describe the POC and impact
+   - Add an "Exploit Validation" section
+3. Update output/results.sarif:
+   - Add properties to each result indicating validation status
+
+Only attempt safe, non-destructive proof-of-concept exploits.
+Do NOT attempt exploits against external systems.
+This analysis is for defensive purposes only.`
+
+// formatAnalysisContext builds the "Prior Analysis Context" prompt section
+// from open findings, user annotations, and notes from recent runs.
+func formatAnalysisContext(ac *models.AnalysisContext) string {
+	if ac == nil {
+		return ""
+	}
+
+	var sb strings.Builder
+
+	// Prior notes from recent runs.
+	if len(ac.PriorNotes) > 0 {
+		sb.WriteString("\n## Analyst Notes from Prior Runs\n")
+		sb.WriteString("The following notes were written by the analyst in previous runs of this project. ")
+		sb.WriteString("Use them to build on prior work and avoid re-treading the same ground.\n\n")
+		for i, note := range ac.PriorNotes {
+			sb.WriteString(fmt.Sprintf("### Run %d (most recent first)\n", i+1))
+			// Truncate very long notes to avoid blowing up the context window.
+			if len(note) > 4000 {
+				note = note[:4000] + "\n... (truncated)"
+			}
+			sb.WriteString(note)
+			sb.WriteString("\n\n")
+		}
+	}
+
+	// Open findings from prior analyses.
+	if len(ac.OpenFindings) > 0 {
+		sb.WriteString("\n## Known Open Findings (from prior analyses)\n")
+		sb.WriteString("These vulnerabilities have already been identified. Do NOT re-report them unless you have ")
+		sb.WriteString("significant new information. Instead, focus your effort on finding NEW vulnerabilities.\n\n")
+		sb.WriteString("| Severity | Rule | File:Line | Status | Message |\n")
+		sb.WriteString("|----------|------|-----------|--------|---------|\n")
+		for _, f := range ac.OpenFindings {
+			level := f.Level
+			switch level {
+			case "error":
+				level = "HIGH"
+			case "warning":
+				level = "MEDIUM"
+			case "note":
+				level = "LOW"
+			}
+			loc := f.FilePath
+			if f.StartLine > 0 {
+				loc = fmt.Sprintf("%s:%d", f.FilePath, f.StartLine)
+			}
+			msg := f.Message
+			if len(msg) > 120 {
+				msg = msg[:120] + "…"
+			}
+			annotation := f.Status
+			if f.Note != "" {
+				annotation += " — " + f.Note
+			}
+			sb.WriteString(fmt.Sprintf("| %s | %s | %s | %s | %s |\n", level, f.RuleID, loc, annotation, msg))
+		}
+		sb.WriteString("\n")
+	}
+
+	return sb.String()
+}
+
+// BuildPrompt constructs the analysis prompt for a given phase.
+func BuildPrompt(pkg *models.SoftwarePackage, phase string, analysisPrompt string, analysisCtx *models.AnalysisContext) string {
+	commitLine := ""
+	if pkg.GitCommit != "" {
+		commitLine = fmt.Sprintf("- Commit: %s", pkg.GitCommit)
+	}
+
+	customPrompt := strings.TrimSpace(pkg.AnalysisPrompt)
+	if ap := strings.TrimSpace(analysisPrompt); ap != "" {
+		if customPrompt != "" {
+			customPrompt += "\n\n" + ap
+		} else {
+			customPrompt = ap
+		}
+	}
+	if customPrompt == "" {
+		customPrompt = "No additional instructions."
+	}
+
+	switch phase {
+	case "phase2":
+		return phase2Template
+	default:
+		contextSection := formatAnalysisContext(analysisCtx)
+		return fmt.Sprintf(
+			phase1Template,
+			pkg.GitURL,
+			pkg.GitBranch,
+			commitLine,
+			customPrompt,
+			contextSection,
+		)
+	}
+}
+
+// BuildMultiPackagePrompt builds a prompt for analyzing multiple packages at once.
+func BuildMultiPackagePrompt(packages []models.SoftwarePackage, analysisPrompt string, analysisCtx *models.AnalysisContext) string {
+	var sb strings.Builder
+	sb.WriteString("You are a security analyst performing a comprehensive vulnerability assessment.\n\n")
+	sb.WriteString("## Target Repositories\n\n")
+
+	for i, pkg := range packages {
+		sb.WriteString(fmt.Sprintf("### Package %d: %s\n", i+1, pkg.Name))
+		sb.WriteString(fmt.Sprintf("- Repository: %s\n", pkg.GitURL))
+		sb.WriteString(fmt.Sprintf("- Branch: %s\n", pkg.GitBranch))
+		if pkg.GitCommit != "" {
+			sb.WriteString(fmt.Sprintf("- Commit: %s\n", pkg.GitCommit))
+		}
+		if pkg.AnalysisPrompt != "" {
+			sb.WriteString(fmt.Sprintf("- Special instructions: %s\n", pkg.AnalysisPrompt))
+		}
+		sb.WriteString("\n")
+	}
+
+	if ap := strings.TrimSpace(analysisPrompt); ap != "" {
+		sb.WriteString("## Additional Instructions\n")
+		sb.WriteString(ap)
+		sb.WriteString("\n\n")
+	}
+
+	// Inject prior context.
+	sb.WriteString(formatAnalysisContext(analysisCtx))
+
+	sb.WriteString("## Your Task\n")
+	sb.WriteString(`1. Clone each repository and thoroughly review the codebases.
+2. Identify security vulnerabilities (see OWASP Top 10, CWE categories, dependency vulnerabilities, secrets, auth issues, crypto weaknesses).
+3. For each vulnerability, provide severity, CWE ID, file location, description, and recommended fix.
+4. Output findings:
+   a. SARIF file at output/results.sarif (SARIF 2.1.0)
+   b. Markdown summary at output/report.md
+   c. Analyst notes at output/notes.md (key observations, areas needing deeper review, what you focused on vs skipped)
+
+Focus on finding NEW and DIFFERENT issues not already listed in the prior findings above.
+Be thorough but precise. Only report genuine vulnerabilities.`)
+
+	return sb.String()
+}

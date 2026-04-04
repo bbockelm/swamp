@@ -1,0 +1,106 @@
+# NetworkPolicy for SWAMP analysis worker pods.
+#
+# These pods run untrusted code (Claude AI agent analyzing arbitrary repos),
+# so network access is tightly restricted:
+# - Ingress: DENY ALL (workers don't serve traffic)
+# - Egress: Allow only:
+#   1. DNS resolution (kube-dns)
+#   2. SWAMP server (for streaming output, uploading results, and
+#      Anthropic API proxy — the real API key never leaves the server)
+#   3. GitHub/GitLab (for cloning repos)
+#
+# Note: Workers do NOT contact api.anthropic.com directly. All Anthropic
+# API calls are proxied through the SWAMP server at
+# /api/v1/internal/worker/anthropic, which injects the real API key
+# server-side. Workers authenticate to the proxy with their session token.
+#
+# For external services, we use CIDR 0.0.0.0/0 on HTTPS port only,
+# since we can't resolve DNS names in NetworkPolicy.
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: swamp-worker-default-deny
+  namespace: swamp
+  labels:
+    app.kubernetes.io/name: swamp
+    app.kubernetes.io/component: network-policy
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: swamp-worker
+  policyTypes:
+    - Ingress
+    - Egress
+  # Deny all ingress — workers never accept incoming connections.
+  ingress: []
+  egress:
+    # 1. DNS resolution (both TCP and UDP).
+    - to:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+
+    # 2. HTTPS egress — needed for:
+    #    - Git hosting services (github.com, gitlab.com, etc.)
+    #    Note: Anthropic API access is proxied through the SWAMP server
+    #    (rule 3 below), so workers don't need direct api.anthropic.com.
+    #
+    #    If your cluster supports FQDN-based policies (e.g., Cilium),
+    #    you can further restrict this to only git hosting domains.
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            # Block access to cluster-internal IPs and cloud metadata.
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+              - 169.254.169.254/32   # AWS/GCP metadata service
+      ports:
+        - protocol: TCP
+          port: 443
+        - protocol: TCP
+          port: 80
+
+    # 3. Allow access to the SWAMP server within the cluster.
+    #    Adjust the selector if your server runs in a different namespace.
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: swamp-server
+      ports:
+        - protocol: TCP
+          port: 8080
+
+---
+# NetworkPolicy for the SWAMP server itself — allow ingress from workers.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: swamp-server-allow-worker-ingress
+  namespace: swamp
+  labels:
+    app.kubernetes.io/name: swamp
+    app.kubernetes.io/component: network-policy
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: swamp-server
+  policyTypes:
+    - Ingress
+  ingress:
+    # Allow worker pods to reach the server on port 8080.
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: swamp-worker
+      ports:
+        - protocol: TCP
+          port: 8080

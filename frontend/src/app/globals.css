@@ -1,0 +1,54 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --foreground: #171717;
+  --background: #ffffff;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --foreground: #ededed;
+    --background: #0a0a0a;
+  }
+}
+
+body {
+  color: var(--foreground);
+  background: var(--background);
+  font-family: system-ui, -apple-system, sans-serif;
+}
+
+@media print {
+  body {
+    background: white;
+    color: black;
+  }
+  /* Hide sidebar and navigation */
+  nav, aside, [data-sidebar] {
+    display: none !important;
+  }
+  /* Remove sidebar spacing so content fills the page */
+  .flex.min-h-screen {
+    display: block;
+  }
+  /* Let content flow naturally */
+  main, [class*="flex-1"] {
+    margin: 0;
+    padding: 0;
+    max-width: 100%;
+  }
+  /* Allow content to break across pages */
+  .prose, .prose-sm {
+    max-height: none !important;
+    overflow: visible !important;
+  }
+  /* Page breaks: avoid splitting headings or table rows */
+  h1, h2, h3, h4, h5, h6 {
+    break-after: avoid;
+  }
+  tr {
+    break-inside: avoid;
+  }
+}

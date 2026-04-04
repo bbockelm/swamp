@@ -1,0 +1,64 @@
+# RBAC for the SWAMP server to manage analysis worker pods.
+#
+# The server needs permission to create, list, get, and delete pods
+# in its namespace. This uses a minimal Role (not ClusterRole) scoped
+# to the swamp namespace only.
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: swamp-server
+  namespace: swamp
+  labels:
+    app.kubernetes.io/name: swamp-server
+    app.kubernetes.io/component: server
+
+---
+# Minimal Role: only pod management in this namespace.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: swamp-pod-manager
+  namespace: swamp
+  labels:
+    app.kubernetes.io/name: swamp
+    app.kubernetes.io/component: rbac
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["create", "get", "list", "watch", "delete"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: swamp-server-pod-manager
+  namespace: swamp
+  labels:
+    app.kubernetes.io/name: swamp
+    app.kubernetes.io/component: rbac
+subjects:
+  - kind: ServiceAccount
+    name: swamp-server
+    namespace: swamp
+roleRef:
+  kind: Role
+  name: swamp-pod-manager
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# Worker service account — has NO permissions.
+# automountServiceAccountToken is disabled in the pod spec, so the
+# worker pod has zero Kubernetes API access.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: swamp-worker
+  namespace: swamp
+  labels:
+    app.kubernetes.io/name: swamp-worker
+    app.kubernetes.io/component: worker
+automountServiceAccountToken: false

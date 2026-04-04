@@ -1,0 +1,36 @@
+FROM ubuntu:22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y \
+    postgresql postgresql-client \
+    curl wget ca-certificates gnupg \
+    supervisor \
+    python3 \
+    && mkdir -p /etc/apt/keyrings \
+    && curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg \
+    && echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_22.x nodistro main" > /etc/apt/sources.list.d/nodesource.list \
+    && apt-get update \
+    && apt-get install -y nodejs \
+    && npm install -g @anthropic-ai/claude-code \
+    && npm cache clean --force \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install MinIO
+RUN curl -fsSL https://dl.min.io/server/minio/release/linux-amd64/minio -o /usr/local/bin/minio \
+    && chmod +x /usr/local/bin/minio
+
+# Install MinIO Client
+RUN curl -fsSL https://dl.min.io/client/mc/release/linux-amd64/mc -o /usr/local/bin/mc \
+    && chmod +x /usr/local/bin/mc
+
+WORKDIR /app
+
+COPY --from=swamp:latest /app/swamp-server /app/swamp-server
+COPY deploy/dev/supervisord.conf /etc/supervisor/conf.d/swamp.conf
+
+VOLUME ["/var/lib/postgresql/data", "/data/minio"]
+
+EXPOSE 8080 5432 9000
+
+CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/conf.d/swamp.conf"]
