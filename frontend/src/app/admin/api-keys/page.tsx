@@ -143,7 +143,7 @@ export default function AdminAPIKeysPage() {
             </div>
             {createKey.isError && (
               <p className="text-sm text-red-600">
-                Error: {(createKey.error as Error).message}
+                Error: {createKey.error?.message || 'An unexpected error occurred'}
               </p>
             )}
           </form>

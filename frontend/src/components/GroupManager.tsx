@@ -198,7 +198,7 @@ function MembersSection({ groupId }: { groupId: string }) {
 
       {addMutation.isError && (
         <p className="text-sm text-red-600 mb-3">
-          Error: {(addMutation.error as Error).message}
+          Error: {addMutation.error?.message || 'An unexpected error occurred'}
         </p>
       )}
 
@@ -329,7 +329,7 @@ function InvitesSection({ groupId }: { groupId: string }) {
 
       {createMutation.isError && (
         <p className="text-sm text-red-600 mb-3">
-          Error: {(createMutation.error as Error).message}
+          Error: {createMutation.error?.message || 'An unexpected error occurred'}
         </p>
       )}
 

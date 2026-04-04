@@ -76,7 +76,7 @@ export function SARIFViewer({
         }
         setFindings(map);
       })
-      .catch(() => { /* linking is best-effort */ });
+      .catch((err) => { console.warn('Failed to load findings for linking:', err); });
   }, [projectId, analysisId]);
 
   if (loading) return <p className="text-sm text-gray-500">Loading SARIF...</p>;

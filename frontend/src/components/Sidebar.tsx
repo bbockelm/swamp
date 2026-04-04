@@ -124,7 +124,7 @@ export function Sidebar({ roles = [], userName }: SidebarProps) {
           )}
           <button
             onClick={() => {
-              fetch("/api/v1/auth/logout", { method: "POST" }).then(() => {
+              fetch("/api/v1/auth/logout", { method: "POST" }).finally(() => {
                 window.location.href = "/";
               });
             }}

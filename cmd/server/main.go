@@ -102,6 +102,13 @@ func run() error {
 	h.SetBackupService(backupSvc)
 	h.SetExecutor(exec)
 
+	// Clean up any backups stuck in "running" state from previous server instances,
+	// then start periodic reconciliation loop.
+	if err := backupSvc.ReconcileStaleBackups(ctx); err != nil {
+		log.Error().Err(err).Msg("Failed to reconcile stale backups")
+	}
+	backupSvc.StartReconcileLoop(ctx)
+
 	// Executor lifecycle: mark stale jobs and start sync loop.
 	exec.Start(ctx)
 

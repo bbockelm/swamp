@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import { Suspense } from 'react';
 import './globals.css';
 import { Providers } from './providers';
 import { AppShell } from '@/components/AppShell';
@@ -17,7 +18,9 @@ export default function RootLayout({
     <html lang="en">
       <body>
         <Providers>
-          <AppShell>{children}</AppShell>
+          <Suspense fallback={<div className="min-h-screen flex items-center justify-center text-gray-400">Loading...</div>}>
+            <AppShell>{children}</AppShell>
+          </Suspense>
         </Providers>
       </body>
     </html>

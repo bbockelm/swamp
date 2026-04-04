@@ -54,7 +54,7 @@ export default function NewGroupPage() {
         </div>
         {mutation.isError && (
           <p className="text-red-600 text-sm">
-            Error: {(mutation.error as Error).message}
+            Error: {mutation.error?.message || 'An unexpected error occurred'}
           </p>
         )}
         <div className="flex gap-3">

@@ -750,7 +750,7 @@ function ProviderKeysTab({ projectId }: { projectId: string }) {
           </div>
           {createMutation.isError && (
             <p className="text-red-600 text-sm">
-              {(createMutation.error as Error).message}
+              {createMutation.error?.message || 'An unexpected error occurred'}
             </p>
           )}
           <div className="flex gap-2">

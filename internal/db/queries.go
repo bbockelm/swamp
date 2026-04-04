@@ -1625,6 +1625,31 @@ func (q *Queries) DeleteFailedBackups(ctx context.Context) (int64, error) {
 	return tag.RowsAffected(), nil
 }
 
+// MarkStaleRunningBackupsFailed marks backups stuck in "running" status as failed
+// if they were started more than the given threshold ago. Backups in the exclude
+// list are skipped (these are actively being processed by this server instance).
+func (q *Queries) MarkStaleRunningBackupsFailed(ctx context.Context, olderThan time.Duration, excludeIDs []string) (int64, error) {
+	cutoff := time.Now().Add(-olderThan)
+
+	// Build query with optional exclusion
+	query := `
+		UPDATE backups 
+		SET status='failed', error_msg='Backup timed out or server restarted', completed_at=NOW()
+		WHERE status='running' AND started_at < $1`
+	args := []any{cutoff}
+
+	if len(excludeIDs) > 0 {
+		query += ` AND id != ALL($2)`
+		args = append(args, excludeIDs)
+	}
+
+	tag, err := q.pool.Exec(ctx, query, args...)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
+}
+
 // ============================================================
 // Object Hashes (for incremental backup)
 // ============================================================

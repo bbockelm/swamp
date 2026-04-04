@@ -1,7 +1,7 @@
 'use client';
 
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { usePathname, useRouter } from 'next/navigation';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useState, useEffect } from 'react';
 import { Sidebar } from './Sidebar';
 import { api } from '@/lib/api';
@@ -10,6 +10,7 @@ const publicPaths = ['/login'];
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
+  const searchParams = useSearchParams();
   const router = useRouter();
   const queryClient = useQueryClient();
   const [agreeing, setAgreeing] = useState(false);
@@ -42,12 +43,16 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const needsAup = isAuthenticated && !session?.aup_agreed;
   const roles = session?.roles ?? [];
 
+  // Build full URL with query string for return_to
+  const search = searchParams.toString();
+  const fullPath = search ? `${pathname}?${search}` : pathname;
+
   // Redirect unauthenticated users to login (must be in useEffect to avoid setState during render)
   useEffect(() => {
     if (!isLoading && !isAuthenticated && !isPublic) {
-      router.replace(`/login?return_to=${encodeURIComponent(pathname)}`);
+      router.replace(`/login?return_to=${encodeURIComponent(fullPath)}`);
     }
-  }, [isLoading, isAuthenticated, isPublic, pathname, router]);
+  }, [isLoading, isAuthenticated, isPublic, fullPath, router]);
 
   // Don't gate public pages
   if (isPublic) {

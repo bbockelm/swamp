@@ -440,7 +440,7 @@ export default function AdminUsersPage() {
           </form>
           {createUser.isError && (
             <p className="mt-2 text-sm text-red-600">
-              Error: {(createUser.error as Error).message}
+              Error: {createUser.error?.message || 'An unexpected error occurred'}
             </p>
           )}
         </div>

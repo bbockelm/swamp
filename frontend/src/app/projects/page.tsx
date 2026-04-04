@@ -341,7 +341,7 @@ export default function ProjectsPage() {
             </div>
             {createProject.isError && (
               <p className="text-sm text-red-600">
-                Error: {(createProject.error as Error).message}
+                Error: {createProject.error?.message || 'An unexpected error occurred'}
               </p>
             )}
           </form>
@@ -676,7 +676,7 @@ function PackagesTab({ projectId }: { projectId: string }) {
           </button>
           {createMutation.isError && (
             <p className="text-sm text-red-600">
-              {(createMutation.error as Error).message}
+              {createMutation.error?.message || 'An unexpected error occurred'}
             </p>
           )}
         </form>

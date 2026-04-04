@@ -96,7 +96,7 @@ export default function GroupsPage() {
             </div>
             {createGroup.isError && (
               <p className="text-sm text-red-600">
-                Error: {(createGroup.error as Error).message}
+                Error: {createGroup.error?.message || 'An unexpected error occurred'}
               </p>
             )}
           </form>

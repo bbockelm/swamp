@@ -13,6 +13,7 @@ import (
 	"io"
 	"os/exec"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -34,6 +35,7 @@ type Service struct {
 	enc              *crypto.Encryptor
 	masterKeyHex     string
 	generalBackupKey []byte
+	activeBackups    sync.Map // tracks backup IDs currently being processed
 }
 
 // NewService creates a backup service.
@@ -46,6 +48,56 @@ func NewService(cfg *config.Config, queries *db.Queries, store *storage.Store, e
 		}
 	}
 	return s
+}
+
+// staleBackupThreshold is how long a backup can be "running" before we consider it stale.
+// This avoids race conditions with legitimately running backups.
+const staleBackupThreshold = 10 * time.Minute
+
+// reconcileInterval is how often the periodic reconciliation runs.
+const reconcileInterval = 5 * time.Minute
+
+// ReconcileStaleBackups marks backups stuck in "running" status as failed
+// if they were started more than staleBackupThreshold ago AND are not
+// actively being processed by this server instance.
+func (s *Service) ReconcileStaleBackups(ctx context.Context) error {
+	// Collect active backup IDs to exclude from reconciliation.
+	var activeIDs []string
+	s.activeBackups.Range(func(key, _ any) bool {
+		if id, ok := key.(string); ok {
+			activeIDs = append(activeIDs, id)
+		}
+		return true
+	})
+
+	count, err := s.queries.MarkStaleRunningBackupsFailed(ctx, staleBackupThreshold, activeIDs)
+	if err != nil {
+		return fmt.Errorf("marking stale backups failed: %w", err)
+	}
+	if count > 0 {
+		log.Info().Int64("count", count).Msg("Marked stale running backups as failed")
+	}
+	return nil
+}
+
+// StartReconcileLoop starts a background goroutine that periodically reconciles
+// stale backups. It runs every reconcileInterval (5 minutes).
+func (s *Service) StartReconcileLoop(ctx context.Context) {
+	go func() {
+		ticker := time.NewTicker(reconcileInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				if err := s.ReconcileStaleBackups(ctx); err != nil {
+					log.Error().Err(err).Msg("Periodic backup reconciliation failed")
+				}
+			}
+		}
+	}()
+	log.Info().Dur("interval", reconcileInterval).Msg("Started backup reconciliation loop")
 }
 
 // GeneralBackupKeyHex returns the hex-encoded general backup key.
@@ -204,6 +256,10 @@ func (s *Service) StartBackup(ctx context.Context, initiatedBy string) (*models.
 
 // RunBackup performs the actual backup in a goroutine-safe manner.
 func (s *Service) RunBackup(ctx context.Context, backup *models.Backup) {
+	// Track this backup as active so reconciliation won't mark it as stale.
+	s.activeBackups.Store(backup.ID, true)
+	defer s.activeBackups.Delete(backup.ID)
+
 	startTime := time.Now()
 	logger := log.With().Str("backup_id", backup.ID).Logger()
 	logger.Info().Msg("Starting backup")
@@ -536,7 +592,7 @@ func (s *Service) reencryptConfigValues(ctx context.Context) error {
 }
 
 func (s *Service) dumpDatabase() ([]byte, error) {
-	cmd := exec.Command("pg_dump", s.cfg.DatabaseURL)
+	cmd := exec.Command("pg_dump", "--clean", "--if-exists", s.cfg.DatabaseURL)
 	var out bytes.Buffer
 	var stderr bytes.Buffer
 	cmd.Stdout = &out
@@ -724,6 +780,11 @@ func (s *Service) restoreFromData(ctx context.Context, data []byte, encrypted bo
 		if err := s.reencryptConfigValues(ctx); err != nil {
 			log.Warn().Err(err).Msg("Failed to re-encrypt config values")
 		}
+	}
+
+	// 4. Reconcile any stale "running" backups from the restored database.
+	if err := s.ReconcileStaleBackups(ctx); err != nil {
+		log.Warn().Err(err).Msg("Failed to reconcile stale backups after restore")
 	}
 
 	return nil
