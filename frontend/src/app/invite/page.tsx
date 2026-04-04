@@ -38,7 +38,7 @@ function AcceptInviteInner() {
 
         {mutation.isError && (
           <div className="text-sm text-red-700 bg-red-50 border border-red-200 rounded p-3 mb-4">
-            {(mutation.error as Error)?.message || 'Failed to accept invite'}
+            {mutation.error?.message || 'Failed to accept invite'}
           </div>
         )}
 
