@@ -408,7 +408,8 @@ func (h *Handler) DevLoginLinkComplete(w http.ResponseWriter, r *http.Request) {
 
 // GetAuthMode returns the auth configuration for the frontend.
 func (h *Handler) GetAuthMode(w http.ResponseWriter, r *http.Request) {
-	oidcConfigured := h.cfg.OIDCIssuer != "" && h.cfg.OIDCClientID != ""
+	issuer, clientID, _, err := h.getOIDCConfig(r.Context())
+	oidcConfigured := err == nil && issuer != "" && clientID != ""
 	mode := "dev"
 	if oidcConfigured {
 		mode = "oidc"

@@ -2,7 +2,7 @@
 
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { usePathname, useRouter } from 'next/navigation';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Sidebar } from './Sidebar';
 import { api } from '@/lib/api';
 
@@ -42,14 +42,20 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const needsAup = isAuthenticated && !session?.aup_agreed;
   const roles = session?.roles ?? [];
 
+  // Redirect unauthenticated users to login (must be in useEffect to avoid setState during render)
+  useEffect(() => {
+    if (!isLoading && !isAuthenticated && !isPublic) {
+      router.replace(`/login?return_to=${encodeURIComponent(pathname)}`);
+    }
+  }, [isLoading, isAuthenticated, isPublic, pathname, router]);
+
   // Don't gate public pages
   if (isPublic) {
     return <>{children}</>;
   }
 
-  // Redirect unauthenticated users to login, preserving the return URL
+  // Show nothing while redirecting unauthenticated users
   if (!isLoading && !isAuthenticated) {
-    router.replace(`/login?return_to=${encodeURIComponent(pathname)}`);
     return null;
   }
 

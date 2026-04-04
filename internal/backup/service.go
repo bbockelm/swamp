@@ -601,21 +601,68 @@ func (s *Service) RestoreFromUpload(ctx context.Context, data []byte, encrypted 
 func (s *Service) restoreFromData(ctx context.Context, data []byte, encrypted bool, filename, decryptKey string) error {
 	// Decrypt if needed
 	if encrypted {
-		var key []byte
+		var pbk []byte
 		if decryptKey != "" {
-			key, _ = hex.DecodeString(decryptKey)
+			pbk, _ = hex.DecodeString(decryptKey)
 		} else if len(s.generalBackupKey) > 0 {
 			// Derive per-backup key from our general backup key
-			pbk, err := crypto.DerivePerBackupKey(s.generalBackupKey, filename)
+			derived, err := crypto.DerivePerBackupKey(s.generalBackupKey, filename)
 			if err != nil {
 				return fmt.Errorf("deriving per-backup key: %w", err)
 			}
-			key = pbk
+			pbk = derived
 		}
-		if len(key) == 0 {
+		if len(pbk) == 0 {
 			return fmt.Errorf("encrypted backup but no decryption key available")
 		}
-		decrypted, err := crypto.Decrypt(key, data)
+
+		// Parse envelope: "hex(wrappedDEK):hex(nonce)\n<encrypted data>"
+		newlineIdx := bytes.IndexByte(data, '\n')
+		if newlineIdx < 0 {
+			return fmt.Errorf("decrypting backup: invalid encrypted format (no header)")
+		}
+		header := string(data[:newlineIdx])
+		encPayload := data[newlineIdx+1:]
+
+		parts := strings.SplitN(header, ":", 2)
+		if len(parts) != 2 {
+			return fmt.Errorf("decrypting backup: invalid header format")
+		}
+		wrappedDEK, err := hex.DecodeString(parts[0])
+		if err != nil {
+			return fmt.Errorf("decrypting backup: decoding wrapped DEK: %w", err)
+		}
+		wrappedNonce, err := hex.DecodeString(parts[1])
+		if err != nil {
+			return fmt.Errorf("decrypting backup: decoding nonce: %w", err)
+		}
+
+		// Unwrap the DEK using the per-backup key.
+		// If that fails and a key was provided externally, try treating it
+		// as a general backup key and derive the per-backup key from it.
+		// As a final fallback, try treating it as the instance key.
+		dek, err := crypto.UnwrapDEKWithKey(pbk, wrappedDEK, wrappedNonce)
+		if err != nil && decryptKey != "" && len(pbk) == 32 {
+			// Provided key might be the general backup key; derive per-backup key
+			derived, deriveErr := crypto.DerivePerBackupKey(pbk, filename)
+			if deriveErr == nil {
+				dek, err = crypto.UnwrapDEKWithKey(derived, wrappedDEK, wrappedNonce)
+			}
+			// Last resort: treat as instance key → general backup key → per-backup key
+			if err != nil {
+				if gbk, gbkErr := crypto.DeriveBackupKey(decryptKey); gbkErr == nil {
+					if derived2, deriveErr2 := crypto.DerivePerBackupKey(gbk, filename); deriveErr2 == nil {
+						dek, err = crypto.UnwrapDEKWithKey(derived2, wrappedDEK, wrappedNonce)
+					}
+				}
+			}
+		}
+		if err != nil {
+			return fmt.Errorf("decrypting backup: unwrapping DEK (wrong key?): %w", err)
+		}
+
+		// Decrypt the payload with the unwrapped DEK
+		decrypted, err := crypto.Decrypt(dek, encPayload)
 		if err != nil {
 			return fmt.Errorf("decrypting backup: %w", err)
 		}
