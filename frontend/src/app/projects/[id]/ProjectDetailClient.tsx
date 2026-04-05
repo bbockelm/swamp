@@ -1,7 +1,7 @@
 'use client';
 
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { api, type SoftwarePackage, type Analysis } from '@/lib/api';
+import { api, type SoftwarePackage, type Analysis, type Group, type Project } from '@/lib/api';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useState } from 'react';
 import Link from 'next/link';
@@ -37,6 +37,12 @@ export default function ProjectDetailClient() {
     queryKey: ['packages', id],
     queryFn: () => api.packages.list(id),
     enabled: tab === 'packages' || tab === 'findings',
+  });
+
+  const { data: groups } = useQuery({
+    queryKey: ['groups'],
+    queryFn: () => api.groups.list(),
+    enabled: tab === 'settings',
   });
 
   const { data: analyses } = useQuery({
@@ -121,6 +127,7 @@ export default function ProjectDetailClient() {
       {tab === 'settings' && canEdit && (
         <SettingsTab
           project={project}
+          groups={groups}
           canEditGlobalKey={canEditGlobalKey}
           onDelete={() => {
             if (confirm('Delete this project? This cannot be undone.')) {
@@ -607,10 +614,12 @@ function FindingsTab({
 
 function SettingsTab({
   project,
+  groups,
   canEditGlobalKey,
   onDelete,
 }: {
-  project: { id: string; name: string; description: string; uses_global_key: boolean };
+  project: Project;
+  groups?: Group[];
   canEditGlobalKey?: boolean;
   onDelete: () => void;
 }) {
@@ -618,10 +627,20 @@ function SettingsTab({
   const [name, setName] = useState(project.name);
   const [description, setDescription] = useState(project.description);
   const [usesGlobalKey, setUsesGlobalKey] = useState(project.uses_global_key);
+  const [readGroupId, setReadGroupId] = useState(project.read_group_id ?? '');
+  const [writeGroupId, setWriteGroupId] = useState(project.write_group_id ?? '');
+  const [adminGroupId, setAdminGroupId] = useState(project.admin_group_id ?? '');
 
   const updateMutation = useMutation({
     mutationFn: () =>
-      api.projects.update(project.id, { name, description, uses_global_key: usesGlobalKey }),
+      api.projects.update(project.id, {
+        name,
+        description,
+        uses_global_key: usesGlobalKey,
+        read_group_id: readGroupId || null,
+        write_group_id: writeGroupId || null,
+        admin_group_id: adminGroupId || null,
+      }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['project', project.id] });
       queryClient.invalidateQueries({ queryKey: ['projects'] });
@@ -658,6 +677,27 @@ function SettingsTab({
             onChange={(e) => setDescription(e.target.value)}
             rows={3}
             className="w-full border rounded px-3 py-2"
+          />
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <GroupSelect
+            label="Read Access Group"
+            value={readGroupId}
+            groups={groups}
+            onChange={setReadGroupId}
+          />
+          <GroupSelect
+            label="Write Access Group"
+            value={writeGroupId}
+            groups={groups}
+            onChange={setWriteGroupId}
+          />
+          <GroupSelect
+            label="Admin Group"
+            value={adminGroupId}
+            groups={groups}
+            onChange={setAdminGroupId}
           />
         </div>
 
@@ -708,6 +748,38 @@ function SettingsTab({
           Delete Project
         </button>
       </div>
+    </div>
+  );
+}
+
+function GroupSelect({
+  label,
+  value,
+  groups,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  groups?: Group[];
+  onChange: (value: string) => void;
+}) {
+  return (
+    <div>
+      <label className="block text-sm font-medium text-gray-700 mb-1">
+        {label}
+      </label>
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="w-full border rounded px-3 py-2"
+      >
+        <option value="">None</option>
+        {groups?.map((g) => (
+          <option key={g.id} value={g.id}>
+            {g.name}
+          </option>
+        ))}
+      </select>
     </div>
   );
 }

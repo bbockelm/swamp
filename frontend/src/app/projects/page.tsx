@@ -390,9 +390,10 @@ function ProjectCard({
   onToggle: () => void;
 }) {
   const [tab, setTab] = useState<ProjectTab>("packages");
+  const isSystemAdmin = session?.roles?.includes("admin") ?? false;
 
-  const canEdit = project.my_role === "write" || project.my_role === "admin";
-  const isProjectAdmin = project.my_role === "admin";
+  const canEdit = isSystemAdmin || project.my_role === "write" || project.my_role === "admin";
+  const isProjectAdmin = isSystemAdmin || project.my_role === "admin";
   const canEditGlobalKey = session?.roles?.includes("admin") || session?.roles?.includes("project_creator");
 
   const groupName = (id: string | null) => {
