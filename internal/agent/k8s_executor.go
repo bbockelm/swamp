@@ -150,11 +150,17 @@ func (e *K8sExecutor) launchPod(analysis *models.Analysis, packages []models.Sof
 	// Gather analysis context (prior findings + notes) for the worker.
 	analysisCtx := gatherAnalysisContext(ctx, e.queries, e.encryptor, e.store, analysis.ProjectID, packages)
 
+	// Determine effective model: per-analysis overrides global config.
+	effectiveModel := analysis.AgentModel
+	if effectiveModel == "" {
+		effectiveModel = e.cfg.AgentModel
+	}
+
 	// Issue one-time token for the worker.
 	token, err := e.tokenStore.IssueToken(
 		analysis.ID,
 		packages,
-		e.cfg.AgentModel,
+		effectiveModel,
 		proxyURL,
 		analysis.CustomPrompt,
 		analysisCtx,
@@ -356,6 +362,11 @@ func (e *K8sExecutor) buildPodSpec(podName, analysisID, workerToken string) map[
 			"labels":    labels,
 		},
 		"spec": podSpec,
+	}
+
+	// Merge custom annotations.
+	if annotations := e.cfg.ParseWorkerAnnotations(); len(annotations) > 0 {
+		pod["metadata"].(map[string]any)["annotations"] = annotations
 	}
 
 	return pod

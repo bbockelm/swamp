@@ -585,6 +585,12 @@ paths:
                     type: string
                     format: uuid
                   minItems: 1
+                agent_model:
+                  type: string
+                  description: Claude model to use (e.g. claude-sonnet-4-20250514). If empty, uses server default.
+                custom_prompt:
+                  type: string
+                  description: Additional instructions for the analysis agent
       responses:
         "201":
           description: Analysis created and queued

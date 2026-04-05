@@ -85,6 +85,7 @@ func (h *Handler) CreateAnalysis(w http.ResponseWriter, r *http.Request) {
 
 	var req struct {
 		PackageIDs   []string        `json:"package_ids"`
+		AgentModel   string          `json:"agent_model"`
 		AgentConfig  json.RawMessage `json:"agent_config,omitempty"`
 		CustomPrompt string          `json:"custom_prompt"`
 	}
@@ -110,6 +111,7 @@ func (h *Handler) CreateAnalysis(w http.ResponseWriter, r *http.Request) {
 		ProjectID:    projectID,
 		Status:       "pending",
 		TriggeredBy:  user.ID,
+		AgentModel:   req.AgentModel,
 		AgentConfig:  req.AgentConfig,
 		CustomPrompt: req.CustomPrompt,
 	}

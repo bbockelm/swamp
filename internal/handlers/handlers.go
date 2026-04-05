@@ -45,7 +45,21 @@ func (h *Handler) HealthCheck(w http.ResponseWriter, r *http.Request) {
 // AgentStatus returns whether the analysis agent is configured and ready.
 func (h *Handler) AgentStatus(w http.ResponseWriter, r *http.Request) {
 	ready := h.executor != nil && h.executor.AgentReady()
-	respondJSON(w, http.StatusOK, map[string]bool{"ready": ready})
+	models := []map[string]string{
+		{"id": "", "name": "Auto (claude CLI default)"},
+		{"id": "claude-haiku-4-20250514", "name": "Claude Haiku 4"},
+		{"id": "claude-sonnet-4-20250514", "name": "Claude Sonnet 4"},
+		{"id": "claude-opus-4-20250514", "name": "Claude Opus 4"},
+	}
+	defaultModel := ""
+	if h.cfg != nil {
+		defaultModel = h.cfg.AgentModel
+	}
+	respondJSON(w, http.StatusOK, map[string]any{
+		"ready":         ready,
+		"default_model": defaultModel,
+		"models":        models,
+	})
 }
 
 // DashboardStats returns aggregate statistics for the dashboard.

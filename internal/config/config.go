@@ -76,6 +76,7 @@ type Config struct {
 	K8sWorkerNodeSelector   string `envconfig:"K8S_WORKER_NODE_SELECTOR" default:""` // key=value,key2=value2
 	K8sWorkerTolerations    string `envconfig:"K8S_WORKER_TOLERATIONS" default:""`   // key=value:effect,...
 	K8sWorkerLabels         string `envconfig:"K8S_WORKER_LABELS" default:""`        // key=value,key2=value2
+	K8sWorkerAnnotations    string `envconfig:"K8S_WORKER_ANNOTATIONS" default:""`   // key=value,key2=value2
 	K8sPodTTLSeconds        int    `envconfig:"K8S_POD_TTL_SECONDS" default:"3600"`  // cleanup after completion
 
 	// Worker mode settings (used inside worker pods / detached processes).
@@ -228,6 +229,10 @@ func (c *Config) ParseWorkerLabels() map[string]string {
 	return parseKeyValuePairs(c.K8sWorkerLabels)
 }
 
+// ParseWorkerAnnotations parses the K8sWorkerAnnotations string into a map.
+func (c *Config) ParseWorkerAnnotations() map[string]string {
+	return parseKeyValuePairs(c.K8sWorkerAnnotations)
+}
 func parseKeyValuePairs(s string) map[string]string {
 	m := make(map[string]string)
 	if s == "" {

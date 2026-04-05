@@ -823,6 +823,7 @@ function AnalysesTab({ projectId }: { projectId: string }) {
   const queryClient = useQueryClient();
   const [selectedPkgs, setSelectedPkgs] = useState<string[]>([]);
   const [customPrompt, setCustomPrompt] = useState("");
+  const [agentModel, setAgentModel] = useState("");
   const [openAnalysis, setOpenAnalysis] = useState<string | null>(null);
   const [analysisPage, setAnalysisPage] = useState(1);
 
@@ -857,12 +858,14 @@ function AnalysesTab({ projectId }: { projectId: string }) {
     mutationFn: () =>
       api.analyses.create(projectId, {
         package_ids: selectedPkgs,
+        agent_model: agentModel || undefined,
         custom_prompt: customPrompt || undefined,
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["analyses", projectId] });
       setSelectedPkgs([]);
       setCustomPrompt("");
+      setAgentModel("");
     },
   });
 
@@ -894,6 +897,22 @@ function AnalysesTab({ projectId }: { projectId: string }) {
                 {pkg.name} ({pkg.git_branch})
               </label>
             ))}
+          </div>
+          <div className="mb-3">
+            <label className="block text-xs font-medium text-gray-500 mb-1">
+              Model
+            </label>
+            <select
+              value={agentModel}
+              onChange={(e) => setAgentModel(e.target.value)}
+              className="w-full border rounded px-3 py-2 text-sm bg-white"
+            >
+              {(agentStatus?.models || [{ id: '', name: 'Auto (server default)' }]).map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.name}{agentStatus?.default_model && m.id === '' ? ` (${agentStatus.default_model || 'auto'})` : ''}
+                </option>
+              ))}
+            </select>
           </div>
           <div className="mb-3">
             <label className="block text-xs font-medium text-gray-500 mb-1">

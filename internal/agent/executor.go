@@ -265,7 +265,7 @@ func (e *Executor) run(analysis *models.Analysis, packages []models.SoftwarePack
 		return
 	}
 	e.hub.Broadcast(analysis.ID, []byte("[system] Starting Phase 1: Security analysis"))
-	if err := e.runAgent(ctx, workDir, prompt, analysis.ID, anthropicKey); err != nil {
+	if err := e.runAgent(ctx, workDir, prompt, analysis.ID, anthropicKey, analysis.AgentModel); err != nil {
 		e.failAnalysis(ctx, analysis.ID, "Agent execution failed (Phase 1)", err)
 		return
 	}
@@ -278,7 +278,7 @@ func (e *Executor) run(analysis *models.Analysis, packages []models.SoftwarePack
 		}
 		e.hub.Broadcast(analysis.ID, []byte("[system] Starting Phase 2: Exploit validation"))
 		phase2Prompt := BuildPrompt(&packages[0], "phase2", "", nil)
-		if err := e.runAgent(ctx, workDir, phase2Prompt, analysis.ID, anthropicKey); err != nil {
+		if err := e.runAgent(ctx, workDir, phase2Prompt, analysis.ID, anthropicKey, analysis.AgentModel); err != nil {
 			// Phase 2 failure is non-fatal; log and continue.
 			log.Warn().Err(err).Str("analysis_id", analysis.ID).Msg("Phase 2 (exploit validation) failed")
 		}
@@ -293,7 +293,7 @@ func (e *Executor) run(analysis *models.Analysis, packages []models.SoftwarePack
 }
 
 // runAgent executes the claude CLI with the given prompt.
-func (e *Executor) runAgent(ctx context.Context, workDir, prompt string, analysisID string, anthropicKey string) error {
+func (e *Executor) runAgent(ctx context.Context, workDir, prompt string, analysisID string, anthropicKey string, agentModel string) error {
 	// Write prompt to temp file.
 	promptFile := filepath.Join(workDir, "prompt.txt")
 	if err := os.WriteFile(promptFile, []byte(prompt), 0640); err != nil {
@@ -307,8 +307,13 @@ func (e *Executor) runAgent(ctx context.Context, workDir, prompt string, analysi
 		"--verbose",
 		"--dangerously-skip-permissions",
 	}
-	if e.cfg.AgentModel != "" {
-		args = append(args, "--model", e.cfg.AgentModel)
+	// Use per-analysis model if set, otherwise fall back to global config.
+	model := agentModel
+	if model == "" {
+		model = e.cfg.AgentModel
+	}
+	if model != "" {
+		args = append(args, "--model", model)
 	}
 	args = append(args, prompt)
 

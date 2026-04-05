@@ -309,8 +309,11 @@ export const api = {
   },
 
   agent: {
-    status: (): Promise<{ ready: boolean }> =>
-      fetchJSON(`${BASE}/agent/status`),
+    status: (): Promise<{
+      ready: boolean;
+      default_model?: string;
+      models?: { id: string; name: string }[];
+    }> => fetchJSON(`${BASE}/agent/status`),
   },
 
   users: {
@@ -444,7 +447,7 @@ export const api = {
       fetchJSON(`${BASE}/projects/${projectId}/analyses`),
     create: (
       projectId: string,
-      data: { package_ids: string[]; custom_prompt?: string },
+      data: { package_ids: string[]; agent_model?: string; custom_prompt?: string },
     ): Promise<Analysis> =>
       fetchJSON(`${BASE}/projects/${projectId}/analyses`, {
         method: "POST",

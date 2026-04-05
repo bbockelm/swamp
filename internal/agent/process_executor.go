@@ -196,11 +196,17 @@ func (e *ProcessExecutor) launchProcess(analysis *models.Analysis, packages []mo
 	// Gather analysis context (prior findings + notes) for the worker.
 	analysisCtx := gatherAnalysisContext(ctx, e.queries, e.encryptor, e.store, analysis.ProjectID, packages)
 
+	// Determine effective model: per-analysis overrides global config.
+	effectiveModel := analysis.AgentModel
+	if effectiveModel == "" {
+		effectiveModel = e.cfg.AgentModel
+	}
+
 	// Issue one-time token.
 	token, err := e.tokenStore.IssueToken(
 		analysis.ID,
 		packages,
-		e.cfg.AgentModel,
+		effectiveModel,
 		proxyURL,
 		analysis.CustomPrompt,
 		analysisCtx,
