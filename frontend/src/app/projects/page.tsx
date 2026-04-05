@@ -18,6 +18,7 @@ import { Pagination, paginate } from "@/components/Pagination";
 import { SARIFViewer } from "@/components/SARIFViewer";
 import { MarkdownReport } from "@/components/MarkdownReport";
 import { GitBranchInput } from "@/components/GitBranchInput";
+import { FindingsTable } from "@/components/FindingsTable";
 
 const ANALYSES_PAGE_SIZE = 10;
 
@@ -358,6 +359,7 @@ export default function ProjectsPage() {
               project={p}
               groups={groups}
               users={users}
+              session={session}
               expanded={expandedId === p.id}
               onToggle={() => setExpandedId(expandedId === p.id ? null : p.id)}
             />
@@ -370,26 +372,32 @@ export default function ProjectsPage() {
 
 // ─── project card ───────────────────────────────────────────
 
-type ProjectTab = "packages" | "analyses" | "settings";
+type ProjectTab = "packages" | "analyses" | "findings" | "api-keys" | "settings";
 
 function ProjectCard({
   project,
   groups,
   users,
+  session,
   expanded,
   onToggle,
 }: {
   project: Project;
   groups?: Group[];
   users?: User[];
+  session?: Session;
   expanded: boolean;
   onToggle: () => void;
 }) {
   const [tab, setTab] = useState<ProjectTab>("packages");
 
+  const canEdit = project.my_role === "write" || project.my_role === "admin";
+  const isProjectAdmin = project.my_role === "admin";
+  const canEditGlobalKey = session?.roles?.includes("admin") || session?.roles?.includes("project_creator");
+
   const groupName = (id: string | null) => {
     if (!id) return null;
-    return groups?.find((g) => g.id === id)?.name ?? id.slice(0, 8);
+    return groups?.find((g) => g.id === id)?.name ?? null;
   };
 
   const ownerName = () => {
@@ -401,7 +409,9 @@ function ProjectCard({
   const tabs: { key: ProjectTab; label: string }[] = [
     { key: "packages", label: "Packages" },
     { key: "analyses", label: "Analyses" },
-    { key: "settings", label: "Settings" },
+    { key: "findings", label: "Findings" },
+    ...(isProjectAdmin ? [{ key: "api-keys" as ProjectTab, label: "API Keys" }] : []),
+    ...(canEdit ? [{ key: "settings" as ProjectTab, label: "Settings" }] : []),
   ];
 
   return (
@@ -502,10 +512,13 @@ function ProjectCard({
           <div className="p-4">
             {tab === "packages" && <PackagesTab projectId={project.id} />}
             {tab === "analyses" && <AnalysesTab projectId={project.id} />}
-            {tab === "settings" && (
+            {tab === "findings" && <FindingsTabInline projectId={project.id} canEdit={canEdit} />}
+            {tab === "api-keys" && isProjectAdmin && <ProviderKeysTab projectId={project.id} />}
+            {tab === "settings" && canEdit && (
               <SettingsTab
                 project={project}
                 groups={groups}
+                canEditGlobalKey={canEditGlobalKey}
               />
             )}
           </div>
@@ -1651,13 +1664,16 @@ function StreamLine({ line }: { line: string }) {
 function SettingsTab({
   project,
   groups,
+  canEditGlobalKey,
 }: {
   project: Project;
   groups?: Group[];
+  canEditGlobalKey?: boolean;
 }) {
   const queryClient = useQueryClient();
   const [name, setName] = useState(project.name);
   const [description, setDescription] = useState(project.description);
+  const [usesGlobalKey, setUsesGlobalKey] = useState(project.uses_global_key ?? false);
   const [readGroupId, setReadGroupId] = useState(project.read_group_id ?? "");
   const [writeGroupId, setWriteGroupId] = useState(
     project.write_group_id ?? "",
@@ -1672,6 +1688,7 @@ function SettingsTab({
       api.projects.update(project.id, {
         name,
         description,
+        uses_global_key: usesGlobalKey,
         read_group_id: readGroupId || null,
         write_group_id: writeGroupId || null,
         admin_group_id: adminGroupId || null,
@@ -1744,6 +1761,27 @@ function SettingsTab({
           />
         </div>
 
+        {/* Global Key toggle - only shown to admins/project_creators */}
+        {canEditGlobalKey && (
+          <div className="border-t pt-4">
+            <label className="flex items-center gap-3">
+              <input
+                type="checkbox"
+                checked={usesGlobalKey}
+                onChange={(e) => setUsesGlobalKey(e.target.checked)}
+                className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+              />
+              <span className="text-sm font-medium text-gray-700">
+                Use global agent API key
+              </span>
+            </label>
+            <p className="text-xs text-gray-500 mt-1 ml-7">
+              When enabled, this project can use the system&apos;s shared Anthropic API key
+              instead of requiring a project-specific key.
+            </p>
+          </div>
+        )}
+
         <div className="flex items-center gap-3">
           <button
             type="submit"
@@ -1789,6 +1827,236 @@ function SettingsTab({
           </button>
         )}
       </div>
+    </div>
+  );
+}
+
+function FindingsTabInline({
+  projectId,
+  packages,
+  canEdit,
+}: {
+  projectId: string;
+  packages?: SoftwarePackage[];
+  canEdit: boolean;
+}) {
+  // Get the first package's git URL for GitHub linking.
+  const gitUrl = packages?.[0]?.git_url;
+
+  return (
+    <div>
+      <h3 className="text-md font-semibold mb-3">Security Findings</h3>
+      <FindingsTable
+        projectId={projectId}
+        gitUrl={gitUrl}
+        canEdit={canEdit}
+      />
+    </div>
+  );
+}
+
+function ProviderKeysTab({ projectId }: { projectId: string }) {
+  const queryClient = useQueryClient();
+  const [adding, setAdding] = useState(false);
+  const [provider, setProvider] = useState('anthropic');
+  const [label, setLabel] = useState('');
+  const [apiKey, setApiKey] = useState('');
+
+  const { data: keys, isLoading } = useQuery({
+    queryKey: ['provider-keys', projectId],
+    queryFn: () => api.providerKeys.list(projectId),
+  });
+
+  const createMutation = useMutation({
+    mutationFn: () =>
+      api.providerKeys.create(projectId, {
+        provider,
+        label,
+        api_key: apiKey,
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['provider-keys', projectId] });
+      setAdding(false);
+      setLabel('');
+      setApiKey('');
+    },
+  });
+
+  const revokeMutation = useMutation({
+    mutationFn: (keyId: string) => api.providerKeys.revoke(projectId, keyId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['provider-keys', projectId] });
+    },
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: (keyId: string) => api.providerKeys.delete(projectId, keyId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['provider-keys', projectId] });
+    },
+  });
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-4">
+        <div>
+          <h3 className="text-md font-semibold">Provider API Keys</h3>
+          <p className="text-xs text-gray-500">
+            API keys are encrypted at rest. Only the last 4 characters are ever displayed.
+          </p>
+        </div>
+        {!adding && (
+          <button
+            onClick={() => setAdding(true)}
+            className="bg-blue-600 text-white px-3 py-1.5 rounded hover:bg-blue-700 text-sm"
+          >
+            Add Key
+          </button>
+        )}
+      </div>
+
+      {adding && (
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            createMutation.mutate();
+          }}
+          className="border rounded p-4 mb-4 space-y-3 bg-gray-50"
+        >
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Provider
+            </label>
+            <select
+              value={provider}
+              onChange={(e) => setProvider(e.target.value)}
+              className="w-full border rounded px-3 py-2"
+            >
+              <option value="anthropic">Anthropic</option>
+            </select>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Label
+            </label>
+            <input
+              type="text"
+              value={label}
+              onChange={(e) => setLabel(e.target.value)}
+              placeholder="e.g. Production key"
+              className="w-full border rounded px-3 py-2"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              API Key
+            </label>
+            <input
+              type="password"
+              value={apiKey}
+              onChange={(e) => setApiKey(e.target.value)}
+              required
+              placeholder="sk-ant-..."
+              className="w-full border rounded px-3 py-2 font-mono"
+            />
+          </div>
+          {createMutation.isError && (
+            <p className="text-red-600 text-sm">
+              {createMutation.error?.message || 'An unexpected error occurred'}
+            </p>
+          )}
+          <div className="flex gap-2">
+            <button
+              type="submit"
+              disabled={createMutation.isPending}
+              className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 disabled:opacity-50 text-sm"
+            >
+              {createMutation.isPending ? 'Saving...' : 'Save Key'}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setAdding(false);
+                setApiKey('');
+              }}
+              className="border px-4 py-2 rounded text-sm"
+            >
+              Cancel
+            </button>
+          </div>
+        </form>
+      )}
+
+      {isLoading ? (
+        <p className="text-sm text-gray-500">Loading...</p>
+      ) : !keys?.length ? (
+        <p className="text-sm text-gray-500">No provider keys configured.</p>
+      ) : (
+        <div className="border rounded divide-y">
+          {keys.map((k) => (
+            <div
+              key={k.id}
+              className={`flex items-center justify-between px-4 py-3 ${
+                !k.is_active ? 'opacity-50' : ''
+              }`}
+            >
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-semibold uppercase bg-gray-100 text-gray-700 px-2 py-0.5 rounded">
+                    {k.provider}
+                  </span>
+                  <span className="font-medium">{k.label || 'Unnamed'}</span>
+                  <code className="text-xs text-gray-500">{k.key_hint}</code>
+                </div>
+                <div className="text-xs text-gray-500 mt-1">
+                  Added {new Date(k.created_at).toLocaleDateString()}
+                  {k.revoked_at && (
+                    <span className="text-red-500 ml-2">
+                      Revoked {new Date(k.revoked_at).toLocaleDateString()}
+                    </span>
+                  )}
+                </div>
+              </div>
+              {k.is_active && (
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => {
+                      if (confirm('Revoke this key? It will no longer be usable.')) {
+                        revokeMutation.mutate(k.id);
+                      }
+                    }}
+                    className="text-yellow-600 hover:text-yellow-800 text-sm"
+                  >
+                    Revoke
+                  </button>
+                  <button
+                    onClick={() => {
+                      if (confirm('Permanently delete this key?')) {
+                        deleteMutation.mutate(k.id);
+                      }
+                    }}
+                    className="text-red-600 hover:text-red-800 text-sm"
+                  >
+                    Delete
+                  </button>
+                </div>
+              )}
+              {!k.is_active && (
+                <button
+                  onClick={() => {
+                    if (confirm('Permanently delete this revoked key?')) {
+                      deleteMutation.mutate(k.id);
+                    }
+                  }}
+                  className="text-red-600 hover:text-red-800 text-sm"
+                >
+                  Delete
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

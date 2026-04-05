@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -64,7 +65,7 @@ func (q *Queries) UpdateUserLastLogin(ctx context.Context, id string) error {
 func (q *Queries) ListUsers(ctx context.Context) ([]models.User, error) {
 	rows, err := q.pool.Query(ctx, `
 		SELECT id, display_name, email, status, last_login, created_at, updated_at
-		FROM users ORDER BY display_name`)
+		FROM users WHERE deleted_at IS NULL ORDER BY display_name`)
 	if err != nil {
 		return nil, err
 	}
@@ -81,8 +82,31 @@ func (q *Queries) ListUsers(ctx context.Context) ([]models.User, error) {
 }
 
 func (q *Queries) DeleteUser(ctx context.Context, id string) error {
-	_, err := q.pool.Exec(ctx, `DELETE FROM users WHERE id=$1`, id)
-	return err
+	tx, err := q.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	// Soft-delete: mark user as deleted and rename.
+	if _, err := tx.Exec(ctx, `
+		UPDATE users
+		SET display_name = display_name || ' (Deleted)',
+		    status = 'deleted',
+		    deleted_at = NOW(),
+		    updated_at = NOW()
+		WHERE id=$1`, id); err != nil {
+		return err
+	}
+	// Remove all identities so the user cannot log back in.
+	if _, err := tx.Exec(ctx, `DELETE FROM user_identities WHERE user_id=$1`, id); err != nil {
+		return err
+	}
+	// Invalidate all sessions.
+	if _, err := tx.Exec(ctx, `DELETE FROM sessions WHERE user_id=$1`, id); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 // SearchUsers finds users whose display_name or email matches the query (case-insensitive prefix/substring).
@@ -196,6 +220,11 @@ func (q *Queries) ListUserIdentities(ctx context.Context, userID string) ([]mode
 		ids = append(ids, i)
 	}
 	return ids, nil
+}
+
+func (q *Queries) DeleteIdentity(ctx context.Context, id string) error {
+	_, err := q.pool.Exec(ctx, `DELETE FROM user_identities WHERE id=$1`, id)
+	return err
 }
 
 // ============================================================
@@ -494,6 +523,18 @@ func (q *Queries) IsGroupMember(ctx context.Context, groupID, userID string) (bo
 	return exists, err
 }
 
+// GetGroupMemberRole returns the user's direct role in a group ("admin", "member"),
+// or empty string if not a member.
+func (q *Queries) GetGroupMemberRole(ctx context.Context, groupID, userID string) (string, error) {
+	var role string
+	err := q.pool.QueryRow(ctx, `
+		SELECT role FROM group_members WHERE group_id=$1 AND user_id=$2`, groupID, userID).Scan(&role)
+	if err != nil {
+		return "", nil // not a member
+	}
+	return role, nil
+}
+
 // ============================================================
 // Group Invites
 // ============================================================
@@ -554,19 +595,19 @@ func (q *Queries) ListGroupInvites(ctx context.Context, groupID string) ([]model
 
 func (q *Queries) CreateProject(ctx context.Context, p *models.Project) error {
 	return q.pool.QueryRow(ctx, `
-		INSERT INTO projects (name, description, owner_id, read_group_id, write_group_id, admin_group_id, status)
-		VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id, created_at, updated_at`,
-		p.Name, p.Description, p.OwnerID, p.ReadGroupID, p.WriteGroupID, p.AdminGroupID, p.Status).Scan(&p.ID, &p.CreatedAt, &p.UpdatedAt)
+		INSERT INTO projects (name, description, owner_id, read_group_id, write_group_id, admin_group_id, uses_global_key, status)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id, created_at, updated_at`,
+		p.Name, p.Description, p.OwnerID, p.ReadGroupID, p.WriteGroupID, p.AdminGroupID, p.UsesGlobalKey, p.Status).Scan(&p.ID, &p.CreatedAt, &p.UpdatedAt)
 }
 
 func (q *Queries) GetProject(ctx context.Context, id string) (*models.Project, error) {
 	var p models.Project
 	err := q.pool.QueryRow(ctx, `
 		SELECT id, name, description, owner_id, read_group_id, write_group_id, admin_group_id,
-		       status, created_at, updated_at
+		       uses_global_key, status, created_at, updated_at
 		FROM projects WHERE id=$1`, id).Scan(
 		&p.ID, &p.Name, &p.Description, &p.OwnerID, &p.ReadGroupID, &p.WriteGroupID, &p.AdminGroupID,
-		&p.Status, &p.CreatedAt, &p.UpdatedAt)
+		&p.UsesGlobalKey, &p.Status, &p.CreatedAt, &p.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -576,8 +617,8 @@ func (q *Queries) GetProject(ctx context.Context, id string) (*models.Project, e
 func (q *Queries) UpdateProject(ctx context.Context, p *models.Project) error {
 	_, err := q.pool.Exec(ctx, `
 		UPDATE projects SET name=$2, description=$3, read_group_id=$4, write_group_id=$5,
-		       admin_group_id=$6, status=$7, updated_at=NOW()
-		WHERE id=$1`, p.ID, p.Name, p.Description, p.ReadGroupID, p.WriteGroupID, p.AdminGroupID, p.Status)
+		       admin_group_id=$6, uses_global_key=$7, status=$8, updated_at=NOW()
+		WHERE id=$1`, p.ID, p.Name, p.Description, p.ReadGroupID, p.WriteGroupID, p.AdminGroupID, p.UsesGlobalKey, p.Status)
 	return err
 }
 
@@ -591,7 +632,7 @@ func (q *Queries) ListUserProjects(ctx context.Context, userID string) ([]models
 	rows, err := q.pool.Query(ctx, `
 		SELECT DISTINCT p.id, p.name, p.description, p.owner_id,
 		       p.read_group_id, p.write_group_id, p.admin_group_id,
-		       p.status, p.created_at, p.updated_at
+		       p.uses_global_key, p.status, p.created_at, p.updated_at
 		FROM projects p
 		LEFT JOIN group_members gm_r ON gm_r.group_id = p.read_group_id AND gm_r.user_id = $1
 		LEFT JOIN group_members gm_w ON gm_w.group_id = p.write_group_id AND gm_w.user_id = $1
@@ -610,7 +651,7 @@ func (q *Queries) ListUserProjects(ctx context.Context, userID string) ([]models
 		var p models.Project
 		if err := rows.Scan(&p.ID, &p.Name, &p.Description, &p.OwnerID,
 			&p.ReadGroupID, &p.WriteGroupID, &p.AdminGroupID,
-			&p.Status, &p.CreatedAt, &p.UpdatedAt); err != nil {
+			&p.UsesGlobalKey, &p.Status, &p.CreatedAt, &p.UpdatedAt); err != nil {
 			return nil, err
 		}
 		projects = append(projects, p)
@@ -623,7 +664,7 @@ func (q *Queries) ListAllProjects(ctx context.Context) ([]models.Project, error)
 	rows, err := q.pool.Query(ctx, `
 		SELECT DISTINCT p.id, p.name, p.description, p.owner_id,
 		       p.read_group_id, p.write_group_id, p.admin_group_id,
-		       p.status, p.created_at, p.updated_at
+		       p.uses_global_key, p.status, p.created_at, p.updated_at
 		FROM projects p
 		ORDER BY p.name`)
 	if err != nil {
@@ -635,7 +676,7 @@ func (q *Queries) ListAllProjects(ctx context.Context) ([]models.Project, error)
 		var p models.Project
 		if err := rows.Scan(&p.ID, &p.Name, &p.Description, &p.OwnerID,
 			&p.ReadGroupID, &p.WriteGroupID, &p.AdminGroupID,
-			&p.Status, &p.CreatedAt, &p.UpdatedAt); err != nil {
+			&p.UsesGlobalKey, &p.Status, &p.CreatedAt, &p.UpdatedAt); err != nil {
 			return nil, err
 		}
 		projects = append(projects, p)
@@ -977,6 +1018,16 @@ func (q *Queries) CreateAnalysisResult(ctx context.Context, r *models.AnalysisRe
 		RETURNING id, created_at`,
 		r.AnalysisID, pkgID, r.ResultType, r.S3Key, r.Filename,
 		r.ContentType, r.FileSize, r.Summary, r.FindingCount, r.SeverityCounts).Scan(&r.ID, &r.CreatedAt)
+}
+
+// UpdateAnalysisResultMetadata updates the summary, finding_count, and severity_counts
+// for an existing analysis result (used after SARIF parsing).
+func (q *Queries) UpdateAnalysisResultMetadata(ctx context.Context, id, summary string, findingCount int, severityCounts json.RawMessage) error {
+	_, err := q.pool.Exec(ctx, `
+		UPDATE analysis_results
+		SET summary = $2, finding_count = $3, severity_counts = COALESCE($4, '{}'::jsonb)
+		WHERE id = $1`, id, summary, findingCount, severityCounts)
+	return err
 }
 
 func (q *Queries) ListAnalysisResults(ctx context.Context, analysisID string) ([]models.AnalysisResult, error) {

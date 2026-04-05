@@ -25,6 +25,16 @@ function UserCard({ user }: { user: User }) {
     enabled: expanded,
   });
 
+  const unlinkIdentity = useMutation({
+    mutationFn: (identityId: string) =>
+      api.admin.deleteUserIdentity(user.id, identityId),
+    onSuccess: () =>
+      queryClient.invalidateQueries({
+        queryKey: ["admin", "user-identities", user.id],
+      }),
+  });
+  const [confirmUnlink, setConfirmUnlink] = useState<string | null>(null);
+
   const updateUser = useMutation({
     mutationFn: (data: Partial<User>) => api.admin.updateUser(user.id, data),
     onSuccess: () => {
@@ -254,6 +264,33 @@ function UserCard({ user }: { user: User }) {
                     <div className="text-xs text-gray-400">
                       {new Date(id.created_at).toLocaleDateString()}
                     </div>
+                    {confirmUnlink === id.id ? (
+                      <div className="flex items-center gap-1">
+                        <button
+                          onClick={() => {
+                            unlinkIdentity.mutate(id.id);
+                            setConfirmUnlink(null);
+                          }}
+                          className="text-xs font-medium px-2 py-1 rounded bg-red-600 text-white hover:bg-red-700"
+                        >
+                          Confirm
+                        </button>
+                        <button
+                          onClick={() => setConfirmUnlink(null)}
+                          className="text-xs text-gray-500 hover:text-gray-700 px-1"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        onClick={() => setConfirmUnlink(id.id)}
+                        className="text-xs text-red-600 hover:text-red-800"
+                        title="Unlink this identity"
+                      >
+                        Unlink
+                      </button>
+                    )}
                   </div>
                 ))
               )}

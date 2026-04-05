@@ -449,7 +449,7 @@ func nullifyAnalysisDEKs(dump []byte) []byte {
 	inAnalysesCopy := false
 	// Identify the column positions of encrypted_dek and dek_nonce from the
 	// COPY header. Format: COPY public.analyses (col1, col2, ...) FROM stdin;
-	var dekCol, nonceCol int = -1, -1
+	var dekCol, nonceCol = -1, -1
 
 	for i, line := range lines {
 		lineStr := string(line)
@@ -466,9 +466,10 @@ func nullifyAnalysisDEKs(dump []byte) []byte {
 					cols := strings.Split(lineStr[start+1:end], ",")
 					for j, col := range cols {
 						col = strings.TrimSpace(col)
-						if col == "encrypted_dek" {
+						switch col {
+						case "encrypted_dek":
 							dekCol = j
-						} else if col == "dek_nonce" {
+						case "dek_nonce":
 							nonceCol = j
 						}
 					}
@@ -511,7 +512,7 @@ func nullifyAnalysisDEKs(dump []byte) []byte {
 func decryptConfigValues(dump []byte, enc *crypto.Encryptor) []byte {
 	lines := bytes.Split(dump, []byte("\n"))
 	inConfigCopy := false
-	var valueCol int = -1
+	var valueCol = -1
 
 	for i, line := range lines {
 		lineStr := string(line)

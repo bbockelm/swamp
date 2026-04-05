@@ -82,10 +82,7 @@ func (h *Handler) CreateProject(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusUnauthorized, "Not authenticated")
 		return
 	}
-	if !UserHasRole(r.Context(), RoleAdmin) && !UserHasRole(r.Context(), RoleProjectCreator) {
-		respondError(w, http.StatusForbidden, "Requires project_creator or admin role")
-		return
-	}
+	// Any authenticated user can create a project.
 
 	var project models.Project
 	if err := decodeJSON(r, &project); err != nil {
@@ -99,6 +96,10 @@ func (h *Handler) CreateProject(w http.ResponseWriter, r *http.Request) {
 	project.OwnerID = user.ID
 	if project.Status == "" {
 		project.Status = "active"
+	}
+	// Admin and project_creator users get global key access by default
+	if UserHasRole(r.Context(), RoleAdmin) || UserHasRole(r.Context(), RoleProjectCreator) {
+		project.UsesGlobalKey = true
 	}
 	if err := h.queries.CreateProject(r.Context(), &project); err != nil {
 		log.Error().Err(err).Msg("Failed to create project")
@@ -115,7 +116,31 @@ func (h *Handler) GetProject(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusNotFound, "Project not found")
 		return
 	}
-	respondJSON(w, http.StatusOK, project)
+
+	// Compute the caller's effective role for this project.
+	myRole := "read"
+	if UserHasRole(r.Context(), RoleAdmin) {
+		myRole = "admin"
+	} else if user := GetUserFromContext(r.Context()); user != nil {
+		if project.OwnerID == user.ID {
+			myRole = "admin"
+		} else if project.AdminGroupID != nil {
+			if ok, _ := h.queries.IsGroupMember(r.Context(), *project.AdminGroupID, user.ID); ok {
+				myRole = "admin"
+			}
+		}
+		if myRole != "admin" && project.WriteGroupID != nil {
+			if ok, _ := h.queries.IsGroupMember(r.Context(), *project.WriteGroupID, user.ID); ok {
+				myRole = "write"
+			}
+		}
+	}
+
+	type projectWithRole struct {
+		models.Project
+		MyRole string `json:"my_role"`
+	}
+	respondJSON(w, http.StatusOK, projectWithRole{Project: *project, MyRole: myRole})
 }
 
 func (h *Handler) UpdateProject(w http.ResponseWriter, r *http.Request) {
@@ -126,29 +151,56 @@ func (h *Handler) UpdateProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var updates models.Project
-	if err := decodeJSON(r, &updates); err != nil {
+	// Decode request as a map to detect which fields were sent.
+	var rawUpdate map[string]interface{}
+	if err := decodeJSON(r, &rawUpdate); err != nil {
 		respondError(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
-	if updates.Name != "" {
-		project.Name = updates.Name
+
+	if name, ok := rawUpdate["name"].(string); ok && name != "" {
+		project.Name = name
 	}
-	if updates.Description != "" {
-		project.Description = updates.Description
+	if desc, ok := rawUpdate["description"].(string); ok {
+		project.Description = desc
 	}
-	if updates.ReadGroupID != nil {
-		project.ReadGroupID = updates.ReadGroupID
+	// Handle nullable group IDs: allow setting to null or a valid string.
+	if _, hasKey := rawUpdate["read_group_id"]; hasKey {
+		if rawUpdate["read_group_id"] == nil {
+			project.ReadGroupID = nil
+		} else if id, ok := rawUpdate["read_group_id"].(string); ok {
+			project.ReadGroupID = &id
+		}
 	}
-	if updates.WriteGroupID != nil {
-		project.WriteGroupID = updates.WriteGroupID
+	if _, hasKey := rawUpdate["write_group_id"]; hasKey {
+		if rawUpdate["write_group_id"] == nil {
+			project.WriteGroupID = nil
+		} else if id, ok := rawUpdate["write_group_id"].(string); ok {
+			project.WriteGroupID = &id
+		}
 	}
-	if updates.AdminGroupID != nil {
-		project.AdminGroupID = updates.AdminGroupID
+	if _, hasKey := rawUpdate["admin_group_id"]; hasKey {
+		if rawUpdate["admin_group_id"] == nil {
+			project.AdminGroupID = nil
+		} else if id, ok := rawUpdate["admin_group_id"].(string); ok {
+			project.AdminGroupID = &id
+		}
 	}
-	if updates.Status != "" {
-		project.Status = updates.Status
+	if status, ok := rawUpdate["status"].(string); ok && status != "" {
+		project.Status = status
 	}
+
+	// Only system admins or project_creators can enable uses_global_key.
+	if _, hasKey := rawUpdate["uses_global_key"]; hasKey {
+		if wantGlobal, ok := rawUpdate["uses_global_key"].(bool); ok {
+			if wantGlobal && !UserHasRole(r.Context(), RoleAdmin) && !UserHasRole(r.Context(), RoleProjectCreator) {
+				respondError(w, http.StatusForbidden, "Only admins or project creators can enable global key usage")
+				return
+			}
+			project.UsesGlobalKey = wantGlobal
+		}
+	}
+
 	if err := h.queries.UpdateProject(r.Context(), project); err != nil {
 		log.Error().Err(err).Msg("Failed to update project")
 		respondError(w, http.StatusInternalServerError, "Failed to update project")

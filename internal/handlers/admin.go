@@ -124,7 +124,7 @@ func (h *Handler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusInternalServerError, "Failed to delete user")
 		return
 	}
-	respondJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+	respondJSON(w, http.StatusOK, map[string]string{"status": "deactivated"})
 }
 
 func (h *Handler) AddUserRole(w http.ResponseWriter, r *http.Request) {
@@ -179,6 +179,16 @@ func (h *Handler) ListUserIdentitiesAdmin(w http.ResponseWriter, r *http.Request
 		return
 	}
 	respondJSON(w, http.StatusOK, identities)
+}
+
+func (h *Handler) DeleteUserIdentityAdmin(w http.ResponseWriter, r *http.Request) {
+	identityID := chi.URLParam(r, "identityID")
+	if err := h.queries.DeleteIdentity(r.Context(), identityID); err != nil {
+		log.Error().Err(err).Msg("Failed to delete identity")
+		respondError(w, http.StatusInternalServerError, "Failed to delete identity")
+		return
+	}
+	respondJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 }
 
 // --- Admin: User Invites ---
@@ -352,6 +362,73 @@ func (h *Handler) UpdateAUPConfig(w http.ResponseWriter, r *http.Request) {
 		log.Error().Err(err).Msg("Failed to save AUP text")
 		respondError(w, http.StatusInternalServerError, "Failed to save AUP text")
 		return
+	}
+	respondJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// --- Admin: Executor Configuration ---
+
+// executorConfigKeys lists all executor-related app_config keys and their
+// corresponding JSON field names.
+var executorConfigKeys = []struct {
+	key  string
+	json string
+}{
+	{"executor_mode", "executor_mode"},
+	{"k8s_namespace", "k8s_namespace"},
+	{"k8s_worker_image", "k8s_worker_image"},
+	{"k8s_worker_service_account", "k8s_worker_service_account"},
+	{"k8s_worker_cpu_request", "k8s_worker_cpu_request"},
+	{"k8s_worker_cpu_limit", "k8s_worker_cpu_limit"},
+	{"k8s_worker_mem_request", "k8s_worker_mem_request"},
+	{"k8s_worker_mem_limit", "k8s_worker_mem_limit"},
+	{"k8s_worker_node_selector", "k8s_worker_node_selector"},
+	{"k8s_worker_tolerations", "k8s_worker_tolerations"},
+	{"k8s_worker_labels", "k8s_worker_labels"},
+	{"k8s_pod_ttl_seconds", "k8s_pod_ttl_seconds"},
+	{"agent_model", "agent_model"},
+	{"max_concurrent_analyses", "max_concurrent_analyses"},
+}
+
+func (h *Handler) GetExecutorConfig(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	result := map[string]string{
+		"active_mode": h.cfg.ExecutorMode,
+	}
+	for _, kv := range executorConfigKeys {
+		val, _ := h.queries.GetAppConfig(ctx, kv.key)
+		result[kv.json] = val
+	}
+	respondJSON(w, http.StatusOK, result)
+}
+
+func (h *Handler) UpdateExecutorConfig(w http.ResponseWriter, r *http.Request) {
+	var req map[string]string
+	if err := decodeJSON(r, &req); err != nil {
+		respondError(w, http.StatusBadRequest, "Invalid request")
+		return
+	}
+
+	validModes := map[string]bool{"local": true, "process": true, "kubernetes": true}
+	if mode, ok := req["executor_mode"]; ok && !validModes[mode] {
+		respondError(w, http.StatusBadRequest, "Invalid executor_mode: must be local, process, or kubernetes")
+		return
+	}
+
+	ctx := r.Context()
+	allowed := make(map[string]bool, len(executorConfigKeys))
+	for _, kv := range executorConfigKeys {
+		allowed[kv.key] = true
+	}
+	for key, value := range req {
+		if !allowed[key] {
+			continue
+		}
+		if err := h.queries.SetAppConfig(ctx, key, value); err != nil {
+			log.Error().Err(err).Str("key", key).Msg("Failed to save executor config")
+			respondError(w, http.StatusInternalServerError, "Failed to save "+key)
+			return
+		}
 	}
 	respondJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }

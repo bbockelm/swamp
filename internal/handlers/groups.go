@@ -13,6 +13,12 @@ import (
 
 // --- Groups CRUD ---
 
+// groupWithRole wraps a Group with the caller's effective role.
+type groupWithRole struct {
+	models.Group
+	MyRole string `json:"my_role"`
+}
+
 func (h *Handler) ListGroups(w http.ResponseWriter, r *http.Request) {
 	user := GetUserFromContext(r.Context())
 	if user == nil {
@@ -21,7 +27,8 @@ func (h *Handler) ListGroups(w http.ResponseWriter, r *http.Request) {
 	}
 	var groups []models.Group
 	var err error
-	if UserHasRole(r.Context(), RoleAdmin) {
+	isSiteAdmin := UserHasRole(r.Context(), RoleAdmin)
+	if isSiteAdmin {
 		// Admins see all groups
 		groups, err = h.queries.ListAllGroups(r.Context())
 	} else {
@@ -33,7 +40,26 @@ func (h *Handler) ListGroups(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusInternalServerError, "Failed to list groups")
 		return
 	}
-	respondJSON(w, http.StatusOK, groups)
+
+	// Enrich each group with the caller's role.
+	result := make([]groupWithRole, len(groups))
+	for i, g := range groups {
+		var role string
+		if isSiteAdmin || g.OwnerID == user.ID {
+			role = "admin"
+		} else {
+			role, _ = h.queries.GetGroupMemberRole(r.Context(), g.ID, user.ID)
+			// Check admin_group membership for elevated access.
+			if role != "admin" && g.AdminGroupID != nil {
+				isMember, _ := h.queries.IsGroupMember(r.Context(), *g.AdminGroupID, user.ID)
+				if isMember {
+					role = "admin"
+				}
+			}
+		}
+		result[i] = groupWithRole{Group: g, MyRole: role}
+	}
+	respondJSON(w, http.StatusOK, result)
 }
 
 func (h *Handler) CreateGroup(w http.ResponseWriter, r *http.Request) {
@@ -73,14 +99,34 @@ func (h *Handler) GetGroup(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusNotFound, "Group not found")
 		return
 	}
-	if !UserHasRole(r.Context(), RoleAdmin) {
-		isMember, _ := h.queries.IsGroupMember(r.Context(), groupID, user.ID)
-		if !isMember {
+
+	// Determine the caller's effective role in this group.
+	var myRole string
+	if UserHasRole(r.Context(), RoleAdmin) {
+		myRole = "admin"
+	} else {
+		myRole, _ = h.queries.GetGroupMemberRole(r.Context(), groupID, user.ID)
+		if myRole == "" {
+			// Check ownership.
+			if group.OwnerID == user.ID {
+				myRole = "admin"
+			}
+		}
+		if myRole == "" {
 			respondError(w, http.StatusForbidden, "Not a member of this group")
 			return
 		}
+		// Also check admin_group membership for elevated access.
+		if myRole != "admin" && group.AdminGroupID != nil {
+			isMember, _ := h.queries.IsGroupMember(r.Context(), *group.AdminGroupID, user.ID)
+			if isMember {
+				myRole = "admin"
+			}
+		}
 	}
-	respondJSON(w, http.StatusOK, group)
+
+	// Return the group plus the caller's role.
+	respondJSON(w, http.StatusOK, groupWithRole{Group: *group, MyRole: myRole})
 }
 
 func (h *Handler) UpdateGroup(w http.ResponseWriter, r *http.Request) {
@@ -334,6 +380,38 @@ func (h *Handler) AcceptGroupInvite(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = h.queries.MarkGroupInviteUsed(r.Context(), invite.ID)
 	respondJSON(w, http.StatusOK, map[string]string{"status": "joined", "group_id": invite.GroupID})
+}
+
+// GetGroupInviteInfo returns public info about an invite (group name + role)
+// so the accept page can show what the user is joining.
+func (h *Handler) GetGroupInviteInfo(w http.ResponseWriter, r *http.Request) {
+	token := r.URL.Query().Get("token")
+	if token == "" {
+		respondError(w, http.StatusBadRequest, "Token required")
+		return
+	}
+	invite, err := h.queries.GetGroupInviteByToken(r.Context(), hashToken(token))
+	if err != nil {
+		respondError(w, http.StatusNotFound, "Invite not found")
+		return
+	}
+	if invite.Used {
+		respondError(w, http.StatusGone, "This invite has already been used")
+		return
+	}
+	if time.Now().After(invite.ExpiresAt) {
+		respondError(w, http.StatusGone, "This invite has expired")
+		return
+	}
+	group, err := h.queries.GetGroup(r.Context(), invite.GroupID)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "Failed to look up group")
+		return
+	}
+	respondJSON(w, http.StatusOK, map[string]string{
+		"group_name": group.Name,
+		"role":       invite.Role,
+	})
 }
 
 // DeleteGroupInvite revokes a group invite.

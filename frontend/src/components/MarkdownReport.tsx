@@ -43,7 +43,7 @@ export function MarkdownReport({
   );
 }
 
-function RenderedMarkdown({ content }: { content: string }) {
+export function RenderedMarkdown({ content }: { content: string }) {
   // Simple markdown rendering without extra dependencies.
   // Supports headers (h1–h5), bold, italic, code blocks, lists, links,
   // horizontal rules, and pipe-delimited tables.

@@ -67,7 +67,7 @@ func ParseOutputDir(outputDir, analysisID, projectID string) (*ParseOutput, erro
 		if len(sha) >= 7 && len(sha) <= 40 {
 			valid := true
 			for _, c := range sha {
-				if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
+				if (c < '0' || c > '9') && (c < 'a' || c > 'f') && (c < 'A' || c > 'F') {
 					valid = false
 					break
 				}
@@ -189,7 +189,12 @@ func parseSARIF(path string) (summary string, findingCount int, severityCounts j
 	if err != nil {
 		return "Failed to read SARIF file", 0, nil
 	}
+	return ParseSARIFBytes(data)
+}
 
+// ParseSARIFBytes parses SARIF data from bytes and returns finding counts.
+// This is exported for use by the worker result upload handler.
+func ParseSARIFBytes(data []byte) (summary string, findingCount int, severityCounts json.RawMessage) {
 	var doc sarifDocument
 	if err := json.Unmarshal(data, &doc); err != nil {
 		return "Failed to parse SARIF file", 0, nil
@@ -232,6 +237,12 @@ func extractFindings(path, analysisID, projectID string) []models.Finding {
 	if err != nil {
 		return nil
 	}
+	return ExtractFindingsFromBytes(data, analysisID, projectID)
+}
+
+// ExtractFindingsFromBytes parses SARIF data from bytes and returns Finding records.
+// This is exported for use by the worker result upload handler.
+func ExtractFindingsFromBytes(data []byte, analysisID, projectID string) []models.Finding {
 	var doc sarifDocument
 	if err := json.Unmarshal(data, &doc); err != nil {
 		return nil
@@ -286,13 +297,13 @@ func createTarGz(outPath, srcDir string) error {
 	if err != nil {
 		return fmt.Errorf("create tarball: %w", err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	gw := gzip.NewWriter(f)
-	defer gw.Close()
+	defer func() { _ = gw.Close() }()
 
 	tw := tar.NewWriter(gw)
-	defer tw.Close()
+	defer func() { _ = tw.Close() }()
 
 	return filepath.Walk(srcDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
@@ -323,7 +334,7 @@ func createTarGz(outPath, srcDir string) error {
 		if err != nil {
 			return err
 		}
-		defer file.Close()
+		defer func() { _ = file.Close() }()
 
 		_, err = io.Copy(tw, file)
 		return err

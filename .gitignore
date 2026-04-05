@@ -2,10 +2,14 @@
 bin/
 tmp/
 /server
+/swamp-server
 
 # Staging / agent hints
 /reference
 /scripts
+
+# Runtime dir
+/.swamp
 
 # Go
 *.exe

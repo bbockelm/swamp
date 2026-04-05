@@ -134,11 +134,12 @@ function GroupCard({
   expanded: boolean;
   onToggle: () => void;
 }) {
+  const isAdmin = group.my_role === 'admin';
   const [tab, setTab] = useState<GroupTab>("members");
 
   const tabs: { key: GroupTab; label: string }[] = [
-    { key: "members", label: "Members & Invites" },
-    { key: "settings", label: "Settings" },
+    { key: "members", label: isAdmin ? "Members & Invites" : "Members" },
+    ...(isAdmin ? [{ key: "settings" as const, label: "Settings" }] : []),
   ];
 
   return (
@@ -212,7 +213,7 @@ function GroupCard({
           </div>
 
           <div className="p-4">
-            {tab === "members" && <GroupManager groupId={group.id} />}
+            {tab === "members" && <GroupManager groupId={group.id} isAdmin={group.my_role === 'admin'} />}
             {tab === "settings" && <GroupSettings group={group} />}
           </div>
         </div>

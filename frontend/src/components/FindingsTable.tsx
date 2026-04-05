@@ -68,12 +68,14 @@ export function FindingsTable({
   initialLevel,
   initialAnalysisId,
   initialFindingId,
+  canEdit = true,
 }: {
   projectId: string;
   gitUrl?: string;
   initialLevel?: string;
   initialAnalysisId?: string;
   initialFindingId?: string;
+  canEdit?: boolean;
 }) {
   const [page, setPage] = useState(1);
   const [levelFilter, setLevelFilter] = useState(initialLevel || '');
@@ -297,6 +299,7 @@ export function FindingsTable({
                   gitUrl={gitUrl}
                   expanded={expandedId === f.id}
                   onToggle={() => setExpandedId(expandedId === f.id ? null : f.id)}
+                  canEdit={canEdit}
                 />
               ))}
             </tbody>
@@ -321,12 +324,14 @@ function FindingRow({
   gitUrl,
   expanded,
   onToggle,
+  canEdit,
 }: {
   finding: Finding;
   projectId: string;
   gitUrl?: string;
   expanded: boolean;
   onToggle: () => void;
+  canEdit: boolean;
 }) {
   const level = finding.level || 'note';
   const ghLink = gitUrl ? buildGitHubLink(gitUrl, finding.file_path, finding.start_line, finding.git_commit) : null;
@@ -368,7 +373,7 @@ function FindingRow({
       {expanded && (
         <tr>
           <td colSpan={5} className="bg-gray-50 px-4 py-4">
-            <FindingDetail finding={finding} projectId={projectId} />
+            <FindingDetail finding={finding} projectId={projectId} canEdit={canEdit} />
           </td>
         </tr>
       )}
@@ -376,7 +381,7 @@ function FindingRow({
   );
 }
 
-function FindingDetail({ finding, projectId }: { finding: Finding; projectId: string }) {
+function FindingDetail({ finding, projectId, canEdit }: { finding: Finding; projectId: string; canEdit: boolean }) {
   const queryClient = useQueryClient();
   const [status, setStatus] = useState(finding.latest_status || 'open');
   const [note, setNote] = useState(finding.latest_note || '');
@@ -430,46 +435,48 @@ function FindingDetail({ finding, projectId }: { finding: Finding; projectId: st
       )}
 
       {/* Annotation form */}
-      <div className="border-t pt-4">
-        <h4 className="text-sm font-medium mb-2">Annotate Finding</h4>
-        <div className="flex gap-3 items-end">
-          <div>
-            <label className="block text-xs text-gray-500 mb-1">Status</label>
-            <select
-              value={status}
-              onChange={(e) => setStatus(e.target.value)}
-              className="border rounded px-2 py-1.5 text-sm"
+      {canEdit && (
+        <div className="border-t pt-4">
+          <h4 className="text-sm font-medium mb-2">Annotate Finding</h4>
+          <div className="flex gap-3 items-end">
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">Status</label>
+              <select
+                value={status}
+                onChange={(e) => setStatus(e.target.value)}
+                className="border rounded px-2 py-1.5 text-sm"
+              >
+                {STATUS_OPTIONS.map((s) => (
+                  <option key={s.value} value={s.value}>{s.label}</option>
+                ))}
+              </select>
+            </div>
+            <div className="flex-1">
+              <label className="block text-xs text-gray-500 mb-1">Note</label>
+              <input
+                type="text"
+                value={note}
+                onChange={(e) => setNote(e.target.value)}
+                className="border rounded px-2 py-1.5 text-sm w-full"
+                placeholder="Add a note..."
+              />
+            </div>
+            <button
+              onClick={() => annotateMutation.mutate()}
+              disabled={annotateMutation.isPending}
+              className="bg-blue-600 text-white px-3 py-1.5 text-sm rounded hover:bg-blue-700 disabled:opacity-50"
             >
-              {STATUS_OPTIONS.map((s) => (
-                <option key={s.value} value={s.value}>{s.label}</option>
-              ))}
-            </select>
+              {annotateMutation.isPending ? 'Saving...' : 'Save'}
+            </button>
           </div>
-          <div className="flex-1">
-            <label className="block text-xs text-gray-500 mb-1">Note</label>
-            <input
-              type="text"
-              value={note}
-              onChange={(e) => setNote(e.target.value)}
-              className="border rounded px-2 py-1.5 text-sm w-full"
-              placeholder="Add a note..."
-            />
-          </div>
-          <button
-            onClick={() => annotateMutation.mutate()}
-            disabled={annotateMutation.isPending}
-            className="bg-blue-600 text-white px-3 py-1.5 text-sm rounded hover:bg-blue-700 disabled:opacity-50"
-          >
-            {annotateMutation.isPending ? 'Saving...' : 'Save'}
-          </button>
+          {annotateMutation.isSuccess && (
+            <p className="text-green-600 text-xs mt-1">Annotation saved.</p>
+          )}
+          {annotateMutation.isError && (
+            <p className="text-red-600 text-xs mt-1">Failed to save annotation.</p>
+          )}
         </div>
-        {annotateMutation.isSuccess && (
-          <p className="text-green-600 text-xs mt-1">Annotation saved.</p>
-        )}
-        {annotateMutation.isError && (
-          <p className="text-red-600 text-xs mt-1">Failed to save annotation.</p>
-        )}
-      </div>
+      )}
 
       {/* Annotation history toggle */}
       <div>

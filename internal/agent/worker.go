@@ -44,8 +44,8 @@ func RunWorker(cfg *config.Config) error {
 		if err != nil {
 			return fmt.Errorf("acquiring worker lock: %w", err)
 		}
-		defer lockFile.Close()
-		os.Unsetenv("SWAMP_WORKER_LOCK_FILE")
+		defer func() { _ = lockFile.Close() }()
+		_ = os.Unsetenv("SWAMP_WORKER_LOCK_FILE")
 	}
 
 	workerToken := cfg.WorkerToken
@@ -54,7 +54,7 @@ func RunWorker(cfg *config.Config) error {
 
 	// Immediately clear the one-time token from the environment so Claude
 	// cannot read it from /proc/self/environ or the `env` command.
-	os.Unsetenv("SWAMP_WORKER_TOKEN")
+	_ = os.Unsetenv("SWAMP_WORKER_TOKEN")
 
 	log.Info().
 		Str("server", serverURL).
@@ -187,7 +187,7 @@ func exchangeToken(serverURL, token string) (*WorkerExchangeResponse, error) {
 	if err != nil {
 		return nil, fmt.Errorf("HTTP request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
@@ -222,7 +222,7 @@ func reportStatus(serverURL, sessionToken, analysisID, status, detail string) {
 		log.Error().Err(err).Msg("Failed to report status after retries")
 		return
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 }
 
 // reportCompletion sends a completion status that includes the resolved git commit SHA.
@@ -349,13 +349,13 @@ func runWorkerAgent(ctx context.Context, cfg *config.Config, session *WorkerExch
 	if err != nil {
 		return fmt.Errorf("create stdout log: %w", err)
 	}
-	defer stdoutFile.Close()
+	defer func() { _ = stdoutFile.Close() }()
 
 	stderrFile, err := os.Create(filepath.Join(workDir, "output", "agent_stderr.log"))
 	if err != nil {
 		return fmt.Errorf("create stderr log: %w", err)
 	}
-	defer stderrFile.Close()
+	defer func() { _ = stderrFile.Close() }()
 
 	stdoutPR, stdoutPW := io.Pipe()
 	stderrPR, stderrPW := io.Pipe()
@@ -408,8 +408,8 @@ func runWorkerAgent(ctx context.Context, cfg *config.Config, session *WorkerExch
 
 	startTime := time.Now()
 	err = cmd.Run()
-	stdoutPW.Close()
-	stderrPW.Close()
+	_ = stdoutPW.Close()
+	_ = stderrPW.Close()
 	wg.Wait()
 	flushCancel()
 	streamer.flush()

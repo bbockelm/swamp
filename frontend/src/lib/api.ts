@@ -74,6 +74,7 @@ export interface Group {
   description: string;
   owner_id: string;
   admin_group_id?: string | null;
+  my_role?: string;
   created_at: string;
   updated_at: string;
 }
@@ -109,6 +110,9 @@ export interface Project {
   read_group_id: string | null;
   write_group_id: string | null;
   admin_group_id: string | null;
+  uses_global_key: boolean;
+  status: string;
+  my_role?: string;
   created_at: string;
   updated_at: string;
 }
@@ -385,6 +389,8 @@ export const api = {
         method: "POST",
         body: JSON.stringify({ token }),
       }),
+    inviteInfo: (token: string): Promise<{ group_name: string; role: string }> =>
+      fetchJSON(`${BASE}/invites/info?token=${encodeURIComponent(token)}`),
   },
 
   projects: {
@@ -614,6 +620,13 @@ export const api = {
       }),
     listUserIdentities: (userId: string): Promise<UserIdentity[]> =>
       fetchJSON(`${BASE}/admin/users/${userId}/identities`),
+    deleteUserIdentity: (
+      userId: string,
+      identityId: string,
+    ): Promise<void> =>
+      fetchJSON(`${BASE}/admin/users/${userId}/identities/${identityId}`, {
+        method: "DELETE",
+      }),
     createInvite: (
       userId: string,
     ): Promise<{ invite: UserInvite; invite_url: string }> =>
@@ -689,6 +702,15 @@ export const api = {
       fetchJSON(`${BASE}/admin/aup`),
     updateAUPConfig: (data: { version?: string; text?: string }): Promise<void> =>
       fetchJSON(`${BASE}/admin/aup`, {
+        method: "PUT",
+        body: JSON.stringify(data),
+      }),
+    getExecutorConfig: (): Promise<Record<string, string>> =>
+      fetchJSON(`${BASE}/admin/executor-config`),
+    updateExecutorConfig: (
+      data: Record<string, string>,
+    ): Promise<void> =>
+      fetchJSON(`${BASE}/admin/executor-config`, {
         method: "PUT",
         body: JSON.stringify(data),
       }),

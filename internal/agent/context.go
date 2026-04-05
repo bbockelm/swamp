@@ -72,7 +72,7 @@ func decryptNoteFromS3(ctx context.Context, enc *crypto.Encryptor, store *storag
 	if err != nil {
 		return "", fmt.Errorf("download from S3: %w", err)
 	}
-	defer rc.Close()
+	defer func() { _ = rc.Close() }()
 	ciphertext, err := io.ReadAll(rc)
 	if err != nil {
 		return "", fmt.Errorf("read from S3: %w", err)

@@ -15,6 +15,7 @@ export default function GroupDetailClient() {
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [adminGroupId, setAdminGroupId] = useState<string | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   const { data: group, isLoading } = useQuery({
     queryKey: ['group', id],
@@ -46,6 +47,8 @@ export default function GroupDetailClient() {
 
   if (isLoading) return <p>Loading...</p>;
   if (!group) return <p>Group not found.</p>;
+
+  const isAdmin = group.my_role === 'admin';
 
   return (
     <div>
@@ -98,14 +101,14 @@ export default function GroupDetailClient() {
                 <button
                   type="submit"
                   disabled={updateMutation.isPending}
-                  className="bg-blue-600 text-white px-3 py-1 text-sm rounded"
+                  className="bg-blue-600 text-white px-3 py-1.5 text-sm rounded hover:bg-blue-700 disabled:opacity-50"
                 >
                   Save
                 </button>
                 <button
                   type="button"
                   onClick={() => setEditing(false)}
-                  className="px-3 py-1 text-sm border rounded"
+                  className="text-sm text-gray-500 hover:text-gray-700 px-3 py-1.5"
                 >
                   Cancel
                 </button>
@@ -117,18 +120,18 @@ export default function GroupDetailClient() {
               {group.description && (
                 <p className="text-gray-500 mt-1">{group.description}</p>
               )}
-              {group.admin_group_id && (
+              {group.admin_group_id && allGroups?.find((g) => g.id === group.admin_group_id) && (
                 <p className="text-sm text-purple-600 mt-1">
                   Admin group:{' '}
                   <a href={`/groups/${group.admin_group_id}`} className="underline hover:text-purple-800">
-                    {allGroups?.find((g) => g.id === group.admin_group_id)?.name ?? group.admin_group_id.slice(0, 8)}
+                    {allGroups.find((g) => g.id === group.admin_group_id)!.name}
                   </a>
                 </p>
               )}
             </>
           )}
         </div>
-        {!editing && (
+        {!editing && isAdmin && (
           <div className="flex gap-2">
             <button
               onClick={() => {
@@ -137,25 +140,49 @@ export default function GroupDetailClient() {
                 setAdminGroupId(group.admin_group_id ?? null);
                 setEditing(true);
               }}
-              className="px-3 py-1.5 text-sm border rounded hover:bg-gray-50"
+              className="text-sm text-gray-600 hover:text-gray-900 px-3 py-1.5"
             >
               Edit
-            </button>
-            <button
-              onClick={() => {
-                if (confirm('Delete this group?')) {
-                  deleteMutation.mutate();
-                }
-              }}
-              className="px-3 py-1.5 text-sm text-red-600 border border-red-200 rounded hover:bg-red-50"
-            >
-              Delete
             </button>
           </div>
         )}
       </div>
 
-      <GroupManager groupId={id} />
+      <GroupManager groupId={id} isAdmin={isAdmin} />
+
+      {/* Danger zone — admin only */}
+      {isAdmin && (
+        <div className="border-t pt-4 mt-8">
+          <h4 className="text-sm font-semibold text-red-600 mb-2">Danger Zone</h4>
+          <p className="text-xs text-gray-500 mb-3">
+            Deleting this group removes all members, invites, and access grants.
+          </p>
+          {confirmDelete ? (
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-red-600">Are you sure?</span>
+              <button
+                onClick={() => deleteMutation.mutate()}
+                className="text-sm font-medium px-3 py-1.5 rounded bg-red-600 text-white hover:bg-red-700"
+              >
+                Yes, Delete
+              </button>
+              <button
+                onClick={() => setConfirmDelete(false)}
+                className="text-sm text-gray-500 hover:text-gray-700"
+              >
+                Cancel
+              </button>
+            </div>
+          ) : (
+            <button
+              onClick={() => setConfirmDelete(true)}
+              className="text-sm font-medium px-3 py-1.5 rounded bg-red-100 text-red-800 hover:bg-red-200"
+            >
+              Delete Group
+            </button>
+          )}
+        </div>
+      )}
     </div>
   );
 }

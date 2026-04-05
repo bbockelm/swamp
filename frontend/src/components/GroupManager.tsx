@@ -4,11 +4,11 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, type User } from "@/lib/api";
 import { useState, useRef, useEffect } from "react";
 
-export function GroupManager({ groupId }: { groupId: string }) {
+export function GroupManager({ groupId, isAdmin }: { groupId: string; isAdmin: boolean }) {
   return (
     <div className="space-y-8">
-      <MembersSection groupId={groupId} />
-      <InvitesSection groupId={groupId} />
+      <MembersSection groupId={groupId} isAdmin={isAdmin} />
+      <InvitesSection groupId={groupId} isAdmin={isAdmin} />
     </div>
   );
 }
@@ -101,10 +101,11 @@ function UserSearch({ onSelect }: { onSelect: (user: User) => void }) {
   );
 }
 
-function MembersSection({ groupId }: { groupId: string }) {
+function MembersSection({ groupId, isAdmin }: { groupId: string; isAdmin: boolean }) {
   const queryClient = useQueryClient();
   const [selectedUser, setSelectedUser] = useState<User | null>(null);
   const [addRole, setAddRole] = useState("member");
+  const [confirmRemove, setConfirmRemove] = useState<string | null>(null);
 
   const { data: members, isLoading } = useQuery({
     queryKey: ["group-members", groupId],
@@ -131,6 +132,7 @@ function MembersSection({ groupId }: { groupId: string }) {
       queryClient.invalidateQueries({
         queryKey: ["group-members", groupId],
       });
+      setConfirmRemove(null);
     },
   });
 
@@ -148,55 +150,57 @@ function MembersSection({ groupId }: { groupId: string }) {
     <div>
       <h2 className="text-lg font-semibold mb-4">Members</h2>
 
-      {/* Add member form */}
-      <form
-        onSubmit={(e) => {
-          e.preventDefault();
-          if (selectedUser) addMutation.mutate();
-        }}
-        className="flex gap-2 mb-4 items-start"
-      >
-        {selectedUser ? (
-          <div className="flex-1 flex items-center gap-2 border rounded px-3 py-1.5 bg-blue-50">
-            <div className="flex-1 text-sm">
-              <span className="font-medium">
-                {selectedUser.display_name || "(no name)"}
-              </span>
-              {selectedUser.email && (
-                <span className="text-gray-500 ml-1 text-xs">
-                  {selectedUser.email}
+      {/* Add member form — admin only */}
+      {isAdmin && (
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (selectedUser) addMutation.mutate();
+          }}
+          className="flex gap-2 mb-4 items-start"
+        >
+          {selectedUser ? (
+            <div className="flex-1 flex items-center gap-2 border rounded px-3 py-1.5 bg-blue-50">
+              <div className="flex-1 text-sm">
+                <span className="font-medium">
+                  {selectedUser.display_name || "(no name)"}
                 </span>
-              )}
+                {selectedUser.email && (
+                  <span className="text-gray-500 ml-1 text-xs">
+                    {selectedUser.email}
+                  </span>
+                )}
+              </div>
+              <button
+                type="button"
+                onClick={() => setSelectedUser(null)}
+                className="text-gray-400 hover:text-gray-600 text-sm"
+              >
+                &times;
+              </button>
             </div>
-            <button
-              type="button"
-              onClick={() => setSelectedUser(null)}
-              className="text-gray-400 hover:text-gray-600 text-sm"
-            >
-              &times;
-            </button>
-          </div>
-        ) : (
-          <UserSearch onSelect={setSelectedUser} />
-        )}
-        <select
-          value={addRole}
-          onChange={(e) => setAddRole(e.target.value)}
-          className="border rounded px-3 py-1.5 text-sm"
-        >
-          <option value="member">Member</option>
-          <option value="admin">Admin</option>
-        </select>
-        <button
-          type="submit"
-          disabled={addMutation.isPending || !selectedUser}
-          className="bg-blue-600 text-white px-3 py-1.5 text-sm rounded hover:bg-blue-700 disabled:opacity-50"
-        >
-          Add
-        </button>
-      </form>
+          ) : (
+            <UserSearch onSelect={setSelectedUser} />
+          )}
+          <select
+            value={addRole}
+            onChange={(e) => setAddRole(e.target.value)}
+            className="border rounded px-3 py-1.5 text-sm"
+          >
+            <option value="member">Member</option>
+            <option value="admin">Admin</option>
+          </select>
+          <button
+            type="submit"
+            disabled={addMutation.isPending || !selectedUser}
+            className="bg-blue-600 text-white px-3 py-1.5 text-sm rounded hover:bg-blue-700 disabled:opacity-50"
+          >
+            Add
+          </button>
+        </form>
+      )}
 
-      {addMutation.isError && (
+      {isAdmin && addMutation.isError && (
         <p className="text-sm text-red-600 mb-3">
           Error: {addMutation.error?.message || 'An unexpected error occurred'}
         </p>
@@ -230,30 +234,46 @@ function MembersSection({ groupId }: { groupId: string }) {
                   {m.role}
                 </span>
               </div>
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={() =>
-                    roleMutation.mutate({
-                      userId: m.user_id,
-                      role: m.role === "admin" ? "member" : "admin",
-                    })
-                  }
-                  disabled={roleMutation.isPending}
-                  className="text-sm text-blue-600 hover:text-blue-800"
-                >
-                  {m.role === "admin" ? "Demote" : "Promote"}
-                </button>
-                <button
-                  onClick={() => {
-                    if (confirm("Remove this member?")) {
-                      removeMutation.mutate(m.user_id);
+              {isAdmin && (
+                <div className="flex items-center gap-3">
+                  <button
+                    onClick={() =>
+                      roleMutation.mutate({
+                        userId: m.user_id,
+                        role: m.role === "admin" ? "member" : "admin",
+                      })
                     }
-                  }}
-                  className="text-red-500 text-sm hover:text-red-700"
-                >
-                  Remove
-                </button>
-              </div>
+                    disabled={roleMutation.isPending}
+                    className="text-xs text-blue-600 hover:text-blue-800"
+                  >
+                    {m.role === "admin" ? "Demote" : "Promote"}
+                  </button>
+                  {confirmRemove === m.user_id ? (
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-red-600">Remove?</span>
+                      <button
+                        onClick={() => removeMutation.mutate(m.user_id)}
+                        className="text-xs font-medium text-white bg-red-600 px-2 py-0.5 rounded hover:bg-red-700"
+                      >
+                        Yes
+                      </button>
+                      <button
+                        onClick={() => setConfirmRemove(null)}
+                        className="text-xs text-gray-500 hover:text-gray-700"
+                      >
+                        No
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      onClick={() => setConfirmRemove(m.user_id)}
+                      className="text-xs text-red-500 hover:text-red-700"
+                    >
+                      Remove
+                    </button>
+                  )}
+                </div>
+              )}
             </div>
           ))}
         </div>
@@ -262,7 +282,7 @@ function MembersSection({ groupId }: { groupId: string }) {
   );
 }
 
-function InvitesSection({ groupId }: { groupId: string }) {
+function InvitesSection({ groupId, isAdmin }: { groupId: string; isAdmin: boolean }) {
   const queryClient = useQueryClient();
   const [role, setRole] = useState("member");
   const [newInviteLink, setNewInviteLink] = useState("");
@@ -272,6 +292,7 @@ function InvitesSection({ groupId }: { groupId: string }) {
   const { data: invites, isLoading } = useQuery({
     queryKey: ["group-invites", groupId],
     queryFn: () => api.groups.listInvites(groupId),
+    enabled: isAdmin,
   });
 
   const createMutation = useMutation({
@@ -304,6 +325,8 @@ function InvitesSection({ groupId }: { groupId: string }) {
   const pastInvites = invites?.filter(
     (inv) => inv.used || new Date(inv.expires_at) <= new Date()
   ) ?? [];
+
+  if (!isAdmin) return null;
 
   return (
     <div>

@@ -120,7 +120,7 @@ func (c *inClusterK8sClient) doRequest(ctx context.Context, method, path string,
 	if err != nil {
 		return nil, 0, fmt.Errorf("K8s API request %s %s: %w", method, path, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20)) // 1MB limit
 	if err != nil {

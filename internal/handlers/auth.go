@@ -491,6 +491,14 @@ func (h *Handler) OIDCLogin(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
+	// Store user invite token if present (for linking identity to existing user)
+	if userInviteToken := r.URL.Query().Get("user_invite_token"); userInviteToken != "" {
+		http.SetCookie(w, &http.Cookie{
+			Name: "swamp_user_invite_token", Value: userInviteToken, Path: "/",
+			MaxAge: 600, HttpOnly: true, SameSite: http.SameSiteLaxMode,
+		})
+	}
+
 	stateBytes := make([]byte, 16)
 	_, _ = rand.Read(stateBytes)
 	state := hex.EncodeToString(stateBytes)
@@ -618,24 +626,57 @@ func (h *Handler) OIDCCallback(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Check for user invite token (links new identity to existing user)
+	var userInvite *models.UserInvite
+	if inviteCookie, cookieErr := r.Cookie("swamp_user_invite_token"); cookieErr == nil && inviteCookie.Value != "" {
+		tokenHash := hashToken(inviteCookie.Value)
+		if inv, invErr := h.queries.GetUserInviteByToken(r.Context(), tokenHash); invErr == nil {
+			if !inv.Used && time.Now().Before(inv.ExpiresAt) {
+				userInvite = inv
+			}
+		}
+		// Clear the cookie regardless
+		http.SetCookie(w, &http.Cookie{
+			Name: "swamp_user_invite_token", Value: "", Path: "/", MaxAge: -1,
+		})
+	}
+
 	// Find or create user by identity
 	identity, err := h.queries.FindIdentity(r.Context(), issuer, sub)
 	var userID string
 	if err != nil {
-		// New user
-		user := &models.User{DisplayName: name, Email: email, Status: "active"}
-		if err := h.queries.CreateUser(r.Context(), user); err != nil {
-			log.Error().Err(err).Msg("Failed to create user")
-			respondError(w, http.StatusInternalServerError, "Failed to create user")
-			return
+		// Identity not found - check if we have a user invite
+		if userInvite != nil {
+			// Link this new identity to the existing user from the invite
+			userID = userInvite.CreatedBy
+			ident := &models.UserIdentity{
+				UserID: userID, Issuer: issuer, Subject: sub,
+				Email: email, DisplayName: name, IDPName: idpName,
+			}
+			if err := h.queries.CreateIdentity(r.Context(), ident); err != nil {
+				log.Error().Err(err).Str("user_id", userID).Msg("Failed to create identity from invite")
+				respondError(w, http.StatusInternalServerError, "Failed to link identity")
+				return
+			}
+			// Mark the invite as used
+			_ = h.queries.MarkUserInviteUsed(r.Context(), userInvite.ID, userID)
+			log.Info().Str("user_id", userID).Str("issuer", issuer).Str("sub", sub).Msg("Linked new identity via user invite")
+		} else {
+			// No invite - create a new user (auto-registration)
+			user := &models.User{DisplayName: name, Email: email, Status: "active"}
+			if err := h.queries.CreateUser(r.Context(), user); err != nil {
+				log.Error().Err(err).Msg("Failed to create user")
+				respondError(w, http.StatusInternalServerError, "Failed to create user")
+				return
+			}
+			userID = user.ID
+			ident := &models.UserIdentity{
+				UserID: userID, Issuer: issuer, Subject: sub,
+				Email: email, DisplayName: name, IDPName: idpName,
+			}
+			_ = h.queries.CreateIdentity(r.Context(), ident)
+			_ = h.queries.AddUserRole(r.Context(), userID, RoleUser)
 		}
-		userID = user.ID
-		ident := &models.UserIdentity{
-			UserID: userID, Issuer: issuer, Subject: sub,
-			Email: email, DisplayName: name, IDPName: idpName,
-		}
-		_ = h.queries.CreateIdentity(r.Context(), ident)
-		_ = h.queries.AddUserRole(r.Context(), userID, RoleUser)
 	} else {
 		userID = identity.UserID
 	}

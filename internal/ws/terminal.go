@@ -113,7 +113,7 @@ func (h *Hub) CloseRoom(analysisID string) {
 				"analysis complete",
 			),
 		)
-		conn.Close()
+		_ = conn.Close()
 	}
 }
 

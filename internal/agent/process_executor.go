@@ -367,7 +367,7 @@ func (e *ProcessExecutor) waitProcess(ctx context.Context, cancel context.Cancel
 
 // removeState deletes the lock/state file for an analysis.
 func (e *ProcessExecutor) removeState(analysisID string) {
-	os.Remove(e.statePath(analysisID))
+	_ = os.Remove(e.statePath(analysisID))
 }
 
 // lockFileHeld attempts a non-blocking flock on the given path.
@@ -418,7 +418,7 @@ func (e *ProcessExecutor) reconcileExisting(ctx context.Context) {
 		var state processState
 		if err := json.Unmarshal(data, &state); err != nil {
 			log.Warn().Str("file", entry.Name()).Msg("Invalid process state file, removing")
-			os.Remove(path)
+			_ = os.Remove(path)
 			continue
 		}
 
@@ -428,7 +428,7 @@ func (e *ProcessExecutor) reconcileExisting(ctx context.Context) {
 				Int("pid", state.PID).
 				Str("analysis_id", state.Analysis).
 				Msg("Worker lock file not held, cleaning up")
-			os.Remove(path)
+			_ = os.Remove(path)
 
 			// If the analysis is still in a running/pending state, mark failed.
 			a, getErr := e.queries.GetAnalysis(ctx, state.Analysis)

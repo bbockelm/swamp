@@ -5,7 +5,7 @@ import { api, type AnalysisResult } from "@/lib/api";
 import { useRouter } from "next/navigation";
 import { AnalysisStatus } from "@/components/AnalysisStatus";
 import { SARIFViewer } from "@/components/SARIFViewer";
-import { MarkdownReport } from "@/components/MarkdownReport";
+import { MarkdownReport, RenderedMarkdown } from "@/components/MarkdownReport";
 import { useEffect, useRef, useState } from "react";
 import { useResolvedParams } from "@/lib/useResolvedParams";
 
@@ -28,6 +28,13 @@ export default function AnalysisDetailClient() {
   }>('/projects/[id]/analyses/[analysisId]');
   const queryClient = useQueryClient();
   const router = useRouter();
+
+  const { data: project } = useQuery({
+    queryKey: ["project", projectId],
+    queryFn: () => api.projects.get(projectId),
+  });
+
+  const canEdit = project?.my_role === 'write' || project?.my_role === 'admin';
 
   const { data: analysis, isLoading } = useQuery({
     queryKey: ["analysis", projectId, analysisId],
@@ -143,7 +150,7 @@ export default function AnalysisDetailClient() {
           </div>
         </div>
         <div className="flex gap-2 print:hidden">
-          {(analysis.status === "pending" || analysis.status === "running") && (
+          {canEdit && (analysis.status === "pending" || analysis.status === "running") && (
             <button
               onClick={() => cancelMutation.mutate()}
               disabled={cancelMutation.isPending}
@@ -152,7 +159,7 @@ export default function AnalysisDetailClient() {
               Cancel
             </button>
           )}
-          {canResubmit && (
+          {canEdit && canResubmit && (
             <button
               onClick={() => resubmitMutation.mutate()}
               disabled={resubmitMutation.isPending}
@@ -335,7 +342,7 @@ export default function AnalysisDetailClient() {
               resultId={notesResult.id}
               projectId={projectId}
               analysisId={analysisId}
-              defaultOpen={true}
+              defaultOpen={false}
             />
           )}
 
@@ -407,6 +414,7 @@ function CollapsibleResultSection({
   const [open, setOpen] = useState(defaultOpen);
   const [content, setContent] = useState<string | null>(null);
   const [error, setError] = useState("");
+  const printRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!open || content !== null) return;
@@ -420,6 +428,44 @@ function CollapsibleResultSection({
       .catch((err) => setError(err.message));
   }, [open, content, projectId, analysisId, resultId]);
 
+  const handlePrintPDF = () => {
+    if (!printRef.current || !content) return;
+    const printWindow = window.open('', '_blank');
+    if (!printWindow) return;
+    printWindow.document.write(`
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <title>${title}</title>
+          <style>
+            body { font-family: system-ui, -apple-system, sans-serif; padding: 2rem; max-width: 800px; margin: 0 auto; }
+            h1 { font-size: 1.5rem; font-weight: bold; margin-bottom: 1rem; }
+            h2 { font-size: 1.25rem; font-weight: bold; margin-top: 1.5rem; margin-bottom: 0.5rem; }
+            h3 { font-size: 1.1rem; font-weight: 600; margin-top: 1rem; margin-bottom: 0.25rem; }
+            p { margin-bottom: 0.5rem; line-height: 1.5; }
+            pre { background: #f3f4f6; padding: 1rem; border-radius: 0.25rem; overflow-x: auto; font-size: 0.8rem; }
+            code { background: #f3f4f6; padding: 0.125rem 0.25rem; border-radius: 0.125rem; font-size: 0.85em; }
+            ul, ol { margin-left: 1.5rem; margin-bottom: 0.5rem; }
+            table { border-collapse: collapse; width: 100%; margin: 0.5rem 0; }
+            th, td { border: 1px solid #e5e7eb; padding: 0.5rem; text-align: left; font-size: 0.9rem; }
+            th { background: #f9fafb; font-weight: 600; }
+            @media print { body { padding: 0; } }
+          </style>
+        </head>
+        <body>
+          <h1>${title}</h1>
+          ${printRef.current.innerHTML}
+        </body>
+      </html>
+    `);
+    printWindow.document.close();
+    printWindow.focus();
+    setTimeout(() => {
+      printWindow.print();
+      printWindow.close();
+    }, 250);
+  };
+
   return (
     <div className="border rounded">
       <button
@@ -430,24 +476,33 @@ function CollapsibleResultSection({
           <span className="font-medium text-sm">{open ? "▾" : "▸"} {title}</span>
           <span className="text-xs text-gray-400 ml-2">{subtitle}</span>
         </div>
-        <a
-          href={api.analyses.downloadResult(projectId, analysisId, resultId)}
-          onClick={(e) => e.stopPropagation()}
-          className="text-xs text-blue-600 hover:underline"
-        >
-          Download
-        </a>
+        <div className="flex items-center gap-3" onClick={(e) => e.stopPropagation()}>
+          <a
+            href={api.analyses.downloadResult(projectId, analysisId, resultId)}
+            className="text-xs text-blue-600 hover:underline"
+          >
+            Download Raw
+          </a>
+          {content && (
+            <button
+              onClick={handlePrintPDF}
+              className="text-xs text-blue-600 hover:underline"
+            >
+              Download PDF
+            </button>
+          )}
+        </div>
       </button>
       {open && (
-        <div className="border-t px-4 py-3 bg-gray-50 max-h-[32rem] overflow-y-auto">
+        <div className="border-t bg-white max-h-[32rem] overflow-y-auto">
           {error ? (
-            <p className="text-sm text-red-600">{error}</p>
+            <p className="text-sm text-red-600 p-4">{error}</p>
           ) : content === null ? (
-            <p className="text-sm text-gray-500">Loading...</p>
+            <p className="text-sm text-gray-500 p-4">Loading...</p>
           ) : (
-            <pre className="text-xs font-mono whitespace-pre-wrap break-words text-gray-700">
-              {content}
-            </pre>
+            <div ref={printRef} className="prose prose-sm max-w-none px-4 py-3">
+              <RenderedMarkdown content={content} />
+            </div>
           )}
         </div>
       )}

@@ -111,6 +111,7 @@ func (wh *WorkerHandler) ProxyAnthropic(w http.ResponseWriter, r *http.Request) 
 	}
 
 	apiKey := ""
+	usesGlobalKey := false
 	if wh.h.encryptor != nil {
 		analysis, err := wh.h.queries.GetAnalysis(r.Context(), analysisID)
 		if err != nil {
@@ -118,6 +119,8 @@ func (wh *WorkerHandler) ProxyAnthropic(w http.ResponseWriter, r *http.Request) 
 			http.Error(w, "Proxy not configured", http.StatusServiceUnavailable)
 			return
 		}
+
+		// Try to get a project-specific provider key.
 		if k, err := wh.h.queries.GetActiveProviderKey(r.Context(), analysis.ProjectID, "anthropic"); err == nil {
 			dek, err := wh.h.encryptor.UnwrapDEK(k.EncryptedDEK, k.DEKNonce)
 			if err == nil {
@@ -126,18 +129,37 @@ func (wh *WorkerHandler) ProxyAnthropic(w http.ResponseWriter, r *http.Request) 
 				}
 			}
 		}
+
+		// If no project key, check if the project is allowed to use the global key.
+		if apiKey == "" {
+			project, err := wh.h.queries.GetProject(r.Context(), analysis.ProjectID)
+			if err != nil {
+				log.Error().Err(err).Str("project_id", analysis.ProjectID).Msg("Anthropic proxy: failed to load project")
+				http.Error(w, "Proxy not configured", http.StatusServiceUnavailable)
+				return
+			}
+			usesGlobalKey = project.UsesGlobalKey
+		}
+	} else {
+		// No encryptor means no project keys; allow global key fallback.
+		usesGlobalKey = true
 	}
-	if apiKey == "" && wh.h.cfg.AgentAPIKeyFile != "" {
-		if keyData, err := os.ReadFile(wh.h.cfg.AgentAPIKeyFile); err == nil {
-			apiKey = strings.TrimSpace(string(keyData))
+
+	// Only fall back to global key if the project allows it.
+	if apiKey == "" && usesGlobalKey {
+		if wh.h.cfg.AgentAPIKeyFile != "" {
+			if keyData, err := os.ReadFile(wh.h.cfg.AgentAPIKeyFile); err == nil {
+				apiKey = strings.TrimSpace(string(keyData))
+			}
+		}
+		if apiKey == "" {
+			apiKey = strings.TrimSpace(wh.h.cfg.AgentAPIKey)
 		}
 	}
+
 	if apiKey == "" {
-		apiKey = strings.TrimSpace(wh.h.cfg.AgentAPIKey)
-	}
-	if apiKey == "" {
-		log.Error().Msg("Anthropic proxy: AgentAPIKey not configured")
-		http.Error(w, "Proxy not configured", http.StatusServiceUnavailable)
+		log.Error().Str("analysis_id", analysisID).Msg("Anthropic proxy: no API key available for project")
+		http.Error(w, "No API key configured for this project", http.StatusServiceUnavailable)
 		return
 	}
 
@@ -226,7 +248,8 @@ func (wh *WorkerHandler) UpdateStatus(w http.ResponseWriter, r *http.Request) {
 		Str("detail", req.Detail).
 		Msg("Worker status update")
 
-	if req.Status == "completed" {
+	switch req.Status {
+	case "completed":
 		if req.GitCommit != "" {
 			if err := wh.h.queries.SetAnalysisGitCommit(r.Context(), req.AnalysisID, req.GitCommit); err != nil {
 				log.Error().Err(err).Msg("Failed to store git commit from worker")
@@ -236,12 +259,12 @@ func (wh *WorkerHandler) UpdateStatus(w http.ResponseWriter, r *http.Request) {
 			log.Error().Err(err).Msg("Failed to mark analysis completed")
 		}
 		wh.hub.CloseRoom(req.AnalysisID)
-	} else if req.Status == "failed" {
+	case "failed":
 		if err := wh.h.queries.SetAnalysisCompleted(r.Context(), req.AnalysisID, "failed", req.Detail); err != nil {
 			log.Error().Err(err).Msg("Failed to mark analysis failed")
 		}
 		wh.hub.CloseRoom(req.AnalysisID)
-	} else {
+	default:
 		if err := wh.h.queries.UpdateAnalysisStatus(r.Context(), req.AnalysisID, req.Status, req.Detail, ""); err != nil {
 			log.Error().Err(err).Msg("Failed to update analysis status")
 		}
@@ -344,6 +367,33 @@ func (wh *WorkerHandler) UploadResult(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Extract and store findings from SARIF files; also set metadata counts.
+	if resultType == "sarif" {
+		// Parse SARIF to get summary, finding count, and severity breakdown.
+		summary, findingCount, severityCounts := agent.ParseSARIFBytes(plaintext)
+		result.Summary = summary
+		result.FindingCount = findingCount
+		result.SeverityCounts = severityCounts
+		if err := wh.h.queries.UpdateAnalysisResultMetadata(r.Context(), result.ID, summary, findingCount, severityCounts); err != nil {
+			log.Error().Err(err).Str("result_id", result.ID).Msg("Failed to update SARIF metadata")
+		}
+
+		// Extract individual findings.
+		findings := agent.ExtractFindingsFromBytes(plaintext, analysisID, analysis.ProjectID)
+		if len(findings) > 0 {
+			// Link all findings to this result.
+			for i := range findings {
+				findings[i].ResultID = result.ID
+				findings[i].GitCommit = analysis.GitCommit
+			}
+			if err := wh.h.queries.CreateFindingsBatch(r.Context(), findings); err != nil {
+				log.Error().Err(err).Str("analysis_id", analysisID).Msg("Failed to save findings")
+			} else {
+				log.Info().Int("count", len(findings)).Str("analysis_id", analysisID).Msg("Saved individual findings from uploaded SARIF")
+			}
+		}
+	}
+
 	log.Info().
 		Str("analysis_id", analysisID).
 		Str("filename", filename).
@@ -376,17 +426,26 @@ func sanitizeFilename(name string) string {
 }
 
 // classifyResultType determines the result type from a filename.
+// This must match the classification logic in agent/parser.go.
 func classifyResultType(filename string) string {
 	switch {
 	case strings.HasSuffix(filename, ".sarif"):
 		return "sarif"
+	case filename == "notes.md":
+		return "analysis_notes"
+	case filename == "prompt.md":
+		return "analysis_prompt"
+	case filename == "context.md":
+		return "analysis_context"
 	case strings.HasSuffix(filename, ".md"):
-		return "report"
+		return "markdown_report"
+	case strings.HasSuffix(filename, ".log"):
+		return "agent_log"
+	case strings.HasSuffix(filename, ".tar.gz") || strings.HasSuffix(filename, ".tgz"):
+		return "exploit_tarball"
 	case strings.Contains(filename, "exploit"):
 		return "exploit_tarball"
-	case strings.HasSuffix(filename, ".log"):
-		return "log"
 	default:
-		return "artifact"
+		return "other"
 	}
 }

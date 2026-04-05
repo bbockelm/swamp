@@ -9,10 +9,11 @@ export default function AdminSettingsPage() {
     <div className="max-w-3xl space-y-8">
       <div>
         <h1 className="text-2xl font-bold">Settings</h1>
-        <p className="text-sm text-gray-500">System configuration for authentication and backups</p>
+        <p className="text-sm text-gray-500">System configuration for authentication, analysis executor, and backups</p>
       </div>
 
       <OIDCConfigSection />
+      <ExecutorConfigSection />
       <BackupConfigSection />
     </div>
   );
@@ -140,6 +141,178 @@ function OIDCConfigSection() {
             className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50"
           >
             {updateMut.isPending ? 'Saving...' : 'Save OIDC Settings'}
+          </button>
+          {updateMut.isSuccess && <span className="text-green-600 text-sm">Saved!</span>}
+          {updateMut.isError && (
+            <span className="text-red-600 text-sm">Error: {updateMut.error?.message}</span>
+          )}
+        </div>
+      </form>
+    </div>
+  );
+}
+
+const EXECUTOR_MODES = [
+  { value: 'local', label: 'Local (in-process)', desc: 'Fork/exec agent in the server process. Simple but non-persistent.' },
+  { value: 'process', label: 'Process (detached daemon)', desc: 'Detached processes with flock-based liveness. Survives restarts.' },
+  { value: 'kubernetes', label: 'Kubernetes', desc: 'Run analyses as Kubernetes pods. Scalable and persistent.' },
+];
+
+const K8S_FIELDS = [
+  { key: 'k8s_namespace', label: 'Namespace', placeholder: 'swamp' },
+  { key: 'k8s_worker_image', label: 'Worker Image', placeholder: 'ghcr.io/org/swamp-worker:latest' },
+  { key: 'k8s_worker_service_account', label: 'Service Account', placeholder: 'swamp-worker' },
+  { key: 'k8s_worker_cpu_request', label: 'CPU Request', placeholder: '500m' },
+  { key: 'k8s_worker_cpu_limit', label: 'CPU Limit', placeholder: '2' },
+  { key: 'k8s_worker_mem_request', label: 'Memory Request', placeholder: '512Mi' },
+  { key: 'k8s_worker_mem_limit', label: 'Memory Limit', placeholder: '2Gi' },
+  { key: 'k8s_worker_node_selector', label: 'Node Selector', placeholder: 'key=value,key2=value2' },
+  { key: 'k8s_worker_tolerations', label: 'Tolerations', placeholder: 'key=value:effect,...' },
+  { key: 'k8s_worker_labels', label: 'Pod Labels', placeholder: 'key=value,key2=value2' },
+  { key: 'k8s_pod_ttl_seconds', label: 'Pod TTL (seconds)', placeholder: '3600' },
+];
+
+function ExecutorConfigSection() {
+  const queryClient = useQueryClient();
+  const { data: config, isLoading } = useQuery({
+    queryKey: ['admin', 'executor-config'],
+    queryFn: api.admin.getExecutorConfig,
+  });
+
+  const [form, setForm] = useState<Record<string, string> | null>(null);
+
+  const currentForm: Record<string, string> = form ?? {
+    executor_mode: config?.executor_mode ?? '',
+    agent_model: config?.agent_model ?? '',
+    max_concurrent_analyses: config?.max_concurrent_analyses ?? '',
+    ...Object.fromEntries(K8S_FIELDS.map(f => [f.key, config?.[f.key] ?? ''])),
+  };
+
+  const activeMode = config?.active_mode ?? 'unknown';
+  const selectedMode = currentForm.executor_mode || activeMode;
+
+  const updateMut = useMutation({
+    mutationFn: (data: Record<string, string>) => api.admin.updateExecutorConfig(data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['admin', 'executor-config'] });
+    },
+  });
+
+  if (isLoading) return <div className="text-gray-400 text-sm">Loading executor config...</div>;
+
+  return (
+    <div className="bg-white p-6 rounded-lg border space-y-4">
+      <h2 className="font-semibold text-lg">Analysis Executor</h2>
+      <p className="text-sm text-gray-500">
+        Configure how security analyses are executed. Changes take effect after server restart.
+      </p>
+
+      <div className="p-3 bg-gray-50 rounded-md">
+        <div className="text-xs font-medium text-gray-500 mb-1">Currently Active</div>
+        <div className="text-sm font-medium">
+          {EXECUTOR_MODES.find(m => m.value === activeMode)?.label ?? activeMode}
+        </div>
+      </div>
+
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          updateMut.mutate(currentForm);
+        }}
+        className="space-y-4"
+      >
+        {/* Executor mode */}
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-2">Executor Mode</label>
+          <div className="space-y-2">
+            {EXECUTOR_MODES.map((mode) => (
+              <label
+                key={mode.value}
+                className={`flex items-start gap-3 p-3 border rounded-md cursor-pointer transition-colors ${
+                  selectedMode === mode.value ? 'border-blue-500 bg-blue-50' : 'border-gray-200 hover:bg-gray-50'
+                }`}
+              >
+                <input
+                  type="radio"
+                  name="executor_mode"
+                  value={mode.value}
+                  checked={selectedMode === mode.value}
+                  onChange={(e) => setForm({ ...currentForm, executor_mode: e.target.value })}
+                  className="mt-0.5"
+                />
+                <div>
+                  <div className="text-sm font-medium">{mode.label}</div>
+                  <div className="text-xs text-gray-500">{mode.desc}</div>
+                </div>
+              </label>
+            ))}
+          </div>
+        </div>
+
+        {/* Common settings */}
+        <div className="border-t pt-4">
+          <h3 className="text-sm font-medium text-gray-700 mb-2">General</h3>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Agent Model</label>
+              <input
+                type="text"
+                value={currentForm.agent_model}
+                onChange={(e) => setForm({ ...currentForm, agent_model: e.target.value })}
+                placeholder="(default from env)"
+                className="w-full border rounded-md px-3 py-2 text-sm"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Max Concurrent Analyses</label>
+              <input
+                type="number"
+                min={1}
+                value={currentForm.max_concurrent_analyses}
+                onChange={(e) => setForm({ ...currentForm, max_concurrent_analyses: e.target.value })}
+                placeholder="2"
+                className="w-full border rounded-md px-3 py-2 text-sm"
+              />
+            </div>
+          </div>
+        </div>
+
+        {/* Kubernetes settings */}
+        {selectedMode === 'kubernetes' && (
+          <div className="border-t pt-4">
+            <h3 className="text-sm font-medium text-gray-700 mb-2">Kubernetes Settings</h3>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              {K8S_FIELDS.map((field) => (
+                <div key={field.key}>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">{field.label}</label>
+                  <input
+                    type="text"
+                    value={currentForm[field.key]}
+                    onChange={(e) => setForm({ ...currentForm, [field.key]: e.target.value })}
+                    placeholder={field.placeholder}
+                    className="w-full border rounded-md px-3 py-2 text-sm"
+                  />
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {selectedMode !== activeMode && (
+          <div className="p-3 bg-amber-50 border border-amber-200 rounded-md">
+            <p className="text-sm text-amber-800">
+              Changing the executor mode requires a server restart to take effect.
+            </p>
+          </div>
+        )}
+
+        <div className="flex items-center gap-4">
+          <button
+            type="submit"
+            disabled={updateMut.isPending}
+            className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50"
+          >
+            {updateMut.isPending ? 'Saving...' : 'Save Executor Settings'}
           </button>
           {updateMut.isSuccess && <span className="text-green-600 text-sm">Saved!</span>}
           {updateMut.isError && (

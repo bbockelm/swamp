@@ -107,16 +107,17 @@ type GroupInvite struct {
 
 // Project is a SWAMP analysis project.
 type Project struct {
-	ID           string    `json:"id"`
-	Name         string    `json:"name"`
-	Description  string    `json:"description"`
-	OwnerID      string    `json:"owner_id"`
-	ReadGroupID  *string   `json:"read_group_id,omitempty"`
-	WriteGroupID *string   `json:"write_group_id,omitempty"`
-	AdminGroupID *string   `json:"admin_group_id,omitempty"`
-	Status       string    `json:"status"`
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
+	ID            string    `json:"id"`
+	Name          string    `json:"name"`
+	Description   string    `json:"description"`
+	OwnerID       string    `json:"owner_id"`
+	ReadGroupID   *string   `json:"read_group_id,omitempty"`
+	WriteGroupID  *string   `json:"write_group_id,omitempty"`
+	AdminGroupID  *string   `json:"admin_group_id,omitempty"`
+	UsesGlobalKey bool      `json:"uses_global_key"`
+	Status        string    `json:"status"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
 }
 
 // SoftwarePackage is a Git repository registered for analysis.

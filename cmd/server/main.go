@@ -3,9 +3,11 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -27,6 +29,26 @@ func main() {
 		Out:        os.Stderr,
 		TimeFormat: time.RFC3339,
 	})
+
+	// Check for subcommands.
+	if len(os.Args) > 1 && os.Args[1] == "backfill-findings" {
+		if err := runBackfillFindings(); err != nil {
+			log.Fatal().Err(err).Msg("Backfill failed")
+		}
+		return
+	}
+	if len(os.Args) > 1 && os.Args[1] == "fix-result-types" {
+		if err := runFixResultTypes(); err != nil {
+			log.Fatal().Err(err).Msg("Fix result types failed")
+		}
+		return
+	}
+	if len(os.Args) > 1 && os.Args[1] == "fix-finding-counts" {
+		if err := runFixFindingCounts(); err != nil {
+			log.Fatal().Err(err).Msg("Fix finding counts failed")
+		}
+		return
+	}
 
 	cfg, err := config.Load()
 	if err != nil {
@@ -154,5 +176,326 @@ func run() error {
 	}
 
 	log.Info().Msg("Server stopped gracefully")
+	return nil
+}
+
+// runBackfillFindings extracts findings from existing SARIF files that were
+// uploaded before the findings extraction was implemented.
+func runBackfillFindings() error {
+	ctx := context.Background()
+
+	cfg, err := config.Load()
+	if err != nil {
+		return fmt.Errorf("loading config: %w", err)
+	}
+
+	// Load instance key from file if not set in environment.
+	if err := cfg.EnsureMasterKey(); err != nil {
+		return fmt.Errorf("ensuring master key: %w", err)
+	}
+	if cfg.InstanceKey == "" {
+		return fmt.Errorf("SWAMP_INSTANCE_KEY required for decryption")
+	}
+
+	pool, err := db.Connect(ctx, cfg.DatabaseURL)
+	if err != nil {
+		return fmt.Errorf("connecting to database: %w", err)
+	}
+	defer pool.Close()
+
+	store, err := storage.New(cfg)
+	if err != nil {
+		return fmt.Errorf("initializing storage: %w", err)
+	}
+
+	enc, err := crypto.NewEncryptor(cfg.InstanceKey)
+	if err != nil {
+		return fmt.Errorf("initializing encryption: %w", err)
+	}
+
+	queries := db.NewQueries(pool)
+
+	// Find SARIF results that have no corresponding findings.
+	rows, err := pool.Query(ctx, `
+		SELECT ar.id, ar.analysis_id, ar.filename, ar.s3_key, a.project_id, a.encrypted_dek, a.dek_nonce, a.git_commit
+		FROM analysis_results ar
+		JOIN analyses a ON a.id = ar.analysis_id
+		LEFT JOIN findings f ON f.result_id = ar.id
+		WHERE ar.result_type = 'sarif'
+		  AND f.id IS NULL
+		ORDER BY ar.created_at DESC
+	`)
+	if err != nil {
+		return fmt.Errorf("querying SARIF results: %w", err)
+	}
+	defer rows.Close()
+
+	var backfilled, failed int
+	for rows.Next() {
+		var resultID, analysisID, filename, s3Key, projectID, gitCommit string
+		var encryptedDEK, dekNonce []byte
+
+		if err := rows.Scan(&resultID, &analysisID, &filename, &s3Key, &projectID, &encryptedDEK, &dekNonce, &gitCommit); err != nil {
+			log.Error().Err(err).Msg("Scan failed")
+			failed++
+			continue
+		}
+
+		log.Info().Str("result_id", resultID).Str("analysis_id", analysisID).Str("filename", filename).Msg("Processing SARIF")
+
+		// Download encrypted file from S3.
+		reader, err := store.Download(ctx, s3Key)
+		if err != nil {
+			log.Error().Err(err).Str("s3_key", s3Key).Msg("Failed to download SARIF")
+			failed++
+			continue
+		}
+		ciphertext, err := io.ReadAll(reader)
+		reader.Close()
+		if err != nil {
+			log.Error().Err(err).Str("s3_key", s3Key).Msg("Failed to read SARIF data")
+			failed++
+			continue
+		}
+
+		// Decrypt.
+		dek, err := enc.UnwrapDEK(encryptedDEK, dekNonce)
+		if err != nil {
+			log.Error().Err(err).Str("analysis_id", analysisID).Msg("Failed to unwrap DEK")
+			failed++
+			continue
+		}
+
+		plaintext, err := crypto.Decrypt(dek, ciphertext)
+		if err != nil {
+			log.Error().Err(err).Str("analysis_id", analysisID).Msg("Failed to decrypt SARIF")
+			failed++
+			continue
+		}
+
+		// Extract findings.
+		findings := agent.ExtractFindingsFromBytes(plaintext, analysisID, projectID)
+		if len(findings) == 0 {
+			log.Info().Str("analysis_id", analysisID).Msg("No findings in SARIF")
+			continue
+		}
+
+		// Link findings to result and set git commit.
+		for i := range findings {
+			findings[i].ResultID = resultID
+			findings[i].GitCommit = gitCommit
+		}
+
+		// Insert findings.
+		if err := queries.CreateFindingsBatch(ctx, findings); err != nil {
+			log.Error().Err(err).Str("analysis_id", analysisID).Msg("Failed to insert findings")
+			failed++
+			continue
+		}
+
+		log.Info().Int("count", len(findings)).Str("analysis_id", analysisID).Msg("Backfilled findings")
+		backfilled += len(findings)
+	}
+
+	log.Info().Int("backfilled", backfilled).Int("failed", failed).Msg("Backfill complete")
+	return nil
+}
+
+// runFixResultTypes corrects result_type values for existing analysis results
+// that were uploaded before the classification logic was fixed.
+func runFixResultTypes() error {
+	ctx := context.Background()
+
+	cfg, err := config.Load()
+	if err != nil {
+		return fmt.Errorf("loading config: %w", err)
+	}
+
+	pool, err := db.Connect(ctx, cfg.DatabaseURL)
+	if err != nil {
+		return fmt.Errorf("connecting to database: %w", err)
+	}
+	defer pool.Close()
+
+	// Map old types to a classifier that determines the correct type
+	classifyResultType := func(filename string) string {
+		switch {
+		case strings.HasSuffix(filename, ".sarif"):
+			return "sarif"
+		case filename == "notes.md":
+			return "analysis_notes"
+		case filename == "prompt.md":
+			return "analysis_prompt"
+		case filename == "context.md":
+			return "analysis_context"
+		case strings.HasSuffix(filename, ".md"):
+			return "markdown_report"
+		case strings.HasSuffix(filename, ".log"):
+			return "agent_log"
+		case strings.HasSuffix(filename, ".tar.gz") || strings.HasSuffix(filename, ".tgz"):
+			return "exploit_tarball"
+		default:
+			return "other"
+		}
+	}
+
+	// Find results with incorrect types
+	rows, err := pool.Query(ctx, `
+		SELECT id, filename, result_type
+		FROM analysis_results
+		WHERE result_type IN ('report', 'log', 'artifact', '')
+		   OR (result_type = 'markdown_report' AND filename IN ('notes.md', 'prompt.md', 'context.md'))
+	`)
+	if err != nil {
+		return fmt.Errorf("querying results: %w", err)
+	}
+	defer rows.Close()
+
+	var updated, skipped int
+	for rows.Next() {
+		var id, filename, currentType string
+		if err := rows.Scan(&id, &filename, &currentType); err != nil {
+			log.Error().Err(err).Msg("Scan failed")
+			continue
+		}
+
+		newType := classifyResultType(filename)
+		if newType == currentType {
+			skipped++
+			continue
+		}
+
+		_, err := pool.Exec(ctx, `UPDATE analysis_results SET result_type = $1 WHERE id = $2`, newType, id)
+		if err != nil {
+			log.Error().Err(err).Str("id", id).Msg("Failed to update result type")
+			continue
+		}
+
+		log.Info().
+			Str("id", id).
+			Str("filename", filename).
+			Str("old_type", currentType).
+			Str("new_type", newType).
+			Msg("Fixed result type")
+		updated++
+	}
+
+	log.Info().Int("updated", updated).Int("skipped", skipped).Msg("Fix result types complete")
+	return nil
+}
+
+// runFixFindingCounts updates finding_count and severity_counts for existing SARIF results
+// that were uploaded before the metadata extraction was added to the worker handler.
+func runFixFindingCounts() error {
+	ctx := context.Background()
+
+	cfg, err := config.Load()
+	if err != nil {
+		return fmt.Errorf("loading config: %w", err)
+	}
+
+	if err := cfg.EnsureMasterKey(); err != nil {
+		return fmt.Errorf("ensuring master key: %w", err)
+	}
+
+	pool, err := db.Connect(ctx, cfg.DatabaseURL)
+	if err != nil {
+		return fmt.Errorf("connecting to database: %w", err)
+	}
+	defer pool.Close()
+
+	store, err := storage.New(cfg)
+	if err != nil {
+		return fmt.Errorf("initializing storage: %w", err)
+	}
+
+	enc, err := crypto.NewEncryptor(cfg.InstanceKey)
+	if err != nil {
+		return fmt.Errorf("initializing encryption: %w", err)
+	}
+
+	queries := db.NewQueries(pool)
+
+	// Find SARIF results with finding_count = 0
+	rows, err := pool.Query(ctx, `
+		SELECT ar.id, ar.analysis_id, ar.s3_key, a.encrypted_dek, a.dek_nonce
+		FROM analysis_results ar
+		JOIN analyses a ON a.id = ar.analysis_id
+		WHERE ar.result_type = 'sarif' AND ar.finding_count = 0
+	`)
+	if err != nil {
+		return fmt.Errorf("querying results: %w", err)
+	}
+	defer rows.Close()
+
+	var updated, skipped, failed int
+	for rows.Next() {
+		var id, analysisID, s3Key string
+		var encryptedDEK, dekNonce []byte
+		if err := rows.Scan(&id, &analysisID, &s3Key, &encryptedDEK, &dekNonce); err != nil {
+			log.Error().Err(err).Msg("Scan failed")
+			failed++
+			continue
+		}
+
+		// Decrypt the DEK
+		dek, err := enc.UnwrapDEK(encryptedDEK, dekNonce)
+		if err != nil {
+			log.Error().Err(err).Str("id", id).Msg("Failed to decrypt DEK")
+			failed++
+			continue
+		}
+
+		// Download the encrypted SARIF
+		rc, err := store.Download(ctx, s3Key)
+		if err != nil {
+			log.Error().Err(err).Str("s3_key", s3Key).Msg("Failed to download")
+			failed++
+			continue
+		}
+		data, err := io.ReadAll(rc)
+		rc.Close()
+		if err != nil {
+			log.Error().Err(err).Str("s3_key", s3Key).Msg("Failed to read download")
+			failed++
+			continue
+		}
+
+		// Decrypt the content
+		plaintext, err := crypto.Decrypt(dek, data)
+		if err != nil {
+			log.Error().Err(err).Str("id", id).Msg("Failed to decrypt content")
+			failed++
+			continue
+		}
+
+		// Parse the SARIF
+		summary, findingCount, severityCounts := agent.ParseSARIFBytes(plaintext)
+		if findingCount == 0 {
+			skipped++
+			continue
+		}
+
+		// Update the metadata
+		if err := queries.UpdateAnalysisResultMetadata(ctx, id, summary, findingCount, severityCounts); err != nil {
+			log.Error().Err(err).Str("id", id).Msg("Failed to update metadata")
+			failed++
+			continue
+		}
+
+		log.Info().
+			Str("id", id).
+			Str("analysis_id", analysisID).
+			Int("finding_count", findingCount).
+			Str("summary", summary).
+			Msg("Fixed finding count")
+		updated++
+	}
+
+	log.Info().
+		Int("updated", updated).
+		Int("skipped", skipped).
+		Int("failed", failed).
+		Msg("Fix finding counts complete")
 	return nil
 }

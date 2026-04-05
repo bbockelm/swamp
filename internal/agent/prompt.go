@@ -91,7 +91,7 @@ func formatAnalysisContext(ac *models.AnalysisContext) string {
 		sb.WriteString("The following notes were written by the analyst in previous runs of this project. ")
 		sb.WriteString("Use them to build on prior work and avoid re-treading the same ground.\n\n")
 		for i, note := range ac.PriorNotes {
-			sb.WriteString(fmt.Sprintf("### Run %d (most recent first)\n", i+1))
+			fmt.Fprintf(&sb, "### Run %d (most recent first)\n", i+1)
 			// Truncate very long notes to avoid blowing up the context window.
 			if len(note) > 4000 {
 				note = note[:4000] + "\n... (truncated)"
@@ -130,7 +130,7 @@ func formatAnalysisContext(ac *models.AnalysisContext) string {
 			if f.Note != "" {
 				annotation += " — " + f.Note
 			}
-			sb.WriteString(fmt.Sprintf("| %s | %s | %s | %s | %s |\n", level, f.RuleID, loc, annotation, msg))
+			fmt.Fprintf(&sb, "| %s | %s | %s | %s | %s |\n", level, f.RuleID, loc, annotation, msg)
 		}
 		sb.WriteString("\n")
 	}
@@ -180,7 +180,7 @@ func BuildMultiPackagePrompt(packages []models.SoftwarePackage, analysisPrompt s
 	sb.WriteString("## Target Repositories\n\n")
 
 	for i, pkg := range packages {
-		sb.WriteString(fmt.Sprintf("### Package %d: %s\n", i+1, pkg.Name))
+		fmt.Fprintf(&sb, "### Package %d: %s\n", i+1, pkg.Name)
 		sb.WriteString(fmt.Sprintf("- Repository: %s\n", pkg.GitURL))
 		sb.WriteString(fmt.Sprintf("- Branch: %s\n", pkg.GitBranch))
 		if pkg.GitCommit != "" {

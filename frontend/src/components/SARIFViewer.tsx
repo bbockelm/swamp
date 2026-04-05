@@ -1,8 +1,8 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { api, type Finding } from '@/lib/api';
-import Link from 'next/link';
 
 interface SARIFRun {
   tool?: { driver?: { name?: string } };
@@ -44,6 +44,7 @@ export function SARIFViewer({
   analysisId: string;
   resultId: string;
 }) {
+  const router = useRouter();
   const [sarif, setSarif] = useState<SARIFLog | null>(null);
   const [findings, setFindings] = useState<Map<string, Finding>>(new Map());
   const [loading, setLoading] = useState(true);
@@ -113,8 +114,16 @@ export function SARIFViewer({
             const key = findingKey(result.ruleId || '', file, line || 0);
             const finding = findings.get(key);
 
-            const row = (
-              <tr key={idx} className={`hover:bg-gray-50${finding ? ' cursor-pointer' : ''}`}>
+            const findingUrl = finding
+              ? `/projects/${projectId}?tab=findings&analysis=${analysisId}&finding=${finding.id}`
+              : null;
+
+            return (
+              <tr
+                key={idx}
+                className={`hover:bg-gray-50${finding ? ' cursor-pointer' : ''}`}
+                onClick={finding ? () => router.push(findingUrl!) : undefined}
+              >
                 <td className="px-4 py-2">
                   <span
                     className={`inline-block px-2 py-0.5 rounded text-xs font-medium ${levelColors[level] || 'bg-gray-100 text-gray-800'}`}
@@ -137,19 +146,6 @@ export function SARIFViewer({
                 </td>
               </tr>
             );
-
-            if (finding) {
-              return (
-                <Link
-                  key={idx}
-                  href={`/projects/${projectId}?tab=findings&analysis=${analysisId}&finding=${finding.id}`}
-                  className="contents"
-                >
-                  {row}
-                </Link>
-              );
-            }
-            return row;
           })}
         </tbody>
       </table>

@@ -23,6 +23,11 @@ export default function ProjectDetailClient() {
   const initialTab = (searchParams.get('tab') as Tab) || 'packages';
   const [tab, setTab] = useState<Tab>(initialTab);
 
+  const { data: session } = useQuery({
+    queryKey: ['session'],
+    queryFn: api.auth.me,
+  });
+
   const { data: project, isLoading } = useQuery({
     queryKey: ['project', id],
     queryFn: () => api.projects.get(id),
@@ -51,12 +56,17 @@ export default function ProjectDetailClient() {
   if (isLoading) return <p>Loading...</p>;
   if (!project) return <p>Project not found.</p>;
 
+  const canEdit = project.my_role === 'write' || project.my_role === 'admin';
+  const isAdmin = project.my_role === 'admin';
+  // System-level roles that can toggle uses_global_key
+  const canEditGlobalKey = session?.roles?.includes('admin') || session?.roles?.includes('project_creator');
+
   const tabs: { key: Tab; label: string }[] = [
     { key: 'packages', label: 'Packages' },
     { key: 'analyses', label: 'Analyses' },
     { key: 'findings', label: 'Findings' },
-    { key: 'api-keys', label: 'API Keys' },
-    { key: 'settings', label: 'Settings' },
+    ...(isAdmin ? [{ key: 'api-keys' as Tab, label: 'API Keys' }] : []),
+    ...(canEdit ? [{ key: 'settings' as Tab, label: 'Settings' }] : []),
   ];
 
   return (
@@ -89,28 +99,29 @@ export default function ProjectDetailClient() {
 
       {/* Packages tab */}
       {tab === 'packages' && (
-        <PackagesTab projectId={id} packages={packages} />
+        <PackagesTab projectId={id} packages={packages} canEdit={canEdit} />
       )}
 
       {/* Analyses tab */}
       {tab === 'analyses' && (
-        <AnalysesTab projectId={id} analyses={analyses} packages={packages} />
+        <AnalysesTab projectId={id} analyses={analyses} packages={packages} canEdit={canEdit} />
       )}
 
       {/* Findings tab */}
       {tab === 'findings' && (
-        <FindingsTab projectId={id} packages={packages} />
+        <FindingsTab projectId={id} packages={packages} canEdit={canEdit} />
       )}
 
       {/* API Keys tab */}
-      {tab === 'api-keys' && (
+      {tab === 'api-keys' && isAdmin && (
         <ProviderKeysTab projectId={id} />
       )}
 
       {/* Settings tab */}
-      {tab === 'settings' && (
+      {tab === 'settings' && canEdit && (
         <SettingsTab
           project={project}
+          canEditGlobalKey={canEditGlobalKey}
           onDelete={() => {
             if (confirm('Delete this project? This cannot be undone.')) {
               deleteMutation.mutate();
@@ -125,9 +136,11 @@ export default function ProjectDetailClient() {
 function PackagesTab({
   projectId,
   packages,
+  canEdit,
 }: {
   projectId: string;
   packages?: SoftwarePackage[];
+  canEdit: boolean;
 }) {
   const queryClient = useQueryClient();
   const [adding, setAdding] = useState(false);
@@ -197,12 +210,14 @@ function PackagesTab({
     <div>
       <div className="flex justify-between items-center mb-4">
         <h2 className="text-lg font-semibold">Software Packages</h2>
-        <button
-          onClick={() => { setAdding(true); setEditingId(null); setName(''); setGitUrl(''); setGitBranch('main'); setAnalysisPrompt(''); }}
-          className="bg-blue-600 text-white px-3 py-1.5 text-sm rounded hover:bg-blue-700"
-        >
-          Add Package
-        </button>
+        {canEdit && (
+          <button
+            onClick={() => { setAdding(true); setEditingId(null); setName(''); setGitUrl(''); setGitBranch('main'); setAnalysisPrompt(''); }}
+            className="bg-blue-600 text-white px-3 py-1.5 text-sm rounded hover:bg-blue-700"
+          >
+            Add Package
+          </button>
+        )}
       </div>
 
       {adding && (
@@ -279,7 +294,7 @@ function PackagesTab({
 
       {!packages?.length ? (
         <p className="text-gray-500 text-sm">
-          No packages yet. Add a Git repository to analyze.
+          {canEdit ? 'No packages yet. Add a Git repository to analyze.' : 'No packages configured for this project.'}
         </p>
       ) : (
         <div className="space-y-3">
@@ -371,22 +386,26 @@ function PackagesTab({
                   )}
                 </div>
                 <div className="flex gap-2">
-                  <button
-                    onClick={() => startEdit(pkg)}
-                    className="text-blue-500 text-sm hover:text-blue-700"
-                  >
-                    Edit
-                  </button>
-                  <button
-                    onClick={() => {
-                      if (confirm('Delete this package?')) {
-                        deleteMutation.mutate(pkg.id);
-                      }
-                    }}
-                    className="text-red-500 text-sm hover:text-red-700"
-                  >
-                    Delete
-                  </button>
+                  {canEdit && (
+                    <>
+                      <button
+                        onClick={() => startEdit(pkg)}
+                        className="text-blue-500 text-sm hover:text-blue-700"
+                      >
+                        Edit
+                      </button>
+                      <button
+                        onClick={() => {
+                          if (confirm('Delete this package?')) {
+                            deleteMutation.mutate(pkg.id);
+                          }
+                        }}
+                        className="text-red-500 text-sm hover:text-red-700"
+                      >
+                        Delete
+                      </button>
+                    </>
+                  )}
                 </div>
               </div>
             )
@@ -401,10 +420,12 @@ function AnalysesTab({
   projectId,
   analyses,
   packages,
+  canEdit,
 }: {
   projectId: string;
   analyses?: Analysis[];
   packages?: SoftwarePackage[];
+  canEdit: boolean;
 }) {
   const queryClient = useQueryClient();
   const [selectedPkgs, setSelectedPkgs] = useState<string[]>([]);
@@ -433,7 +454,7 @@ function AnalysesTab({
   return (
     <div>
       {/* Trigger new analysis */}
-      {packages && packages.length > 0 && (
+      {canEdit && packages && packages.length > 0 && (
         <div className="bg-gray-50 p-4 rounded border mb-6">
           <h3 className="text-sm font-medium mb-2">Run New Analysis</h3>
           {agentStatus && !agentStatus.ready && (
@@ -539,9 +560,11 @@ function AnalysesTab({
 function FindingsTab({
   projectId,
   packages,
+  canEdit,
 }: {
   projectId: string;
   packages?: SoftwarePackage[];
+  canEdit: boolean;
 }) {
   const searchParams = useSearchParams();
   const initialAnalysisId = searchParams.get('analysis') || undefined;
@@ -557,6 +580,7 @@ function FindingsTab({
         gitUrl={gitUrl}
         initialAnalysisId={initialAnalysisId}
         initialFindingId={initialFindingId}
+        canEdit={canEdit}
       />
     </div>
   );
@@ -564,18 +588,21 @@ function FindingsTab({
 
 function SettingsTab({
   project,
+  canEditGlobalKey,
   onDelete,
 }: {
-  project: { id: string; name: string; description: string };
+  project: { id: string; name: string; description: string; uses_global_key: boolean };
+  canEditGlobalKey?: boolean;
   onDelete: () => void;
 }) {
   const queryClient = useQueryClient();
   const [name, setName] = useState(project.name);
   const [description, setDescription] = useState(project.description);
+  const [usesGlobalKey, setUsesGlobalKey] = useState(project.uses_global_key);
 
   const updateMutation = useMutation({
     mutationFn: () =>
-      api.projects.update(project.id, { name, description }),
+      api.projects.update(project.id, { name, description, uses_global_key: usesGlobalKey }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['project', project.id] });
       queryClient.invalidateQueries({ queryKey: ['projects'] });
@@ -614,6 +641,28 @@ function SettingsTab({
             className="w-full border rounded px-3 py-2"
           />
         </div>
+
+        {/* Global Key toggle - only shown to admins/project_creators */}
+        {canEditGlobalKey && (
+          <div className="border-t pt-4">
+            <label className="flex items-center gap-3">
+              <input
+                type="checkbox"
+                checked={usesGlobalKey}
+                onChange={(e) => setUsesGlobalKey(e.target.checked)}
+                className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+              />
+              <span className="text-sm font-medium text-gray-700">
+                Use global agent API key
+              </span>
+            </label>
+            <p className="text-xs text-gray-500 mt-1 ml-7">
+              When enabled, this project can use the system&apos;s shared Anthropic API key
+              instead of requiring a project-specific key.
+            </p>
+          </div>
+        )}
+
         <button
           type="submit"
           disabled={updateMutation.isPending}

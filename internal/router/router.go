@@ -1,6 +1,7 @@
 package router
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -57,6 +58,29 @@ func New(cfg *config.Config, pool *pgxpool.Pool, store *storage.Store) (*chi.Mux
 
 	h := handlers.New(cfg, queries, store, enc)
 	hub := ws.NewHub()
+
+	// Override executor mode from DB if persisted.
+	if dbMode, err := queries.GetAppConfig(context.Background(), "executor_mode"); err == nil && dbMode != "" {
+		log.Info().Str("db_mode", dbMode).Str("env_mode", cfg.ExecutorMode).Msg("Overriding executor mode from DB")
+		cfg.ExecutorMode = dbMode
+	}
+	// Override other executor-related settings from DB (empty DB values keep env defaults).
+	applyDBConfig := func(key string, target *string) {
+		if v, err := queries.GetAppConfig(context.Background(), key); err == nil && v != "" {
+			*target = v
+		}
+	}
+	applyDBConfig("k8s_namespace", &cfg.K8sNamespace)
+	applyDBConfig("k8s_worker_image", &cfg.K8sWorkerImage)
+	applyDBConfig("k8s_worker_service_account", &cfg.K8sWorkerServiceAccount)
+	applyDBConfig("k8s_worker_cpu_request", &cfg.K8sWorkerCPURequest)
+	applyDBConfig("k8s_worker_cpu_limit", &cfg.K8sWorkerCPULimit)
+	applyDBConfig("k8s_worker_mem_request", &cfg.K8sWorkerMemRequest)
+	applyDBConfig("k8s_worker_mem_limit", &cfg.K8sWorkerMemLimit)
+	applyDBConfig("k8s_worker_node_selector", &cfg.K8sWorkerNodeSelector)
+	applyDBConfig("k8s_worker_tolerations", &cfg.K8sWorkerTolerations)
+	applyDBConfig("k8s_worker_labels", &cfg.K8sWorkerLabels)
+	applyDBConfig("agent_model", &cfg.AgentModel)
 
 	// Create the appropriate executor based on config.
 	var exec agent.AnalysisExecutor
@@ -115,6 +139,7 @@ func New(cfg *config.Config, pool *pgxpool.Pool, store *storage.Store) (*chi.Mux
 		// --- Accept invites and AUP (auth required, no AUP check) ---
 		r.Group(func(r chi.Router) {
 			r.Use(h.RequireAuth)
+			r.Get("/invites/info", h.GetGroupInviteInfo)
 			r.Post("/invites/accept", h.AcceptGroupInvite)
 			r.Post("/auth/agree-aup", h.AgreeAUP)
 			r.Put("/auth/profile", h.UpdateMyProfile)
@@ -249,6 +274,7 @@ func New(cfg *config.Config, pool *pgxpool.Pool, store *storage.Store) (*chi.Mux
 						r.Post("/roles", h.AddUserRole)
 						r.Delete("/roles/{role}", h.RemoveUserRole)
 						r.Get("/identities", h.ListUserIdentitiesAdmin)
+						r.Delete("/identities/{identityID}", h.DeleteUserIdentityAdmin)
 						r.Post("/invites", h.CreateUserInviteHandler)
 						r.Get("/invites", h.ListUserInvitesHandler)
 						r.Delete("/invites/{inviteID}", h.DeleteUserInviteHandler)
@@ -262,6 +288,10 @@ func New(cfg *config.Config, pool *pgxpool.Pool, store *storage.Store) (*chi.Mux
 				// AUP management
 				r.Get("/aup", h.GetAUPConfig)
 				r.Put("/aup", h.UpdateAUPConfig)
+
+				// Executor configuration
+				r.Get("/executor-config", h.GetExecutorConfig)
+				r.Put("/executor-config", h.UpdateExecutorConfig)
 
 				// Backups
 				r.Route("/backups", func(r chi.Router) {

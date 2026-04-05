@@ -16,6 +16,7 @@ import (
 
 func resolveAnthropicAPIKey(ctx context.Context, queries *db.Queries, enc *crypto.Encryptor, cfg *config.Config, analysis *models.Analysis) (string, error) {
 	if queries != nil && enc != nil && analysis != nil && analysis.ProjectID != "" {
+		// First, try to get a project-specific API key.
 		k, err := queries.GetActiveProviderKey(ctx, analysis.ProjectID, "anthropic")
 		if err == nil {
 			dek, err := enc.UnwrapDEK(k.EncryptedDEK, k.DEKNonce)
@@ -34,8 +35,18 @@ func resolveAnthropicAPIKey(ctx context.Context, queries *db.Queries, enc *crypt
 		if err != nil && err != pgx.ErrNoRows {
 			return "", fmt.Errorf("lookup project provider key: %w", err)
 		}
+
+		// No project key found. Check if project is allowed to use global key.
+		project, err := queries.GetProject(ctx, analysis.ProjectID)
+		if err != nil {
+			return "", fmt.Errorf("lookup project: %w", err)
+		}
+		if !project.UsesGlobalKey {
+			return "", fmt.Errorf("project %s does not have an API key configured", analysis.ProjectID)
+		}
 	}
 
+	// Fall back to global key (only if project.UsesGlobalKey is true or no project context).
 	if cfg.AgentAPIKeyFile != "" {
 		keyData, err := os.ReadFile(cfg.AgentAPIKeyFile)
 		if err != nil {
@@ -51,5 +62,5 @@ func resolveAnthropicAPIKey(ctx context.Context, queries *db.Queries, enc *crypt
 		return strings.TrimSpace(cfg.AgentAPIKey), nil
 	}
 
-	return "", fmt.Errorf("no Anthropic API key configured for project %s", analysis.ProjectID)
+	return "", fmt.Errorf("no Anthropic API key configured")
 }

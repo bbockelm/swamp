@@ -226,7 +226,7 @@ func (e *Executor) run(analysis *models.Analysis, packages []models.SoftwarePack
 		e.failAnalysis(ctx, analysis.ID, "Failed to create working directory", err)
 		return
 	}
-	defer os.RemoveAll(workDir)
+	defer func() { _ = os.RemoveAll(workDir) }()
 
 	// Always upload log files from the output directory, even on failure.
 	// Use a separate context so uploads survive analysis cancellation / shutdown.
@@ -325,13 +325,13 @@ func (e *Executor) runAgent(ctx context.Context, workDir, prompt string, analysi
 	if err != nil {
 		return fmt.Errorf("create stdout log: %w", err)
 	}
-	defer stdoutFile.Close()
+	defer func() { _ = stdoutFile.Close() }()
 
 	stderrFile, err := os.Create(filepath.Join(workDir, "output", "agent_stderr.log"))
 	if err != nil {
 		return fmt.Errorf("create stderr log: %w", err)
 	}
-	defer stderrFile.Close()
+	defer func() { _ = stderrFile.Close() }()
 
 	// Pipe stdout through a broadcaster so WS clients see output live.
 	stdoutPR, stdoutPW := io.Pipe()
@@ -377,8 +377,8 @@ func (e *Executor) runAgent(ctx context.Context, workDir, prompt string, analysi
 	startTime := time.Now()
 	err = cmd.Run()
 	// Close write ends so the streaming goroutines finish.
-	stdoutPW.Close()
-	stderrPW.Close()
+	_ = stdoutPW.Close()
+	_ = stderrPW.Close()
 	wg.Wait()
 	duration := time.Since(startTime)
 
