@@ -454,7 +454,7 @@ func runFixFindingCounts() error {
 			continue
 		}
 		data, err := io.ReadAll(rc)
-		rc.Close()
+		_ = rc.Close()
 		if err != nil {
 			log.Error().Err(err).Str("s3_key", s3Key).Msg("Failed to read download")
 			failed++

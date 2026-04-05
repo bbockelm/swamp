@@ -246,7 +246,7 @@ func reportCompletion(serverURL, sessionToken, analysisID, gitCommit string) {
 		log.Error().Err(err).Msg("Failed to report completion after retries")
 		return
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 }
 
 // workerStreamer batches and sends output lines to the server.
@@ -307,7 +307,7 @@ func (s *workerStreamer) flush() {
 		log.Warn().Err(err).Int("lines", len(lines)).Msg("Failed to stream output after retries")
 		return
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 }
 
 // runWorkerAgent executes the Claude CLI inside the worker pod.
@@ -457,7 +457,7 @@ func uploadSingleResult(serverURL, sessionToken, analysisID, filePath, filename 
 	if err != nil {
 		return err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	var buf bytes.Buffer
 	writer := multipart.NewWriter(&buf)
@@ -471,7 +471,7 @@ func uploadSingleResult(serverURL, sessionToken, analysisID, filePath, filename 
 	if _, err := io.Copy(part, file); err != nil {
 		return err
 	}
-	writer.Close()
+	_ = writer.Close()
 
 	bodyBytes := buf.Bytes()
 	contentType := writer.FormDataContentType()
@@ -488,7 +488,7 @@ func uploadSingleResult(serverURL, sessionToken, analysisID, filePath, filename 
 	if err != nil {
 		return fmt.Errorf("upload failed after retries: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
 		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))

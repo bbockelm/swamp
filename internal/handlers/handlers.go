@@ -78,6 +78,6 @@ func respondError(w http.ResponseWriter, status int, message string) {
 
 // decodeJSON decodes a JSON request body into the given value.
 func decodeJSON(r *http.Request, v any) error {
-	defer r.Body.Close()
+	defer func() { _ = r.Body.Close() }()
 	return json.NewDecoder(r.Body).Decode(v)
 }

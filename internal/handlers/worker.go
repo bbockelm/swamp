@@ -310,7 +310,7 @@ func (wh *WorkerHandler) UploadResult(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusBadRequest, "File is required")
 		return
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	var buf bytes.Buffer
 	if _, err := io.Copy(&buf, file); err != nil {

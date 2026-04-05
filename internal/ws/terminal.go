@@ -62,7 +62,7 @@ func (h *Hub) HandleConnect(
 	go func() {
 		defer func() {
 			h.removeConn(analysisID, conn)
-			conn.Close()
+			_ = conn.Close()
 		}()
 		for {
 			if _, _, err := conn.ReadMessage(); err != nil {
@@ -92,7 +92,7 @@ func (h *Hub) Broadcast(analysisID string, data []byte) {
 			data,
 		); err != nil {
 			h.removeConn(analysisID, conn)
-			conn.Close()
+			_ = conn.Close()
 		}
 	}
 }

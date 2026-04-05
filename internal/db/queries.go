@@ -86,7 +86,7 @@ func (q *Queries) DeleteUser(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	// Soft-delete: mark user as deleted and rename.
 	if _, err := tx.Exec(ctx, `

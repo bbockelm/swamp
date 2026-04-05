@@ -337,9 +337,9 @@ func (s *Service) failBackup(ctx context.Context, backup *models.Backup, errMsg 
 
 func (s *Service) createTarball(ctx context.Context, w io.Writer) error {
 	gz := gzip.NewWriter(w)
-	defer gz.Close()
+	defer func() { _ = gz.Close() }()
 	tw := tar.NewWriter(gz)
-	defer tw.Close()
+	defer func() { _ = tw.Close() }()
 
 	// Build a map of analysisID → DEK for decrypting S3 objects.
 	// This lets the backup contain plaintext data so it can be restored
@@ -379,7 +379,7 @@ func (s *Service) createTarball(ctx context.Context, w io.Writer) error {
 			continue
 		}
 		data, err := io.ReadAll(obj)
-		obj.Close()
+		_ = obj.Close()
 		if err != nil {
 			continue
 		}
@@ -640,7 +640,7 @@ func (s *Service) RestoreFromBackup(ctx context.Context, backupID string) error 
 	if err != nil {
 		return err
 	}
-	defer reader.Close()
+	defer func() { _ = reader.Close() }()
 
 	data, err := io.ReadAll(reader)
 	if err != nil {
@@ -731,7 +731,7 @@ func (s *Service) restoreFromData(ctx context.Context, data []byte, encrypted bo
 	if err != nil {
 		return fmt.Errorf("opening gzip: %w", err)
 	}
-	defer gr.Close()
+	defer func() { _ = gr.Close() }()
 
 	// Two-pass restore: first extract everything from the tarball, then
 	// restore the DB, then re-encrypt and upload S3 objects.

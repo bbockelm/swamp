@@ -58,7 +58,7 @@ func (h *Handler) DownloadBackup(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusNotFound, err.Error())
 		return
 	}
-	defer reader.Close()
+	defer func() { _ = reader.Close() }()
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, backup.Filename))
 	if _, err := io.Copy(w, reader); err != nil {
@@ -90,7 +90,7 @@ func (h *Handler) UploadRestore(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusBadRequest, "Missing file in upload")
 		return
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	data, err := io.ReadAll(file)
 	if err != nil {
 		respondError(w, http.StatusBadRequest, "Failed to read uploaded file")

@@ -181,13 +181,13 @@ func BuildMultiPackagePrompt(packages []models.SoftwarePackage, analysisPrompt s
 
 	for i, pkg := range packages {
 		fmt.Fprintf(&sb, "### Package %d: %s\n", i+1, pkg.Name)
-		sb.WriteString(fmt.Sprintf("- Repository: %s\n", pkg.GitURL))
-		sb.WriteString(fmt.Sprintf("- Branch: %s\n", pkg.GitBranch))
+		fmt.Fprintf(&sb, "- Repository: %s\n", pkg.GitURL)
+		fmt.Fprintf(&sb, "- Branch: %s\n", pkg.GitBranch)
 		if pkg.GitCommit != "" {
-			sb.WriteString(fmt.Sprintf("- Commit: %s\n", pkg.GitCommit))
+			fmt.Fprintf(&sb, "- Commit: %s\n", pkg.GitCommit)
 		}
 		if pkg.AnalysisPrompt != "" {
-			sb.WriteString(fmt.Sprintf("- Special instructions: %s\n", pkg.AnalysisPrompt))
+			fmt.Fprintf(&sb, "- Special instructions: %s\n", pkg.AnalysisPrompt)
 		}
 		sb.WriteString("\n")
 	}

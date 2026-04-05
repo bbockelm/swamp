@@ -58,7 +58,7 @@ func (h *Handler) DownloadResultArtifact(w http.ResponseWriter, r *http.Request)
 		respondError(w, http.StatusInternalServerError, "Failed to download artifact")
 		return
 	}
-	defer reader.Close()
+	defer func() { _ = reader.Close() }()
 
 	ciphertext, err := io.ReadAll(reader)
 	if err != nil {
