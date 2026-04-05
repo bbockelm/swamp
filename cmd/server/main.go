@@ -251,7 +251,7 @@ func runBackfillFindings() error {
 			continue
 		}
 		ciphertext, err := io.ReadAll(reader)
-		reader.Close()
+		_ = reader.Close()
 		if err != nil {
 			log.Error().Err(err).Str("s3_key", s3Key).Msg("Failed to read SARIF data")
 			failed++

@@ -533,7 +533,7 @@ func AcquireWorkerLock(path string) (*os.File, error) {
 		return nil, fmt.Errorf("open lock file: %w", err)
 	}
 	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
-		f.Close()
+		_ = f.Close()
 		return nil, fmt.Errorf("flock: %w", err)
 	}
 	return f, nil

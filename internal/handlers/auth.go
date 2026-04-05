@@ -436,7 +436,7 @@ func fetchWellKnown(issuer string) (*wellKnownConfig, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	var wk wellKnownConfig
 	if err := json.NewDecoder(resp.Body).Decode(&wk); err != nil {
 		return nil, err
@@ -732,7 +732,7 @@ func exchangeCode(tokenURL, code, clientID, clientSecret, redirectURI string) (*
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != 200 {
 		return nil, fmt.Errorf("token endpoint returned %d: %s", resp.StatusCode, string(body))
@@ -775,7 +775,7 @@ func fetchUserinfo(endpoint, accessToken string) (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	var data map[string]any
 	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
 		return nil, err
