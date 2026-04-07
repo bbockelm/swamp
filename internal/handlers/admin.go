@@ -399,6 +399,7 @@ var executorConfigKeys = []struct {
 	{"k8s_worker_node_selector", "k8s_worker_node_selector"},
 	{"k8s_worker_tolerations", "k8s_worker_tolerations"},
 	{"k8s_worker_labels", "k8s_worker_labels"},
+	{"k8s_kubeconfig", "k8s_kubeconfig"},
 	{"k8s_pod_ttl_seconds", "k8s_pod_ttl_seconds"},
 	{"agent_model", "agent_model"},
 	{"max_concurrent_analyses", "max_concurrent_analyses"},

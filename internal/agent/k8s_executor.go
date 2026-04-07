@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"fmt"
+	"math"
 	"strings"
 	"sync"
 	"time"
@@ -17,7 +18,7 @@ import (
 	"github.com/bbockelm/swamp/internal/ws"
 )
 
-// K8sExecutor manages running analyses as Kubernetes pods.
+// K8sExecutor manages running analyses as Kubernetes jobs.
 type K8sExecutor struct {
 	cfg        *config.Config
 	queries    *db.Queries
@@ -36,7 +37,7 @@ type K8sExecutor struct {
 
 // k8sAnalysisState tracks the state of a K8s-based analysis.
 type k8sAnalysisState struct {
-	podName   string
+	jobName   string
 	cancel    context.CancelFunc
 	startedAt time.Time
 }
@@ -50,7 +51,7 @@ func NewK8sExecutor(
 	enc *crypto.Encryptor,
 	tokenStore *WorkerTokenStore,
 ) (*K8sExecutor, error) {
-	client, err := NewInClusterK8sClient()
+	client, err := NewK8sClient(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("creating K8s client: %w", err)
 	}
@@ -68,7 +69,7 @@ func NewK8sExecutor(
 	}, nil
 }
 
-// CanPersist returns true — K8s pods survive server restarts.
+// CanPersist returns true — K8s jobs survive server restarts.
 func (e *K8sExecutor) CanPersist() bool {
 	return true
 }
@@ -80,8 +81,8 @@ func (e *K8sExecutor) AgentReady() bool {
 
 // Start performs startup reconciliation and begins the sync loop.
 func (e *K8sExecutor) Start(ctx context.Context) {
-	// Reconcile: find existing analysis pods in our namespace and track them.
-	e.reconcileExistingPods(ctx)
+	// Reconcile: find existing analysis jobs in our namespace and track them.
+	e.reconcileExistingJobs(ctx)
 
 	syncCtx, cancel := context.WithCancel(ctx)
 	e.stopSync = cancel
@@ -93,16 +94,16 @@ func (e *K8sExecutor) Shutdown(ctx context.Context) {
 	if e.stopSync != nil {
 		e.stopSync()
 	}
-	// Don't delete pods on shutdown — they persist and we'll reconcile on restart.
-	log.Info().Msg("K8s executor shutdown (pods will persist)")
+	// Don't delete jobs on shutdown — they persist and we'll reconcile on restart.
+	log.Info().Msg("K8s executor shutdown (jobs will persist)")
 }
 
-// Submit launches a new analysis as a K8s pod.
+// Submit launches a new analysis as a K8s job.
 func (e *K8sExecutor) Submit(analysis *models.Analysis, packages []models.SoftwarePackage) {
-	go e.launchPod(analysis, packages)
+	go e.launchJob(analysis, packages)
 }
 
-// Cancel terminates a running analysis pod.
+// Cancel terminates a running analysis job.
 func (e *K8sExecutor) Cancel(analysisID string) {
 	e.mu.Lock()
 	state, ok := e.running[analysisID]
@@ -112,11 +113,11 @@ func (e *K8sExecutor) Cancel(analysisID string) {
 		if state.cancel != nil {
 			state.cancel()
 		}
-		// Delete the pod.
+		// Delete the job and let Kubernetes cascade cleanup to the pod.
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		if err := e.k8s.DeletePod(ctx, e.cfg.K8sNamespace, state.podName); err != nil {
-			log.Error().Err(err).Str("pod", state.podName).Msg("Failed to delete worker pod")
+		if err := e.k8s.DeleteJob(ctx, e.cfg.K8sNamespace, state.jobName); err != nil {
+			log.Error().Err(err).Str("job", state.jobName).Msg("Failed to delete worker job")
 		}
 		e.tokenStore.RevokeAnalysis(analysisID)
 
@@ -134,8 +135,8 @@ func (e *K8sExecutor) IsRunning(analysisID string) bool {
 	return ok
 }
 
-// launchPod creates a K8s pod for the analysis.
-func (e *K8sExecutor) launchPod(analysis *models.Analysis, packages []models.SoftwarePackage) {
+// launchJob creates a K8s job for the analysis.
+func (e *K8sExecutor) launchJob(analysis *models.Analysis, packages []models.SoftwarePackage) {
 	e.hub.Broadcast(analysis.ID, []byte("[system] Analysis queued, waiting for available slot..."))
 
 	// Acquire semaphore.
@@ -218,13 +219,13 @@ func (e *K8sExecutor) launchPod(analysis *models.Analysis, packages []models.Sof
 		return
 	}
 
-	podName := fmt.Sprintf("swamp-analysis-%s", analysis.ID[:8])
-	pod := e.buildPodSpec(podName, analysis.ID, token, sidecarToken)
+	jobName := fmt.Sprintf("swamp-analysis-%s", analysis.ID[:8])
+	job := e.buildJobSpec(jobName, analysis.ID, token, sidecarToken)
 
-	// Mark running before creating pod.
+	// Mark running before creating the job.
 	e.mu.Lock()
 	e.running[analysis.ID] = &k8sAnalysisState{
-		podName:   podName,
+		jobName:   jobName,
 		cancel:    cancel,
 		startedAt: time.Now(),
 	}
@@ -234,9 +235,9 @@ func (e *K8sExecutor) launchPod(analysis *models.Analysis, packages []models.Sof
 		log.Error().Err(err).Str("analysis_id", analysis.ID).Msg("Failed to mark analysis started")
 	}
 
-	e.hub.Broadcast(analysis.ID, []byte("[system] Creating worker pod..."))
-	if err := e.k8s.CreatePod(ctx, e.cfg.K8sNamespace, pod); err != nil {
-		e.failAnalysis(analysis.ID, "Failed to create worker pod", err)
+	e.hub.Broadcast(analysis.ID, []byte("[system] Creating worker job..."))
+	if err := e.k8s.CreateJob(ctx, e.cfg.K8sNamespace, job); err != nil {
+		e.failAnalysis(analysis.ID, "Failed to create worker job", err)
 		e.mu.Lock()
 		delete(e.running, analysis.ID)
 		e.mu.Unlock()
@@ -245,14 +246,14 @@ func (e *K8sExecutor) launchPod(analysis *models.Analysis, packages []models.Sof
 		return
 	}
 
-	e.hub.Broadcast(analysis.ID, []byte("[system] Worker pod "+podName+" created"))
+	e.hub.Broadcast(analysis.ID, []byte("[system] Worker job "+jobName+" created"))
 
-	// Watch the pod in background. When it completes, release semaphore.
-	go e.watchPod(ctx, cancel, analysis.ID, podName)
+	// Watch the job in background. When it completes, release semaphore.
+	go e.watchJob(ctx, cancel, analysis.ID, jobName)
 }
 
-// watchPod monitors a worker pod until it completes or fails.
-func (e *K8sExecutor) watchPod(ctx context.Context, cancel context.CancelFunc, analysisID, podName string) {
+// watchJob monitors a worker job until it completes or fails.
+func (e *K8sExecutor) watchJob(ctx context.Context, cancel context.CancelFunc, analysisID, jobName string) {
 	defer func() {
 		cancel()
 		<-e.countsem
@@ -268,36 +269,36 @@ func (e *K8sExecutor) watchPod(ctx context.Context, cancel context.CancelFunc, a
 	for {
 		select {
 		case <-ctx.Done():
-			log.Info().Str("analysis_id", analysisID).Msg("Pod watch context cancelled")
+			log.Info().Str("analysis_id", analysisID).Msg("Job watch context cancelled")
 			return
 		case <-ticker.C:
-			status, err := e.k8s.GetPodPhase(ctx, e.cfg.K8sNamespace, podName)
+			status, err := e.k8s.GetJobPhase(ctx, e.cfg.K8sNamespace, jobName)
 			if err != nil {
-				log.Warn().Err(err).Str("pod", podName).Msg("Failed to get pod status")
+				log.Warn().Err(err).Str("job", jobName).Msg("Failed to get job status")
 				continue
 			}
 
 			switch status {
 			case "Succeeded":
-				log.Info().Str("pod", podName).Msg("Worker pod completed successfully")
+				log.Info().Str("job", jobName).Msg("Worker job completed successfully")
 				// The worker reports its own status. Just clean up tracking.
 				return
 			case "Failed":
-				log.Warn().Str("pod", podName).Msg("Worker pod failed")
-				e.failAnalysis(analysisID, "Worker pod failed", nil)
+				log.Warn().Str("job", jobName).Msg("Worker job failed")
+				e.failAnalysis(analysisID, "Worker job failed", nil)
 				return
 			case "Unknown":
-				log.Warn().Str("pod", podName).Msg("Worker pod in unknown state")
+				log.Warn().Str("job", jobName).Msg("Worker job in unknown state")
 				// "Pending" and "Running" — keep watching.
 			}
 		}
 	}
 }
 
-// buildPodSpec creates the pod JSON for a worker analysis pod.
+// buildJobSpec creates the Job JSON for a worker analysis.
 // sidecarToken is non-empty when an LLM proxy sidecar should be included;
 // passing "" omits the sidecar (Anthropic provider or fallback).
-func (e *K8sExecutor) buildPodSpec(podName, analysisID, workerToken, sidecarToken string) map[string]any {
+func (e *K8sExecutor) buildJobSpec(jobName, analysisID, workerToken, sidecarToken string) map[string]any {
 	labels := map[string]string{
 		"app.kubernetes.io/name":       "swamp-worker",
 		"app.kubernetes.io/component":  "analysis",
@@ -434,57 +435,71 @@ func (e *K8sExecutor) buildPodSpec(podName, analysisID, workerToken, sidecarToke
 		}
 	}
 
-	// TTL after finished.
+	jobSpec := map[string]any{
+		"backoffLimit": int32(0),
+		"template": map[string]any{
+			"metadata": map[string]any{
+				"labels": labels,
+			},
+			"spec": podSpec,
+		},
+	}
+	if seconds := int64(math.Ceil(e.cfg.MaxAnalysisDuration.Seconds())); seconds > 0 {
+		jobSpec["activeDeadlineSeconds"] = seconds
+	}
 	if e.cfg.K8sPodTTLSeconds > 0 {
-		ttl := int32(e.cfg.K8sPodTTLSeconds)
-		podSpec["ttlSecondsAfterFinished"] = ttl // Note: this is a Job field, not Pod
+		jobSpec["ttlSecondsAfterFinished"] = int32(e.cfg.K8sPodTTLSeconds)
 	}
 
-	pod := map[string]any{
-		"apiVersion": "v1",
-		"kind":       "Pod",
+	annotations := e.cfg.ParseWorkerAnnotations()
+	if len(annotations) > 0 {
+		jobSpec["template"].(map[string]any)["metadata"].(map[string]any)["annotations"] = annotations
+	}
+
+	job := map[string]any{
+		"apiVersion": "batch/v1",
+		"kind":       "Job",
 		"metadata": map[string]any{
-			"name":      podName,
+			"name":      jobName,
 			"namespace": e.cfg.K8sNamespace,
 			"labels":    labels,
 		},
-		"spec": podSpec,
+		"spec": jobSpec,
 	}
 
-	// Merge custom annotations.
-	if annotations := e.cfg.ParseWorkerAnnotations(); len(annotations) > 0 {
-		pod["metadata"].(map[string]any)["annotations"] = annotations
+	if len(annotations) > 0 {
+		job["metadata"].(map[string]any)["annotations"] = annotations
 	}
 
-	return pod
+	return job
 }
 
-// reconcileExistingPods finds running analysis pods and re-tracks them.
-func (e *K8sExecutor) reconcileExistingPods(ctx context.Context) {
-	pods, err := e.k8s.ListPods(ctx, e.cfg.K8sNamespace, "app.kubernetes.io/name=swamp-worker")
+// reconcileExistingJobs finds running analysis jobs and re-tracks them.
+func (e *K8sExecutor) reconcileExistingJobs(ctx context.Context) {
+	jobs, err := e.k8s.ListJobs(ctx, e.cfg.K8sNamespace, "app.kubernetes.io/name=swamp-worker")
 	if err != nil {
-		log.Error().Err(err).Msg("Failed to list existing analysis pods for reconciliation")
+		log.Error().Err(err).Msg("Failed to list existing analysis jobs for reconciliation")
 		return
 	}
 
-	for _, pod := range pods {
-		analysisID, ok := pod.Labels["swamp/analysis-id"]
-		if !ok || pod.Phase == "Succeeded" || pod.Phase == "Failed" {
+	for _, job := range jobs {
+		analysisID, ok := job.Labels["swamp/analysis-id"]
+		if !ok || job.Phase == "Succeeded" || job.Phase == "Failed" {
 			continue
 		}
-		log.Info().Str("pod", pod.Name).Str("analysis_id", analysisID).
-			Str("phase", pod.Phase).Msg("Reconciling existing worker pod")
+		log.Info().Str("job", job.Name).Str("analysis_id", analysisID).
+			Str("phase", job.Phase).Msg("Reconciling existing worker job")
 
 		_, cancelFunc := context.WithTimeout(ctx, e.cfg.MaxAnalysisDuration)
 		e.mu.Lock()
 		e.running[analysisID] = &k8sAnalysisState{
-			podName:   pod.Name,
+			jobName:   job.Name,
 			cancel:    cancelFunc,
 			startedAt: time.Now(),
 		}
 		e.mu.Unlock()
 
-		go e.watchPod(ctx, cancelFunc, analysisID, pod.Name)
+		go e.watchJob(ctx, cancelFunc, analysisID, job.Name)
 	}
 
 	log.Info().Int("tracked", len(e.running)).Msg("K8s executor reconciliation complete")
@@ -556,5 +571,3 @@ func parseTolerations(s string) []map[string]string {
 	}
 	return result
 }
-
-

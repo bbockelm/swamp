@@ -5,37 +5,46 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
+
+	"sigs.k8s.io/yaml"
+
+	"github.com/bbockelm/swamp/internal/config"
 )
 
-// K8sClient is a lightweight Kubernetes API client that uses the
-// in-cluster service account credentials. This avoids pulling in the
-// massive client-go dependency.
+// K8sClient is a lightweight Kubernetes API client for the subset of batch/v1
+// and core APIs needed by the executor. It supports either in-cluster service
+// account credentials or a kubeconfig file, avoiding a client-go dependency.
 type K8sClient interface {
-	CreatePod(ctx context.Context, namespace string, pod map[string]any) error
-	DeletePod(ctx context.Context, namespace, name string) error
-	GetPodPhase(ctx context.Context, namespace, name string) (string, error)
-	ListPods(ctx context.Context, namespace, labelSelector string) ([]PodInfo, error)
+	CreateJob(ctx context.Context, namespace string, job map[string]any) error
+	DeleteJob(ctx context.Context, namespace, name string) error
+	GetJobPhase(ctx context.Context, namespace, name string) (string, error)
+	ListJobs(ctx context.Context, namespace, labelSelector string) ([]JobInfo, error)
 }
 
-// PodInfo is minimal pod metadata returned from list/get operations.
-type PodInfo struct {
+// JobInfo is minimal job metadata returned from list/get operations.
+type JobInfo struct {
 	Name   string
 	Phase  string
 	Labels map[string]string
 }
 
-// inClusterK8sClient uses the in-cluster service account token and CA cert.
-type inClusterK8sClient struct {
-	host       string
-	tokenPath  string
-	httpClient *http.Client
+// k8sClient uses either in-cluster credentials or a kubeconfig-specified
+// token/client certificate.
+type k8sClient struct {
+	host        string
+	tokenPath   string
+	staticToken string
+	httpClient  *http.Client
 }
 
 const (
@@ -44,6 +53,50 @@ const (
 	k8sHostEnv    = "KUBERNETES_SERVICE_HOST"
 	k8sPortEnv    = "KUBERNETES_SERVICE_PORT"
 )
+
+type kubeconfigFile struct {
+	CurrentContext string `yaml:"current-context"`
+	Clusters       []struct {
+		Name    string `yaml:"name"`
+		Cluster struct {
+			Server                   string `yaml:"server"`
+			CertificateAuthority     string `yaml:"certificate-authority"`
+			CertificateAuthorityData string `yaml:"certificate-authority-data"`
+			InsecureSkipTLSVerify    bool   `yaml:"insecure-skip-tls-verify"`
+		} `yaml:"cluster"`
+	} `yaml:"clusters"`
+	Contexts []struct {
+		Name    string `yaml:"name"`
+		Context struct {
+			Cluster   string `yaml:"cluster"`
+			User      string `yaml:"user"`
+			Namespace string `yaml:"namespace"`
+		} `yaml:"context"`
+	} `yaml:"contexts"`
+	Users []struct {
+		Name string `yaml:"name"`
+		User struct {
+			Token                 string `yaml:"token"`
+			TokenFile             string `yaml:"tokenFile"`
+			ClientCertificate     string `yaml:"client-certificate"`
+			ClientCertificateData string `yaml:"client-certificate-data"`
+			ClientKey             string `yaml:"client-key"`
+			ClientKeyData         string `yaml:"client-key-data"`
+			Username              string `yaml:"username"`
+			Password              string `yaml:"password"`
+			Exec                  any    `yaml:"exec"`
+		} `yaml:"user"`
+	} `yaml:"users"`
+}
+
+// NewK8sClient creates a K8s client from the configured kubeconfig or by
+// falling back to in-cluster credentials.
+func NewK8sClient(cfg *config.Config) (K8sClient, error) {
+	if strings.TrimSpace(cfg.Kubeconfig) != "" {
+		return NewK8sClientFromKubeconfig(cfg.Kubeconfig)
+	}
+	return NewInClusterK8sClient()
+}
 
 // NewInClusterK8sClient creates a K8s client using in-cluster credentials.
 func NewInClusterK8sClient() (K8sClient, error) {
@@ -68,7 +121,7 @@ func NewInClusterK8sClient() (K8sClient, error) {
 	}
 	tlsConfig.RootCAs = certPool
 
-	return &inClusterK8sClient{
+	return &k8sClient{
 		host:      fmt.Sprintf("https://%s:%s", host, port),
 		tokenPath: k8sTokenPath,
 		httpClient: &http.Client{
@@ -80,17 +133,124 @@ func NewInClusterK8sClient() (K8sClient, error) {
 	}, nil
 }
 
+// NewK8sClientFromKubeconfig creates a K8s client from a kubeconfig file.
+func NewK8sClientFromKubeconfig(path string) (K8sClient, error) {
+	resolvedPath, err := resolveKubeconfigPath(path)
+	if err != nil {
+		return nil, err
+	}
+
+	data, err := os.ReadFile(resolvedPath)
+	if err != nil {
+		return nil, fmt.Errorf("reading kubeconfig %s: %w", resolvedPath, err)
+	}
+
+	var cfg kubeconfigFile
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		return nil, fmt.Errorf("parsing kubeconfig %s: %w", resolvedPath, err)
+	}
+	if cfg.CurrentContext == "" {
+		return nil, fmt.Errorf("kubeconfig %s has no current-context", resolvedPath)
+	}
+
+	ctxEntry, err := findNamedValue(cfg.Contexts, cfg.CurrentContext, func(item struct {
+		Name    string `yaml:"name"`
+		Context struct {
+			Cluster   string `yaml:"cluster"`
+			User      string `yaml:"user"`
+			Namespace string `yaml:"namespace"`
+		} `yaml:"context"`
+	}) string {
+		return item.Name
+	})
+	if err != nil {
+		return nil, fmt.Errorf("loading current context %q: %w", cfg.CurrentContext, err)
+	}
+
+	clusterEntry, err := findNamedValue(cfg.Clusters, ctxEntry.Context.Cluster, func(item struct {
+		Name    string `yaml:"name"`
+		Cluster struct {
+			Server                   string `yaml:"server"`
+			CertificateAuthority     string `yaml:"certificate-authority"`
+			CertificateAuthorityData string `yaml:"certificate-authority-data"`
+			InsecureSkipTLSVerify    bool   `yaml:"insecure-skip-tls-verify"`
+		} `yaml:"cluster"`
+	}) string {
+		return item.Name
+	})
+	if err != nil {
+		return nil, fmt.Errorf("loading cluster %q: %w", ctxEntry.Context.Cluster, err)
+	}
+
+	userEntry, err := findNamedValue(cfg.Users, ctxEntry.Context.User, func(item struct {
+		Name string `yaml:"name"`
+		User struct {
+			Token                 string `yaml:"token"`
+			TokenFile             string `yaml:"tokenFile"`
+			ClientCertificate     string `yaml:"client-certificate"`
+			ClientCertificateData string `yaml:"client-certificate-data"`
+			ClientKey             string `yaml:"client-key"`
+			ClientKeyData         string `yaml:"client-key-data"`
+			Username              string `yaml:"username"`
+			Password              string `yaml:"password"`
+			Exec                  any    `yaml:"exec"`
+		} `yaml:"user"`
+	}) string {
+		return item.Name
+	})
+	if err != nil {
+		return nil, fmt.Errorf("loading user %q: %w", ctxEntry.Context.User, err)
+	}
+
+	if userEntry.User.Exec != nil {
+		return nil, fmt.Errorf("kubeconfig exec auth is not supported by the lightweight client")
+	}
+	if clusterEntry.Cluster.Server == "" {
+		return nil, fmt.Errorf("kubeconfig cluster %q has no server", clusterEntry.Name)
+	}
+
+	tlsConfig, err := buildKubeconfigTLSConfig(filepath.Dir(resolvedPath), clusterEntry, userEntry)
+	if err != nil {
+		return nil, err
+	}
+
+	client := &k8sClient{
+		host:        strings.TrimRight(clusterEntry.Cluster.Server, "/"),
+		staticToken: strings.TrimSpace(userEntry.User.Token),
+		httpClient: &http.Client{
+			Timeout:   30 * time.Second,
+			Transport: &http.Transport{TLSClientConfig: tlsConfig},
+		},
+	}
+
+	if userEntry.User.TokenFile != "" {
+		client.tokenPath = resolveRelativePath(filepath.Dir(resolvedPath), userEntry.User.TokenFile)
+	}
+	if client.staticToken == "" && client.tokenPath == "" && userEntry.User.Username != "" {
+		return nil, fmt.Errorf("kubeconfig basic auth is not supported by the lightweight client")
+	}
+
+	return client, nil
+}
+
 // token reads the current service account token (it may be rotated).
-func (c *inClusterK8sClient) token() (string, error) {
+func (c *k8sClient) token() (string, error) {
+	if c.staticToken != "" {
+		return c.staticToken, nil
+	}
+	if c.tokenPath == "" {
+		return "", nil
+	}
 	data, err := os.ReadFile(c.tokenPath)
 	if err != nil {
-		return "", fmt.Errorf("reading service account token: %w", err)
+		return "", fmt.Errorf("reading Kubernetes token: %w", err)
 	}
 	return strings.TrimSpace(string(data)), nil
 }
 
 // doRequest performs an authenticated K8s API request.
-func (c *inClusterK8sClient) doRequest(ctx context.Context, method, path string, body any) ([]byte, int, error) {
+
+func (c *k8sClient) doRequest(ctx context.Context, method, path string, body any) ([]byte, int, error) {
 	tok, err := c.token()
 	if err != nil {
 		return nil, 0, err
@@ -110,7 +270,9 @@ func (c *inClusterK8sClient) doRequest(ctx context.Context, method, path string,
 	if err != nil {
 		return nil, 0, fmt.Errorf("creating request: %w", err)
 	}
-	req.Header.Set("Authorization", "Bearer "+tok)
+	if tok != "" {
+		req.Header.Set("Authorization", "Bearer "+tok)
+	}
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
@@ -130,22 +292,22 @@ func (c *inClusterK8sClient) doRequest(ctx context.Context, method, path string,
 	return respBody, resp.StatusCode, nil
 }
 
-// CreatePod creates a pod in the given namespace.
-func (c *inClusterK8sClient) CreatePod(ctx context.Context, namespace string, pod map[string]any) error {
-	path := fmt.Sprintf("/api/v1/namespaces/%s/pods", namespace)
-	body, status, err := c.doRequest(ctx, "POST", path, pod)
+// CreateJob creates a job in the given namespace.
+func (c *k8sClient) CreateJob(ctx context.Context, namespace string, job map[string]any) error {
+	path := fmt.Sprintf("/apis/batch/v1/namespaces/%s/jobs", namespace)
+	body, status, err := c.doRequest(ctx, "POST", path, job)
 	if err != nil {
 		return err
 	}
 	if status < 200 || status >= 300 {
-		return fmt.Errorf("CreatePod returned %d: %s", status, truncateBody(body))
+		return fmt.Errorf("CreateJob returned %d: %s", status, truncateBody(body))
 	}
 	return nil
 }
 
-// DeletePod deletes a pod by name.
-func (c *inClusterK8sClient) DeletePod(ctx context.Context, namespace, name string) error {
-	path := fmt.Sprintf("/api/v1/namespaces/%s/pods/%s", namespace, name)
+// DeleteJob deletes a job by name and cascades cleanup to its pods.
+func (c *k8sClient) DeleteJob(ctx context.Context, namespace, name string) error {
+	path := fmt.Sprintf("/apis/batch/v1/namespaces/%s/jobs/%s?propagationPolicy=Background", namespace, name)
 	body, status, err := c.doRequest(ctx, "DELETE", path, nil)
 	if err != nil {
 		return err
@@ -154,14 +316,14 @@ func (c *inClusterK8sClient) DeletePod(ctx context.Context, namespace, name stri
 		return nil // already gone
 	}
 	if status < 200 || status >= 300 {
-		return fmt.Errorf("DeletePod returned %d: %s", status, truncateBody(body))
+		return fmt.Errorf("DeleteJob returned %d: %s", status, truncateBody(body))
 	}
 	return nil
 }
 
-// GetPodPhase returns the current phase of a pod (Pending, Running, Succeeded, Failed, Unknown).
-func (c *inClusterK8sClient) GetPodPhase(ctx context.Context, namespace, name string) (string, error) {
-	path := fmt.Sprintf("/api/v1/namespaces/%s/pods/%s", namespace, name)
+// GetJobPhase returns the current phase of a job (Pending, Running, Succeeded, Failed, Unknown).
+func (c *k8sClient) GetJobPhase(ctx context.Context, namespace, name string) (string, error) {
+	path := fmt.Sprintf("/apis/batch/v1/namespaces/%s/jobs/%s", namespace, name)
 	body, status, err := c.doRequest(ctx, "GET", path, nil)
 	if err != nil {
 		return "", err
@@ -170,29 +332,27 @@ func (c *inClusterK8sClient) GetPodPhase(ctx context.Context, namespace, name st
 		return "Unknown", nil
 	}
 	if status < 200 || status >= 300 {
-		return "", fmt.Errorf("GetPod returned %d: %s", status, truncateBody(body))
+		return "", fmt.Errorf("GetJob returned %d: %s", status, truncateBody(body))
 	}
 
-	var podResp struct {
-		Status struct {
-			Phase string `json:"phase"`
-		} `json:"status"`
+	var jobResp struct {
+		Status k8sJobStatus `json:"status"`
 	}
-	if err := json.Unmarshal(body, &podResp); err != nil {
-		return "", fmt.Errorf("parsing pod status: %w", err)
+	if err := json.Unmarshal(body, &jobResp); err != nil {
+		return "", fmt.Errorf("parsing job status: %w", err)
 	}
-	return podResp.Status.Phase, nil
+	return jobPhase(jobResp.Status), nil
 }
 
-// ListPods lists pods matching a label selector.
-func (c *inClusterK8sClient) ListPods(ctx context.Context, namespace, labelSelector string) ([]PodInfo, error) {
-	path := fmt.Sprintf("/api/v1/namespaces/%s/pods?labelSelector=%s", namespace, labelSelector)
+// ListJobs lists jobs matching a label selector.
+func (c *k8sClient) ListJobs(ctx context.Context, namespace, labelSelector string) ([]JobInfo, error) {
+	path := fmt.Sprintf("/apis/batch/v1/namespaces/%s/jobs?labelSelector=%s", namespace, url.QueryEscape(labelSelector))
 	body, status, err := c.doRequest(ctx, "GET", path, nil)
 	if err != nil {
 		return nil, err
 	}
 	if status < 200 || status >= 300 {
-		return nil, fmt.Errorf("ListPods returned %d: %s", status, truncateBody(body))
+		return nil, fmt.Errorf("ListJobs returned %d: %s", status, truncateBody(body))
 	}
 
 	var listResp struct {
@@ -202,23 +362,191 @@ func (c *inClusterK8sClient) ListPods(ctx context.Context, namespace, labelSelec
 				Labels map[string]string `json:"labels"`
 			} `json:"metadata"`
 			Status struct {
-				Phase string `json:"phase"`
+				Active     int32 `json:"active"`
+				Succeeded  int32 `json:"succeeded"`
+				Failed     int32 `json:"failed"`
+				Conditions []struct {
+					Type   string `json:"type"`
+					Status string `json:"status"`
+				} `json:"conditions"`
 			} `json:"status"`
 		} `json:"items"`
 	}
 	if err := json.Unmarshal(body, &listResp); err != nil {
-		return nil, fmt.Errorf("parsing pod list: %w", err)
+		return nil, fmt.Errorf("parsing job list: %w", err)
 	}
 
-	pods := make([]PodInfo, len(listResp.Items))
+	jobs := make([]JobInfo, len(listResp.Items))
 	for i, item := range listResp.Items {
-		pods[i] = PodInfo{
+		jobs[i] = JobInfo{
 			Name:   item.Metadata.Name,
-			Phase:  item.Status.Phase,
+			Phase:  jobPhase(k8sJobStatus(item.Status)),
 			Labels: item.Metadata.Labels,
 		}
 	}
-	return pods, nil
+	return jobs, nil
+}
+
+type k8sJobStatus struct {
+	Active     int32 `json:"active"`
+	Succeeded  int32 `json:"succeeded"`
+	Failed     int32 `json:"failed"`
+	Conditions []struct {
+		Type   string `json:"type"`
+		Status string `json:"status"`
+	} `json:"conditions"`
+}
+
+func jobPhase(status k8sJobStatus) string {
+	for _, condition := range status.Conditions {
+		if condition.Status != "True" {
+			continue
+		}
+		switch condition.Type {
+		case "Complete":
+			return "Succeeded"
+		case "Failed":
+			return "Failed"
+		}
+	}
+	if status.Active > 0 {
+		return "Running"
+	}
+	if status.Succeeded > 0 {
+		return "Succeeded"
+	}
+	if status.Failed > 0 {
+		return "Failed"
+	}
+	return "Pending"
+}
+
+func buildKubeconfigTLSConfig(
+	baseDir string,
+	clusterEntry struct {
+		Name    string `yaml:"name"`
+		Cluster struct {
+			Server                   string `yaml:"server"`
+			CertificateAuthority     string `yaml:"certificate-authority"`
+			CertificateAuthorityData string `yaml:"certificate-authority-data"`
+			InsecureSkipTLSVerify    bool   `yaml:"insecure-skip-tls-verify"`
+		} `yaml:"cluster"`
+	},
+	userEntry struct {
+		Name string `yaml:"name"`
+		User struct {
+			Token                 string `yaml:"token"`
+			TokenFile             string `yaml:"tokenFile"`
+			ClientCertificate     string `yaml:"client-certificate"`
+			ClientCertificateData string `yaml:"client-certificate-data"`
+			ClientKey             string `yaml:"client-key"`
+			ClientKeyData         string `yaml:"client-key-data"`
+			Username              string `yaml:"username"`
+			Password              string `yaml:"password"`
+			Exec                  any    `yaml:"exec"`
+		} `yaml:"user"`
+	},
+) (*tls.Config, error) {
+	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS12}
+
+	if clusterEntry.Cluster.InsecureSkipTLSVerify {
+		tlsConfig.InsecureSkipVerify = true
+	} else {
+		caData, err := loadPEMData(baseDir, clusterEntry.Cluster.CertificateAuthority, clusterEntry.Cluster.CertificateAuthorityData)
+		if err != nil {
+			return nil, fmt.Errorf("loading kubeconfig CA for cluster %q: %w", clusterEntry.Name, err)
+		}
+		if len(caData) > 0 {
+			certPool := x509.NewCertPool()
+			if !certPool.AppendCertsFromPEM(caData) {
+				return nil, fmt.Errorf("failed to parse kubeconfig CA certificate for cluster %q", clusterEntry.Name)
+			}
+			tlsConfig.RootCAs = certPool
+		}
+	}
+
+	certData, err := loadPEMData(baseDir, userEntry.User.ClientCertificate, userEntry.User.ClientCertificateData)
+	if err != nil {
+		return nil, fmt.Errorf("loading kubeconfig client certificate for user %q: %w", userEntry.Name, err)
+	}
+	keyData, err := loadPEMData(baseDir, userEntry.User.ClientKey, userEntry.User.ClientKeyData)
+	if err != nil {
+		return nil, fmt.Errorf("loading kubeconfig client key for user %q: %w", userEntry.Name, err)
+	}
+	if len(certData) > 0 || len(keyData) > 0 {
+		if len(certData) == 0 || len(keyData) == 0 {
+			return nil, fmt.Errorf("kubeconfig user %q must provide both client certificate and client key", userEntry.Name)
+		}
+		certificate, err := tls.X509KeyPair(certData, keyData)
+		if err != nil {
+			return nil, fmt.Errorf("parsing kubeconfig client certificate for user %q: %w", userEntry.Name, err)
+		}
+		certificate.Leaf = parseLeafCertificate(certificate.Certificate)
+		tlsConfig.Certificates = []tls.Certificate{certificate}
+	}
+
+	return tlsConfig, nil
+}
+
+func resolveKubeconfigPath(path string) (string, error) {
+	trimmed := strings.TrimSpace(path)
+	if trimmed == "" {
+		return "", fmt.Errorf("kubeconfig path is empty")
+	}
+	if strings.HasPrefix(trimmed, "~/") {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", fmt.Errorf("resolving home directory for kubeconfig: %w", err)
+		}
+		trimmed = filepath.Join(home, strings.TrimPrefix(trimmed, "~/"))
+	}
+	return filepath.Abs(trimmed)
+}
+
+func resolveRelativePath(baseDir, value string) string {
+	if filepath.IsAbs(value) {
+		return value
+	}
+	return filepath.Join(baseDir, value)
+}
+
+func loadPEMData(baseDir, filePath, encoded string) ([]byte, error) {
+	if strings.TrimSpace(encoded) != "" {
+		data, err := base64.StdEncoding.DecodeString(strings.TrimSpace(encoded))
+		if err != nil {
+			return nil, fmt.Errorf("base64 decode: %w", err)
+		}
+		return data, nil
+	}
+	if strings.TrimSpace(filePath) == "" {
+		return nil, nil
+	}
+	data, err := os.ReadFile(resolveRelativePath(baseDir, strings.TrimSpace(filePath)))
+	if err != nil {
+		return nil, err
+	}
+	return data, nil
+}
+
+func parseLeafCertificate(chain [][]byte) *x509.Certificate {
+	if len(chain) == 0 {
+		return nil
+	}
+	leaf, err := x509.ParseCertificate(chain[0])
+	if err != nil {
+		return nil
+	}
+	return leaf
+}
+
+func findNamedValue[T any](items []T, name string, key func(T) string) (T, error) {
+	var zero T
+	for _, item := range items {
+		if key(item) == name {
+			return item, nil
+		}
+	}
+	return zero, fmt.Errorf("entry %q not found", name)
 }
 
 func truncateBody(b []byte) string {

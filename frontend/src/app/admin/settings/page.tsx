@@ -155,11 +155,12 @@ function OIDCConfigSection() {
 const EXECUTOR_MODES = [
   { value: 'local', label: 'Local (in-process)', desc: 'Fork/exec agent in the server process. Simple but non-persistent.' },
   { value: 'process', label: 'Process (detached daemon)', desc: 'Detached processes with flock-based liveness. Survives restarts.' },
-  { value: 'kubernetes', label: 'Kubernetes', desc: 'Run analyses as Kubernetes pods. Scalable and persistent.' },
+  { value: 'kubernetes', label: 'Kubernetes', desc: 'Run analyses as Kubernetes jobs. Scalable and persistent.' },
 ];
 
 const K8S_FIELDS = [
   { key: 'k8s_namespace', label: 'Namespace', placeholder: 'swamp' },
+  { key: 'k8s_kubeconfig', label: 'Kubeconfig Path', placeholder: '/home/swamp/.kube/config' },
   { key: 'k8s_worker_image', label: 'Worker Image', placeholder: 'ghcr.io/org/swamp-worker:latest' },
   { key: 'k8s_worker_service_account', label: 'Service Account', placeholder: 'swamp-worker' },
   { key: 'k8s_worker_cpu_request', label: 'CPU Request', placeholder: '500m' },
@@ -169,7 +170,7 @@ const K8S_FIELDS = [
   { key: 'k8s_worker_node_selector', label: 'Node Selector', placeholder: 'key=value,key2=value2' },
   { key: 'k8s_worker_tolerations', label: 'Tolerations', placeholder: 'key=value:effect,...' },
   { key: 'k8s_worker_labels', label: 'Pod Labels', placeholder: 'key=value,key2=value2' },
-  { key: 'k8s_pod_ttl_seconds', label: 'Pod TTL (seconds)', placeholder: '3600' },
+  { key: 'k8s_pod_ttl_seconds', label: 'Job TTL (seconds)', placeholder: '3600' },
 ];
 
 function ExecutorConfigSection() {

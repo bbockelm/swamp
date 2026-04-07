@@ -103,7 +103,8 @@ type Config struct {
 	K8sWorkerTolerations    string `envconfig:"K8S_WORKER_TOLERATIONS" default:""`   // key=value:effect,...
 	K8sWorkerLabels         string `envconfig:"K8S_WORKER_LABELS" default:""`        // key=value,key2=value2
 	K8sWorkerAnnotations    string `envconfig:"K8S_WORKER_ANNOTATIONS" default:""`   // key=value,key2=value2
-	K8sPodTTLSeconds        int    `envconfig:"K8S_POD_TTL_SECONDS" default:"3600"`  // cleanup after completion
+	K8sPodTTLSeconds        int    `envconfig:"K8S_POD_TTL_SECONDS" default:"3600"`  // cleanup after completion via Job TTL
+	Kubeconfig              string `envconfig:"KUBECONFIG" default:""`               // path to kubeconfig file (if empty, uses in-cluster credentials)
 
 	// Worker mode settings (used inside worker pods / detached processes).
 	WorkerMode     bool   `envconfig:"SWAMP_WORKER_MODE" default:"false"`

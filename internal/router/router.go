@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -88,7 +89,18 @@ func New(cfg *config.Config, pool *pgxpool.Pool, store *storage.Store) (*chi.Mux
 	applyDBConfig("k8s_worker_node_selector", &cfg.K8sWorkerNodeSelector)
 	applyDBConfig("k8s_worker_tolerations", &cfg.K8sWorkerTolerations)
 	applyDBConfig("k8s_worker_labels", &cfg.K8sWorkerLabels)
+	applyDBConfig("k8s_kubeconfig", &cfg.Kubeconfig)
 	applyDBConfig("agent_model", &cfg.AgentModel)
+	if ttl, err := queries.GetAppConfig(context.Background(), "k8s_pod_ttl_seconds"); err == nil && ttl != "" {
+		if parsed, parseErr := strconv.Atoi(ttl); parseErr == nil {
+			cfg.K8sPodTTLSeconds = parsed
+		}
+	}
+	if maxConcurrent, err := queries.GetAppConfig(context.Background(), "max_concurrent_analyses"); err == nil && maxConcurrent != "" {
+		if parsed, parseErr := strconv.Atoi(maxConcurrent); parseErr == nil && parsed > 0 {
+			cfg.MaxConcurrentAnalyses = parsed
+		}
+	}
 
 	// Create the appropriate executor based on config.
 	var exec agent.AnalysisExecutor
