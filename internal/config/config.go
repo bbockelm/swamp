@@ -59,6 +59,29 @@ type Config struct {
 	MaxAnalysisDuration   time.Duration `envconfig:"MAX_ANALYSIS_DURATION" default:"30m"`
 	MaxConcurrentAnalyses int           `envconfig:"MAX_CONCURRENT_ANALYSES" default:"2"`
 
+	// AgentProvider selects the default LLM backend: "anthropic" (default) or "external".
+	// Can be overridden per-project in the database.
+	AgentProvider string `envconfig:"AGENT_PROVIDER" default:"anthropic"`
+
+	// External LLM settings (OpenAI-compatible API, e.g. NRP/ellm).
+	// Used when AgentProvider is "external".
+	ExternalLLMEndpoint      string `envconfig:"EXTERNAL_LLM_ENDPOINT" default:""`
+	ExternalLLMAPIKey        string `envconfig:"EXTERNAL_LLM_API_KEY" default:""`
+	ExternalLLMAPIKeyFile    string `envconfig:"EXTERNAL_LLM_API_KEY_FILE" default:".swamp-external-llm.key"`
+	ExternalLLMAnalysisModel string `envconfig:"EXTERNAL_LLM_ANALYSIS_MODEL" default:""` // Phase 1 model
+	ExternalLLMPoCModel      string `envconfig:"EXTERNAL_LLM_POC_MODEL" default:""`      // Phase 2 model (defaults to analysis model)
+	// ExternalLLMFallback controls what happens when the external LLM fails.
+	// Set to "anthropic" to retry with Anthropic, or "" (default) for no fallback.
+	ExternalLLMFallback string `envconfig:"EXTERNAL_LLM_FALLBACK" default:""`
+
+	// OpenCodeBinary is the path to the opencode CLI binary used with external LLMs.
+	OpenCodeBinary string `envconfig:"OPENCODE_BINARY" default:"opencode"`
+
+	// LLM proxy sidecar settings (used when running as a K8s sidecar proxy).
+	LLMProxyMode  bool   `envconfig:"SWAMP_LLM_PROXY_MODE" default:"false"`
+	LLMProxyToken string `envconfig:"SWAMP_LLM_PROXY_TOKEN" default:""`
+	LLMProxyPort  int    `envconfig:"LLM_PROXY_PORT" default:"11434"`
+
 	// Current AUP version users must agree to.
 	AUPVersion string `envconfig:"AUP_VERSION" default:"1.0"`
 
@@ -199,6 +222,38 @@ func (c *Config) LoadAgentKeyFile() error {
 	}
 	c.AgentAPIKey = key
 	log.Info().Str("file", file).Str("agent", c.AgentBinary).Msg("Loaded agent API key from file")
+	return nil
+}
+
+// IsLLMProxyMode returns true if this process should run as an LLM sidecar proxy.
+func (c *Config) IsLLMProxyMode() bool {
+	return c.LLMProxyMode
+}
+
+// LoadExternalLLMKeyFile reads the external LLM API key from a file if not already set.
+func (c *Config) LoadExternalLLMKeyFile() error {
+	if c.ExternalLLMAPIKey != "" {
+		log.Info().Msg("External LLM API key configured via environment")
+		return nil
+	}
+	file := c.ExternalLLMAPIKeyFile
+	if file == "" {
+		return nil
+	}
+	if _, err := os.Stat(file); err != nil {
+		// Key file not found — not an error; external LLM may not be configured.
+		return nil
+	}
+	data, err := os.ReadFile(file)
+	if err != nil {
+		return fmt.Errorf("reading external LLM API key file %s: %w", file, err)
+	}
+	key := strings.TrimSpace(string(data))
+	if key == "" {
+		return fmt.Errorf("external LLM API key file %s is empty", file)
+	}
+	c.ExternalLLMAPIKey = key
+	log.Info().Str("file", file).Msg("Loaded external LLM API key from file")
 	return nil
 }
 

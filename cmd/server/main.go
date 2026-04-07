@@ -65,6 +65,17 @@ func main() {
 		return
 	}
 
+	// LLM proxy sidecar mode: exchange the sidecar token for real credentials
+	// and start a reverse proxy on localhost. Used as a sidecar container in
+	// K8s pods to keep the external LLM API key out of the main worker container.
+	if cfg.IsLLMProxyMode() {
+		if err := agent.RunLLMProxy(cfg); err != nil {
+			log.Error().Err(err).Msg("LLM proxy failed")
+			os.Exit(1)
+		}
+		return
+	}
+
 	if err := run(); err != nil {
 		log.Fatal().Err(err).Msg("Fatal error")
 	}
@@ -100,6 +111,10 @@ func run() error {
 
 	if err := cfg.LoadAgentKeyFile(); err != nil {
 		return fmt.Errorf("loading agent key file: %w", err)
+	}
+
+	if err := cfg.LoadExternalLLMKeyFile(); err != nil {
+		return fmt.Errorf("loading external LLM key file: %w", err)
 	}
 
 	pool, err := db.Connect(ctx, cfg.DatabaseURL)

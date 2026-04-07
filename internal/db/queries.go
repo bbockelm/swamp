@@ -604,10 +604,12 @@ func (q *Queries) GetProject(ctx context.Context, id string) (*models.Project, e
 	var p models.Project
 	err := q.pool.QueryRow(ctx, `
 		SELECT id, name, description, owner_id, read_group_id, write_group_id, admin_group_id,
-		       uses_global_key, status, created_at, updated_at
+		       uses_global_key, status, created_at, updated_at,
+		       agent_provider, ext_llm_analysis_model, ext_llm_poc_model, ext_llm_fallback
 		FROM projects WHERE id=$1`, id).Scan(
 		&p.ID, &p.Name, &p.Description, &p.OwnerID, &p.ReadGroupID, &p.WriteGroupID, &p.AdminGroupID,
-		&p.UsesGlobalKey, &p.Status, &p.CreatedAt, &p.UpdatedAt)
+		&p.UsesGlobalKey, &p.Status, &p.CreatedAt, &p.UpdatedAt,
+		&p.AgentProvider, &p.ExternalLLMAnalysisModel, &p.ExternalLLMPoCModel, &p.ExternalLLMFallback)
 	if err != nil {
 		return nil, err
 	}
@@ -617,8 +619,12 @@ func (q *Queries) GetProject(ctx context.Context, id string) (*models.Project, e
 func (q *Queries) UpdateProject(ctx context.Context, p *models.Project) error {
 	_, err := q.pool.Exec(ctx, `
 		UPDATE projects SET name=$2, description=$3, read_group_id=$4, write_group_id=$5,
-		       admin_group_id=$6, uses_global_key=$7, status=$8, updated_at=NOW()
-		WHERE id=$1`, p.ID, p.Name, p.Description, p.ReadGroupID, p.WriteGroupID, p.AdminGroupID, p.UsesGlobalKey, p.Status)
+		       admin_group_id=$6, uses_global_key=$7, status=$8,
+		       agent_provider=$9, ext_llm_analysis_model=$10, ext_llm_poc_model=$11, ext_llm_fallback=$12,
+		       updated_at=NOW()
+		WHERE id=$1`, p.ID, p.Name, p.Description, p.ReadGroupID, p.WriteGroupID, p.AdminGroupID,
+		p.UsesGlobalKey, p.Status,
+		p.AgentProvider, p.ExternalLLMAnalysisModel, p.ExternalLLMPoCModel, p.ExternalLLMFallback)
 	return err
 }
 
@@ -632,7 +638,8 @@ func (q *Queries) ListUserProjects(ctx context.Context, userID string) ([]models
 	rows, err := q.pool.Query(ctx, `
 		SELECT DISTINCT p.id, p.name, p.description, p.owner_id,
 		       p.read_group_id, p.write_group_id, p.admin_group_id,
-		       p.uses_global_key, p.status, p.created_at, p.updated_at
+		       p.uses_global_key, p.status, p.created_at, p.updated_at,
+		       p.agent_provider, p.ext_llm_analysis_model, p.ext_llm_poc_model, p.ext_llm_fallback
 		FROM projects p
 		LEFT JOIN group_members gm_r ON gm_r.group_id = p.read_group_id AND gm_r.user_id = $1
 		LEFT JOIN group_members gm_w ON gm_w.group_id = p.write_group_id AND gm_w.user_id = $1
@@ -651,7 +658,8 @@ func (q *Queries) ListUserProjects(ctx context.Context, userID string) ([]models
 		var p models.Project
 		if err := rows.Scan(&p.ID, &p.Name, &p.Description, &p.OwnerID,
 			&p.ReadGroupID, &p.WriteGroupID, &p.AdminGroupID,
-			&p.UsesGlobalKey, &p.Status, &p.CreatedAt, &p.UpdatedAt); err != nil {
+			&p.UsesGlobalKey, &p.Status, &p.CreatedAt, &p.UpdatedAt,
+			&p.AgentProvider, &p.ExternalLLMAnalysisModel, &p.ExternalLLMPoCModel, &p.ExternalLLMFallback); err != nil {
 			return nil, err
 		}
 		projects = append(projects, p)
@@ -664,7 +672,8 @@ func (q *Queries) ListAllProjects(ctx context.Context) ([]models.Project, error)
 	rows, err := q.pool.Query(ctx, `
 		SELECT DISTINCT p.id, p.name, p.description, p.owner_id,
 		       p.read_group_id, p.write_group_id, p.admin_group_id,
-		       p.uses_global_key, p.status, p.created_at, p.updated_at
+		       p.uses_global_key, p.status, p.created_at, p.updated_at,
+		       p.agent_provider, p.ext_llm_analysis_model, p.ext_llm_poc_model, p.ext_llm_fallback
 		FROM projects p
 		ORDER BY p.name`)
 	if err != nil {
@@ -676,7 +685,8 @@ func (q *Queries) ListAllProjects(ctx context.Context) ([]models.Project, error)
 		var p models.Project
 		if err := rows.Scan(&p.ID, &p.Name, &p.Description, &p.OwnerID,
 			&p.ReadGroupID, &p.WriteGroupID, &p.AdminGroupID,
-			&p.UsesGlobalKey, &p.Status, &p.CreatedAt, &p.UpdatedAt); err != nil {
+			&p.UsesGlobalKey, &p.Status, &p.CreatedAt, &p.UpdatedAt,
+			&p.AgentProvider, &p.ExternalLLMAnalysisModel, &p.ExternalLLMPoCModel, &p.ExternalLLMFallback); err != nil {
 			return nil, err
 		}
 		projects = append(projects, p)

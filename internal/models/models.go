@@ -118,6 +118,18 @@ type Project struct {
 	Status        string    `json:"status"`
 	CreatedAt     time.Time `json:"created_at"`
 	UpdatedAt     time.Time `json:"updated_at"`
+
+	// Per-project LLM overrides. NULL means "use global config".
+	// AgentProvider: "anthropic" or "external". NULL → use AGENT_PROVIDER env var.
+	AgentProvider *string `json:"agent_provider,omitempty"`
+	// ExternalLLMAnalysisModel overrides EXTERNAL_LLM_ANALYSIS_MODEL for Phase 1.
+	ExternalLLMAnalysisModel *string `json:"ext_llm_analysis_model,omitempty"`
+	// ExternalLLMPoCModel overrides EXTERNAL_LLM_POC_MODEL for Phase 2.
+	// NULL → falls back to ExternalLLMAnalysisModel.
+	ExternalLLMPoCModel *string `json:"ext_llm_poc_model,omitempty"`
+	// ExternalLLMFallback overrides EXTERNAL_LLM_FALLBACK.
+	// "anthropic" = retry Phase with Anthropic on failure. "" = no fallback.
+	ExternalLLMFallback *string `json:"ext_llm_fallback,omitempty"`
 }
 
 // SoftwarePackage is a Git repository registered for analysis.

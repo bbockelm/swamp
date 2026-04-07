@@ -78,6 +78,37 @@ func (wh *WorkerHandler) ExchangeToken(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusOK, resp)
 }
 
+// ExchangeSidecarToken handles POST /api/v1/internal/worker/exchange-sidecar.
+// The LLM proxy sidecar container sends its one-time token and receives the
+// real external LLM API key and endpoint URL. The token is consumed on use.
+// Credentials are never stored in the pod spec — only the one-time token is.
+func (wh *WorkerHandler) ExchangeSidecarToken(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Token string `json:"token"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondError(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+	if req.Token == "" {
+		respondError(w, http.StatusBadRequest, "Token is required")
+		return
+	}
+
+	apiKey, endpointURL, err := wh.tokenStore.ExchangeSidecarToken(req.Token)
+	if err != nil {
+		log.Warn().Err(err).Msg("Sidecar token exchange failed")
+		respondError(w, http.StatusUnauthorized, "Invalid or expired sidecar token")
+		return
+	}
+
+	log.Info().Msg("Sidecar token exchanged successfully")
+	respondJSON(w, http.StatusOK, map[string]string{
+		"api_key":      apiKey,
+		"endpoint_url": endpointURL,
+	})
+}
+
 // ProxyAnthropic reverse-proxies Anthropic API requests from worker pods.
 // The worker sends a dedicated proxy token as the x-api-key header (set via
 // ANTHROPIC_API_KEY env var). This token is separate from the session token

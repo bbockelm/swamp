@@ -239,11 +239,13 @@ func (e *Executor) run(analysis *models.Analysis, packages []models.SoftwarePack
 
 	// Gather context from prior analyses for this project.
 	analysisCtx := e.gatherAnalysisContext(ctx, analysis.ProjectID, packages)
-	anthropicKey, err := resolveAnthropicAPIKey(ctx, e.queries, e.encryptor, e.cfg, analysis)
-	if err != nil {
-		e.failAnalysis(ctx, analysis.ID, "Anthropic key resolution failed", err)
-		return
+
+	// Resolve effective LLM configuration (global defaults + per-project overrides).
+	var project *models.Project
+	if e.queries != nil && analysis.ProjectID != "" {
+		project, _ = e.queries.GetProject(ctx, analysis.ProjectID)
 	}
+	llmConfig := ResolveEffectiveLLMConfig(e.cfg, project)
 
 	// Build prompt.
 	var prompt string
@@ -260,40 +262,80 @@ func (e *Executor) run(analysis *models.Analysis, packages []models.SoftwarePack
 		_ = os.WriteFile(filepath.Join(outputDir, "context.md"), []byte(ctxText), 0640)
 	}
 
-	// Run Phase 1: Security analysis.
-	if err := e.updateStatus(ctx, analysis.ID, "running", "Phase 1: Security analysis"); err != nil {
-		return
-	}
-	e.hub.Broadcast(analysis.ID, []byte("[system] Starting Phase 1: Security analysis"))
-	if err := e.runAgent(ctx, workDir, prompt, analysis.ID, anthropicKey, analysis.AgentModel); err != nil {
-		if ctx.Err() != nil {
-			// Context expired (timeout or shutdown cancellation) — partial
-			// results will be uploaded by the deferred uploadOutputDir.
-			e.hub.Broadcast(analysis.ID, []byte("[system] Analysis timed out — saving partial results..."))
-			dbCtx, dbCancel := context.WithTimeout(context.Background(), 10*time.Second)
-			defer dbCancel()
-			_ = e.queries.SetAnalysisCompleted(dbCtx, analysis.ID, "timed_out",
-				"Analysis timed out — partial results saved")
-			return
-		}
-		e.failAnalysis(ctx, analysis.ID, "Agent execution failed (Phase 1)", err)
-		return
-	}
-
-	// Run Phase 2: Exploit validation (only if Phase 1 produced results).
 	sarifPath := filepath.Join(outputDir, "results.sarif")
-	if _, err := os.Stat(sarifPath); err == nil {
-		if err := e.updateStatus(ctx, analysis.ID, "running", "Phase 2: Exploit validation"); err != nil {
+
+	switch llmConfig.Provider {
+	case "external":
+		extKey, err := resolveExternalLLMAPIKey(ctx, e.queries, e.encryptor, e.cfg, analysis)
+		if err != nil {
+			if llmConfig.Fallback == "anthropic" {
+				log.Warn().Err(err).Str("analysis_id", analysis.ID).Msg("External LLM key resolution failed, falling back to Anthropic")
+				if err := e.runAnthropicPhases(ctx, workDir, prompt, sarifPath, packages, analysis); err != nil {
+					e.failAnalysis(ctx, analysis.ID, "Agent execution failed (Anthropic fallback)", err)
+				}
+				return
+			}
+			e.failAnalysis(ctx, analysis.ID, "External LLM key resolution failed", err)
 			return
 		}
-		e.hub.Broadcast(analysis.ID, []byte("[system] Starting Phase 2: Exploit validation"))
-		phase2Prompt := BuildPrompt(&packages[0], "phase2", "", nil)
-		if err := e.runAgent(ctx, workDir, phase2Prompt, analysis.ID, anthropicKey, analysis.AgentModel); err != nil {
-			if ctx.Err() != nil {
-				// Timeout during Phase 2 — Phase 1 results are still valid.
-				e.hub.Broadcast(analysis.ID, []byte("[system] Phase 2 timed out — saving Phase 1 results..."))
+
+		// Phase 1: Security analysis.
+		if err := e.updateStatus(ctx, analysis.ID, "running", "Phase 1: Security analysis"); err != nil {
+			return
+		}
+		e.hub.Broadcast(analysis.ID, []byte("[system] Starting Phase 1: Security analysis (external LLM)"))
+		phase1Err := e.runOpenCodeAgent(ctx, workDir, prompt, analysis.ID, e.cfg.ExternalLLMEndpoint, extKey, llmConfig.AnalysisModel)
+		if phase1Err != nil {
+			if llmConfig.Fallback == "anthropic" {
+				log.Warn().Err(phase1Err).Str("analysis_id", analysis.ID).Msg("External LLM Phase 1 failed, falling back to Anthropic")
+				if err := e.runAnthropicPhases(ctx, workDir, prompt, sarifPath, packages, analysis); err != nil {
+					e.failAnalysis(ctx, analysis.ID, "Agent execution failed (Anthropic fallback)", err)
+				}
+				return
 			}
-			log.Warn().Err(err).Str("analysis_id", analysis.ID).Msg("Phase 2 (exploit validation) failed")
+			e.failAnalysis(ctx, analysis.ID, "Agent execution failed (Phase 1)", phase1Err)
+			return
+		}
+
+		// Phase 2: Exploit validation.
+		if _, err := os.Stat(sarifPath); err == nil {
+			if err := e.updateStatus(ctx, analysis.ID, "running", "Phase 2: Exploit validation"); err != nil {
+				return
+			}
+			e.hub.Broadcast(analysis.ID, []byte("[system] Starting Phase 2: Exploit validation (external LLM)"))
+			phase2Prompt := BuildPrompt(&packages[0], "phase2", "", nil)
+			if err := e.runOpenCodeAgent(ctx, workDir, phase2Prompt, analysis.ID, e.cfg.ExternalLLMEndpoint, extKey, llmConfig.PoCModel); err != nil {
+				log.Warn().Err(err).Str("analysis_id", analysis.ID).Msg("Phase 2 (exploit validation) failed")
+			}
+		}
+
+	default: // "anthropic"
+		anthropicKey, err := resolveAnthropicAPIKey(ctx, e.queries, e.encryptor, e.cfg, analysis)
+		if err != nil {
+			e.failAnalysis(ctx, analysis.ID, "Anthropic key resolution failed", err)
+			return
+		}
+
+		// Run Phase 1: Security analysis.
+		if err := e.updateStatus(ctx, analysis.ID, "running", "Phase 1: Security analysis"); err != nil {
+			return
+		}
+		e.hub.Broadcast(analysis.ID, []byte("[system] Starting Phase 1: Security analysis"))
+		if err := e.runAgent(ctx, workDir, prompt, analysis.ID, anthropicKey, analysis.AgentModel); err != nil {
+			e.failAnalysis(ctx, analysis.ID, "Agent execution failed (Phase 1)", err)
+			return
+		}
+
+		// Run Phase 2: Exploit validation.
+		if _, err := os.Stat(sarifPath); err == nil {
+			if err := e.updateStatus(ctx, analysis.ID, "running", "Phase 2: Exploit validation"); err != nil {
+				return
+			}
+			e.hub.Broadcast(analysis.ID, []byte("[system] Starting Phase 2: Exploit validation"))
+			phase2Prompt := BuildPrompt(&packages[0], "phase2", "", nil)
+			if err := e.runAgent(ctx, workDir, phase2Prompt, analysis.ID, anthropicKey, analysis.AgentModel); err != nil {
+				log.Warn().Err(err).Str("analysis_id", analysis.ID).Msg("Phase 2 (exploit validation) failed")
+			}
 		}
 	}
 
@@ -305,6 +347,26 @@ func (e *Executor) run(analysis *models.Analysis, packages []models.SoftwarePack
 	}
 	e.hub.Broadcast(analysis.ID, []byte("[system] Analysis complete"))
 	// Log upload and room cleanup handled by deferred uploadOutputDir + CloseRoom.
+}
+
+// runAnthropicPhases runs both analysis phases using the Anthropic/Claude backend.
+// Used directly when provider is "anthropic" and also as a fallback when the
+// external LLM fails and Fallback == "anthropic".
+func (e *Executor) runAnthropicPhases(ctx context.Context, workDir, prompt, sarifPath string, packages []models.SoftwarePackage, analysis *models.Analysis) error {
+	anthropicKey, err := resolveAnthropicAPIKey(ctx, e.queries, e.encryptor, e.cfg, analysis)
+	if err != nil {
+		return err
+	}
+	if err := e.runAgent(ctx, workDir, prompt, analysis.ID, anthropicKey, analysis.AgentModel); err != nil {
+		return err
+	}
+	if _, statErr := os.Stat(sarifPath); statErr == nil {
+		phase2Prompt := BuildPrompt(&packages[0], "phase2", "", nil)
+		if err := e.runAgent(ctx, workDir, phase2Prompt, analysis.ID, anthropicKey, analysis.AgentModel); err != nil {
+			log.Warn().Err(err).Str("analysis_id", analysis.ID).Msg("Phase 2 (exploit validation) failed")
+		}
+	}
+	return nil
 }
 
 // runAgent executes the claude CLI with the given prompt.

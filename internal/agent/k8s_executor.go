@@ -145,7 +145,7 @@ func (e *K8sExecutor) launchPod(analysis *models.Analysis, packages []models.Sof
 
 	// Build the Anthropic API proxy URL.  Workers call this instead of
 	// api.anthropic.com directly, so the real API key stays server-side.
-	proxyURL := strings.TrimRight(e.cfg.BaseURL, "/") + "/api/v1/internal/worker/anthropic"
+	anthropicProxyURL := strings.TrimRight(e.cfg.BaseURL, "/") + "/api/v1/internal/worker/anthropic"
 
 	// Gather analysis context (prior findings + notes) for the worker.
 	analysisCtx := gatherAnalysisContext(ctx, e.queries, e.encryptor, e.store, analysis.ProjectID, packages)
@@ -156,15 +156,60 @@ func (e *K8sExecutor) launchPod(analysis *models.Analysis, packages []models.Sof
 		effectiveModel = e.cfg.AgentModel
 	}
 
+	// Resolve effective LLM config (global + per-project overrides).
+	var project *models.Project
+	if e.queries != nil && analysis.ProjectID != "" {
+		project, _ = e.queries.GetProject(ctx, analysis.ProjectID)
+	}
+	llmConfig := ResolveEffectiveLLMConfig(e.cfg, project)
+
+	// For external LLM: issue a sidecar token so the proxy container can obtain
+	// the real API key from the SWAMP server without it appearing in the pod spec.
+	var sidecarToken string
+	extLLMProxyURL := ""
+	if llmConfig.Provider == "external" {
+		extKey, err := resolveExternalLLMAPIKey(ctx, e.queries, e.encryptor, e.cfg, analysis)
+		if err != nil {
+			if llmConfig.Fallback == "anthropic" {
+				log.Warn().Err(err).Str("analysis_id", analysis.ID).Msg("External LLM key unavailable for K8s pod, falling back to Anthropic")
+				llmConfig.Provider = "anthropic"
+			} else {
+				e.failAnalysis(analysis.ID, "External LLM key resolution failed", err)
+				cancel()
+				<-e.countsem
+				return
+			}
+		} else {
+			st, err := e.tokenStore.IssueSidecarToken(
+				analysis.ID,
+				extKey,
+				e.cfg.ExternalLLMEndpoint,
+				10*time.Minute,
+			)
+			if err != nil {
+				e.failAnalysis(analysis.ID, "Failed to issue sidecar token", err)
+				cancel()
+				<-e.countsem
+				return
+			}
+			sidecarToken = st
+			extLLMProxyURL = fmt.Sprintf("http://127.0.0.1:%d/v1", e.cfg.LLMProxyPort)
+		}
+	}
+
 	// Issue one-time token for the worker.
 	token, err := e.tokenStore.IssueToken(
 		analysis.ID,
 		packages,
 		effectiveModel,
-		proxyURL,
+		anthropicProxyURL,
 		analysis.CustomPrompt,
 		analysisCtx,
 		10*time.Minute, // worker must exchange within 10 minutes
+		llmConfig.Provider,
+		extLLMProxyURL,
+		llmConfig.AnalysisModel,
+		llmConfig.PoCModel,
 	)
 	if err != nil {
 		e.failAnalysis(analysis.ID, "Failed to issue worker token", err)
@@ -174,7 +219,7 @@ func (e *K8sExecutor) launchPod(analysis *models.Analysis, packages []models.Sof
 	}
 
 	podName := fmt.Sprintf("swamp-analysis-%s", analysis.ID[:8])
-	pod := e.buildPodSpec(podName, analysis.ID, token)
+	pod := e.buildPodSpec(podName, analysis.ID, token, sidecarToken)
 
 	// Mark running before creating pod.
 	e.mu.Lock()
@@ -250,7 +295,9 @@ func (e *K8sExecutor) watchPod(ctx context.Context, cancel context.CancelFunc, a
 }
 
 // buildPodSpec creates the pod JSON for a worker analysis pod.
-func (e *K8sExecutor) buildPodSpec(podName, analysisID, workerToken string) map[string]any {
+// sidecarToken is non-empty when an LLM proxy sidecar should be included;
+// passing "" omits the sidecar (Anthropic provider or fallback).
+func (e *K8sExecutor) buildPodSpec(podName, analysisID, workerToken, sidecarToken string) map[string]any {
 	labels := map[string]string{
 		"app.kubernetes.io/name":       "swamp-worker",
 		"app.kubernetes.io/component":  "analysis",
@@ -311,13 +358,53 @@ func (e *K8sExecutor) buildPodSpec(podName, analysisID, workerToken string) map[
 		},
 	}
 
+	// Build the container list. Start with the main worker container.
+	containers := []any{container}
+
+	// If a sidecar token was issued, add the LLM proxy sidecar container.
+	// The sidecar runs the same SWAMP image in proxy mode. It exchanges the
+	// one-time sidecar token with the SWAMP server to obtain the real external
+	// LLM API key and endpoint, then proxies LLM requests from the worker
+	// on 127.0.0.1:<LLMProxyPort>. The main worker container has no access
+	// to the real API key.
+	if sidecarToken != "" {
+		sidecar := map[string]any{
+			"name":  "llm-proxy",
+			"image": e.cfg.K8sWorkerImage,
+			"env": []map[string]any{
+				{"name": "SWAMP_LLM_PROXY_MODE", "value": "true"},
+				{"name": "SWAMP_WORKER_SERVER", "value": e.cfg.BaseURL},
+				{"name": "SWAMP_LLM_PROXY_TOKEN", "value": sidecarToken},
+				{"name": "LLM_PROXY_PORT", "value": fmt.Sprintf("%d", e.cfg.LLMProxyPort)},
+			},
+			"resources": map[string]any{
+				"requests": map[string]string{"cpu": "50m", "memory": "64Mi"},
+				"limits":   map[string]string{"cpu": "200m", "memory": "256Mi"},
+			},
+			"securityContext": map[string]any{
+				"runAsNonRoot":             &trueVal,
+				"runAsUser":                &runAsUser,
+				"runAsGroup":               &runAsGroup,
+				"allowPrivilegeEscalation": &falseVal,
+				"readOnlyRootFilesystem":   &trueVal,
+				"capabilities": map[string]any{
+					"drop": []string{"ALL"},
+				},
+				"seccompProfile": map[string]any{
+					"type": "RuntimeDefault",
+				},
+			},
+		}
+		containers = append(containers, sidecar)
+	}
+
 	// Pod spec.
 	podSpec := map[string]any{
 		"restartPolicy":                "Never",
 		"serviceAccountName":           e.cfg.K8sWorkerServiceAccount,
 		"automountServiceAccountToken": &falseVal,
 		"enableServiceLinks":           &falseVal,
-		"containers":                   []any{container},
+		"containers":                   containers,
 		"volumes": []map[string]any{
 			{"name": "work", "emptyDir": map[string]any{"sizeLimit": "4Gi"}},
 			{"name": "tmp", "emptyDir": map[string]any{"sizeLimit": "1Gi"}},

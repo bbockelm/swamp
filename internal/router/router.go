@@ -424,6 +424,10 @@ func New(cfg *config.Config, pool *pgxpool.Pool, store *storage.Store) (*chi.Mux
 			wh := handlers.NewWorkerHandler(tokenStore, hub, h)
 			r.Route("/internal/worker", func(r chi.Router) {
 				r.Post("/exchange", wh.ExchangeToken)
+				// One-time token exchange for the LLM proxy sidecar container.
+				// Returns the real external LLM API key + endpoint URL so the
+				// credentials never appear in the K8s pod spec.
+				r.Post("/exchange-sidecar", wh.ExchangeSidecarToken)
 				r.Post("/stream", wh.StreamOutput)
 				r.Post("/status", wh.UpdateStatus)
 				r.Post("/results", wh.UploadResult)

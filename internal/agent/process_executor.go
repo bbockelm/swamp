@@ -202,6 +202,24 @@ func (e *ProcessExecutor) launchProcess(analysis *models.Analysis, packages []mo
 		effectiveModel = e.cfg.AgentModel
 	}
 
+	// Resolve effective LLM config (global + per-project overrides).
+	var project *models.Project
+	if e.queries != nil && analysis.ProjectID != "" {
+		project, _ = e.queries.GetProject(ctx, analysis.ProjectID)
+	}
+	llmConfig := ResolveEffectiveLLMConfig(e.cfg, project)
+
+	// For external LLM in process mode, the worker accesses the real endpoint
+	// directly using its API key. No sidecar is needed since the process
+	// executor runs on the server host (not in a container). The key is
+	// resolved server-side and passed as the ExtLLMProxyURL (set to the real
+	// endpoint) along with the API key via env vars at process launch time.
+	// We store the resolved key in the session for the worker process.
+	extLLMProxyURL := ""
+	if llmConfig.Provider == "external" {
+		extLLMProxyURL = e.cfg.ExternalLLMEndpoint
+	}
+
 	// Issue one-time token.
 	token, err := e.tokenStore.IssueToken(
 		analysis.ID,
@@ -211,6 +229,10 @@ func (e *ProcessExecutor) launchProcess(analysis *models.Analysis, packages []mo
 		analysis.CustomPrompt,
 		analysisCtx,
 		10*time.Minute,
+		llmConfig.Provider,
+		extLLMProxyURL,
+		llmConfig.AnalysisModel,
+		llmConfig.PoCModel,
 	)
 	if err != nil {
 		e.failAnalysis(analysis.ID, "Failed to issue worker token", err)
@@ -264,11 +286,22 @@ func (e *ProcessExecutor) launchProcess(analysis *models.Analysis, packages []mo
 		fmt.Sprintf("SWAMP_WORKER_ANALYSIS=%s", analysis.ID),
 		fmt.Sprintf("SWAMP_WORKER_LOCK_FILE=%s", lockPath),
 		fmt.Sprintf("AGENT_BINARY=%s", e.cfg.AgentBinary),
+		fmt.Sprintf("OPENCODE_BINARY=%s", e.cfg.OpenCodeBinary),
 		fmt.Sprintf("MAX_ANALYSIS_DURATION=%s", e.cfg.MaxAnalysisDuration.String()),
 		fmt.Sprintf("HOME=%s", workDir),
 		fmt.Sprintf("PATH=%s", os.Getenv("PATH")),
 		fmt.Sprintf("SHELL=%s", resolveShell()),
 		"TERM=xterm-256color",
+	}
+
+	// For external LLM in process mode, pass the API key directly to the
+	// subprocess. The worker uses this as OPENAI_API_KEY when running opencode.
+	// (In K8s mode the sidecar handles key injection instead.)
+	if llmConfig.Provider == "external" {
+		extKey, err := resolveExternalLLMAPIKey(ctx, e.queries, e.encryptor, e.cfg, analysis)
+		if err == nil {
+			env = append(env, fmt.Sprintf("EXTERNAL_LLM_API_KEY=%s", extKey))
+		}
 	}
 
 	cmd := exec.Command(binary)

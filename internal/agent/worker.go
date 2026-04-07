@@ -121,12 +121,20 @@ func RunWorker(cfg *config.Config) error {
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
 
+	ctx, cancel := context.WithTimeout(context.Background(), cfg.MaxAnalysisDuration)
+	defer cancel()
+
+	// Select agent runner based on provider.
+	runPhase := func(phasePrompt, phaseLabel, model string) error {
+		if session.AgentProvider == "external" {
+			return runWorkerOpenCode(ctx, cfg, session, workDir, phasePrompt, model, streamer)
+		}
+		return runWorkerAgent(ctx, cfg, session, workDir, phasePrompt, streamer)
+	}
+
 	// Run Phase 1.
 	reportStatus(serverURL, sessionToken, analysisID, "running", "Phase 1: Security analysis")
 	streamer.send("[system] Starting Phase 1: Security analysis")
-
-	ctx, cancel := context.WithTimeout(context.Background(), cfg.MaxAnalysisDuration)
-	defer cancel()
 
 	// Monitor for shutdown signals in a background goroutine.
 	// When received, cancel the agent context so it exits quickly,
@@ -154,7 +162,7 @@ func RunWorker(cfg *config.Config) error {
 		}
 	}
 
-	if err := runWorkerAgent(ctx, cfg, session, workDir, prompt, streamer); err != nil {
+	if err := runPhase(prompt, "Phase 1", session.ExtLLMAnalysisModel); err != nil {
 		if isShuttingDown() || ctx.Err() != nil {
 			// Timed out or received shutdown signal — save partial results.
 			streamer.send("[system] Analysis interrupted — uploading partial results...")
@@ -202,7 +210,7 @@ func RunWorker(cfg *config.Config) error {
 		streamer.send("[system] Starting Phase 2: Exploit validation")
 		pkg := packageInfoToSoftwarePackage(session.Packages[0])
 		phase2Prompt := BuildPrompt(&pkg, "phase2", "", nil)
-		if err := runWorkerAgent(ctx, cfg, session, workDir, phase2Prompt, streamer); err != nil {
+		if err := runPhase(phase2Prompt, "Phase 2", session.ExtLLMPoCModel); err != nil {
 			if isShuttingDown() || ctx.Err() != nil {
 				streamer.send("[system] Phase 2 interrupted — uploading results...")
 			}
@@ -370,6 +378,44 @@ func (s *workerStreamer) flush() {
 		return
 	}
 	_ = resp.Body.Close()
+}
+
+// runWorkerOpenCode runs opencode as the analysis agent inside the worker pod.
+// It uses session.ExtLLMProxyURL as the OpenAI-compatible base URL (pointing to
+// the sidecar proxy in K8s, or the real endpoint in process mode).
+//
+// In K8s mode: baseURL is http://127.0.0.1:<port>/v1 and no API key is needed
+// since the sidecar proxy injects the real key.
+//
+// In process mode: baseURL is the real external endpoint. The API key is
+// read from the EXTERNAL_LLM_API_KEY environment variable which the process
+// executor passes to the subprocess at launch time.
+func runWorkerOpenCode(ctx context.Context, cfg *config.Config, session *WorkerExchangeResponse, workDir, prompt, model string, streamer *workerStreamer) error {
+	baseURL := session.ExtLLMProxyURL
+	if baseURL == "" {
+		return fmt.Errorf("external LLM proxy URL not configured in worker session")
+	}
+
+	// For K8s sidecar: no auth needed from the worker side.
+	// For process mode: the real key is in EXTERNAL_LLM_API_KEY env var.
+	apiKey := os.Getenv("EXTERNAL_LLM_API_KEY")
+	if apiKey == "" {
+		// K8s sidecar path: use placeholder (proxy injects real key).
+		apiKey = "proxy"
+	}
+
+	wrap := &workerStreamerHub{streamer: streamer}
+	return runOpenCodeProcess(ctx, cfg.OpenCodeBinary, workDir, prompt, session.AnalysisID, baseURL, apiKey, model, wrap)
+}
+
+// workerStreamerHub adapts a workerStreamer to the outputBroadcaster interface
+// expected by runOpenCodeProcess so it can be used inside a worker pod.
+type workerStreamerHub struct {
+	streamer *workerStreamer
+}
+
+func (h *workerStreamerHub) Broadcast(_ string, msg []byte) {
+	h.streamer.send(string(msg))
 }
 
 // runWorkerAgent executes the Claude CLI inside the worker pod.
