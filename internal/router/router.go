@@ -2,12 +2,15 @@ package router
 
 import (
 	"context"
+	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 
 	"github.com/bbockelm/swamp/internal/agent"
@@ -28,7 +31,7 @@ func New(cfg *config.Config, pool *pgxpool.Pool, store *storage.Store) (*chi.Mux
 	// Middleware
 	r.Use(middleware.RequestID)
 	r.Use(middleware.RealIP)
-	r.Use(middleware.Logger)
+	r.Use(zerologRequestLogger)
 	r.Use(middleware.Recoverer)
 	r.Use(middleware.Compress(5))
 
@@ -262,6 +265,12 @@ func New(cfg *config.Config, pool *pgxpool.Pool, store *storage.Store) (*chi.Mux
 			r.Route("/admin", func(r chi.Router) {
 				r.Use(handlers.RequireRole(handlers.RoleAdmin))
 
+				// Valid roles
+				r.Get("/roles", h.ListValidRoles)
+
+				// Recent logs
+				r.Get("/logs", h.GetRecentLogs)
+
 				// Users
 				r.Route("/users", func(r chi.Router) {
 					r.Get("/", h.ListUsers)
@@ -344,4 +353,37 @@ func New(cfg *config.Config, pool *pgxpool.Pool, store *storage.Store) (*chi.Mux
 	r.NotFound(spaHandler.ServeHTTP)
 
 	return r, h, exec
+}
+
+// zerologRequestLogger is a chi middleware that logs HTTP requests via zerolog,
+// replacing chi's default middleware.Logger (which uses Go's log package).
+func zerologRequestLogger(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		ww := middleware.NewWrapResponseWriter(w, r.ProtoMajor)
+		defer func() {
+			duration := time.Since(start)
+			status := ww.Status()
+
+			var event *zerolog.Event
+			switch {
+			case status >= 500:
+				event = log.Error()
+			case status >= 400:
+				event = log.Warn()
+			default:
+				event = log.Info()
+			}
+
+			event.
+				Str("method", r.Method).
+				Str("path", r.URL.Path).
+				Int("status", status).
+				Str("size", fmt.Sprintf("%dB", ww.BytesWritten())).
+				Dur("duration", duration).
+				Str("remote", r.RemoteAddr).
+				Msg("http request")
+		}()
+		next.ServeHTTP(ww, r)
+	})
 }

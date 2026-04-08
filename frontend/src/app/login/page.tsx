@@ -25,7 +25,14 @@ function LoginContent() {
         setLoading(false);
       })
       .catch(() => setLoading(false));
-  }, []);
+
+    // Store return_to as a cookie so the dev-login flow (which opens the
+    // link in a new tab) can redirect back to the right page.
+    const returnTo = searchParams.get("return_to");
+    if (returnTo && /^\/[a-zA-Z0-9\-_/?&=%]*$/.test(returnTo)) {
+      document.cookie = `swamp_return_to=${returnTo}; path=/; max-age=600; samesite=lax`;
+    }
+  }, [searchParams]);
 
   const handleOIDCLogin = () => {
     const returnTo = searchParams.get("return_to") || "/";

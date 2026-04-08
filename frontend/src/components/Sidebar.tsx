@@ -18,6 +18,7 @@ const adminItems = [
   { label: "API Keys", href: "/admin/api-keys" },
   { label: "AUP", href: "/admin/aup" },
   { label: "Backups", href: "/admin/backups" },
+  { label: "Logs", href: "/admin/logs" },
   { label: "Settings", href: "/admin/settings" },
 ];
 

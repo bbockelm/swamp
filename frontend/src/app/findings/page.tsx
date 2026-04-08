@@ -266,7 +266,7 @@ function FindingsPageInner() {
           No findings match the current filters.
         </div>
       ) : (
-        <div className="border rounded overflow-hidden">
+        <div className="border rounded overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="bg-gray-50 border-b">
               <tr>
@@ -276,7 +276,7 @@ function FindingsPageInner() {
                 <th className={`${thClass} w-24`} onClick={() => handleSort('status')}>
                   Status <SortIcon field="status" sortField={sortField} sortDir={sortDir} />
                 </th>
-                <th className={thClass} onClick={() => handleSort('rule_id')}>
+                <th className={`${thClass} hidden sm:table-cell`} onClick={() => handleSort('rule_id')}>
                   Rule <SortIcon field="rule_id" sortField={sortField} sortDir={sortDir} />
                 </th>
                 <th className={thClass} onClick={() => handleSort('file_path')}>
@@ -285,7 +285,7 @@ function FindingsPageInner() {
                 <th className={thClass} onClick={() => handleSort('message')}>
                   Message <SortIcon field="message" sortField={sortField} sortDir={sortDir} />
                 </th>
-                <th className="text-left px-4 py-2 font-medium w-20">Project</th>
+                <th className="text-left px-4 py-2 font-medium w-20 hidden md:table-cell">Project</th>
               </tr>
             </thead>
             <tbody className="divide-y">
@@ -336,7 +336,7 @@ function GlobalFindingRow({
             {statusLabel(finding.latest_status || 'open')}
           </span>
         </td>
-        <td className="px-4 py-2 font-mono text-xs">{finding.rule_id || '-'}</td>
+        <td className="px-4 py-2 font-mono text-xs hidden sm:table-cell">{finding.rule_id || '-'}</td>
         <td className="px-4 py-2 font-mono text-xs text-gray-600 max-w-xs truncate">
           {(() => {
             const ghLink = finding.git_url ? buildGitHubLink(finding.git_url, finding.file_path, finding.start_line) : null;
@@ -347,7 +347,7 @@ function GlobalFindingRow({
           })()}
         </td>
         <td className="px-4 py-2 text-gray-700 max-w-md truncate">{finding.message || '-'}</td>
-        <td className="px-4 py-2">
+        <td className="px-4 py-2 hidden md:table-cell">
           <Link
             href={`/projects/${finding.project_id}?tab=findings`}
             className="text-blue-600 hover:underline text-xs"

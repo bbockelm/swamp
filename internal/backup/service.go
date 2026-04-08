@@ -100,6 +100,58 @@ func (s *Service) StartReconcileLoop(ctx context.Context) {
 	log.Info().Dur("interval", reconcileInterval).Msg("Started backup reconciliation loop")
 }
 
+// scheduledCheckInterval is how often we check whether a scheduled backup is due.
+const scheduledCheckInterval = 5 * time.Minute
+
+// StartScheduledBackupLoop starts a background goroutine that periodically
+// checks backup_frequency_hours and triggers a backup if enough time has
+// elapsed since the last completed backup.
+func (s *Service) StartScheduledBackupLoop(ctx context.Context) {
+	go func() {
+		ticker := time.NewTicker(scheduledCheckInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				s.maybeRunScheduledBackup(ctx)
+			}
+		}
+	}()
+	log.Info().Dur("check_interval", scheduledCheckInterval).Msg("Started scheduled backup loop")
+}
+
+func (s *Service) maybeRunScheduledBackup(ctx context.Context) {
+	settings := s.GetSettings(ctx)
+	if settings.BackupFrequencyHours <= 0 {
+		return // scheduled backups disabled
+	}
+
+	interval := time.Duration(settings.BackupFrequencyHours) * time.Hour
+
+	lastCompleted, err := s.queries.GetLastCompletedBackupTime(ctx)
+	if err != nil {
+		log.Error().Err(err).Msg("Failed to check last backup time for scheduling")
+		return
+	}
+
+	if lastCompleted != nil && time.Since(*lastCompleted) < interval {
+		return // not due yet
+	}
+
+	log.Info().
+		Int("frequency_hours", settings.BackupFrequencyHours).
+		Msg("Scheduled backup is due, starting")
+
+	backup, err := s.StartBackup(ctx, "scheduled")
+	if err != nil {
+		log.Error().Err(err).Msg("Failed to start scheduled backup")
+		return
+	}
+	s.RunBackup(ctx, backup)
+}
+
 // GeneralBackupKeyHex returns the hex-encoded general backup key.
 func (s *Service) GeneralBackupKeyHex() (string, error) {
 	if len(s.generalBackupKey) == 0 {

@@ -4,6 +4,60 @@ import { useState, useEffect, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api, Backup } from '@/lib/api';
 
+function NextBackupCountdown({ lastCompletedAt }: { lastCompletedAt: string | null }) {
+  const { data: settings } = useQuery({
+    queryKey: ['admin', 'backup-settings'],
+    queryFn: api.admin.getBackupSettings,
+  });
+  const [now, setNow] = useState(Date.now());
+
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 10000);
+    return () => clearInterval(id);
+  }, []);
+
+  if (!settings || !settings.backup_frequency_hours) return null;
+
+  const freqMs = settings.backup_frequency_hours * 3600 * 1000;
+
+  if (!lastCompletedAt) {
+    return (
+      <div className="bg-blue-50 border border-blue-200 rounded-lg px-4 py-2 mb-4 text-sm text-blue-800">
+        Next scheduled backup: <strong>imminent</strong> (no previous backup found)
+      </div>
+    );
+  }
+
+  const lastMs = new Date(lastCompletedAt).getTime();
+  const nextMs = lastMs + freqMs;
+  const remainMs = nextMs - now;
+
+  if (remainMs <= 0) {
+    return (
+      <div className="bg-blue-50 border border-blue-200 rounded-lg px-4 py-2 mb-4 text-sm text-blue-800">
+        Next scheduled backup: <strong>imminent</strong> (overdue)
+      </div>
+    );
+  }
+
+  const totalMin = Math.ceil(remainMs / 60000);
+  let label: string;
+  if (totalMin < 60) {
+    label = `${totalMin}m`;
+  } else {
+    const h = Math.floor(totalMin / 60);
+    const m = totalMin % 60;
+    label = m > 0 ? `${h}h ${m}m` : `${h}h`;
+  }
+
+  return (
+    <div className="bg-blue-50 border border-blue-200 rounded-lg px-4 py-2 mb-4 text-sm text-blue-800">
+      Next scheduled backup in <strong>{label}</strong>{' '}
+      <span className="text-blue-600">(every {settings.backup_frequency_hours}h)</span>
+    </div>
+  );
+}
+
 function formatBytes(bytes: number): string {
   if (!bytes || bytes === 0) return '0 B';
   const units = ['B', 'KB', 'MB', 'GB', 'TB'];
@@ -217,6 +271,9 @@ export default function AdminBackupsPage() {
         </div>
       )}
 
+      {/* Next scheduled backup countdown */}
+      <NextBackupCountdown lastCompletedAt={lastSuccessful?.completed_at ?? null} />
+
       {/* Table */}
       {!backups?.length ? (
         <p className="text-gray-500">No backups yet. Create one to get started.</p>
@@ -227,10 +284,10 @@ export default function AdminBackupsPage() {
               <tr className="border-b text-left text-xs text-gray-500 uppercase tracking-wide">
                 <th className="py-2 pr-3">Filename</th>
                 <th className="py-2 pr-3">Status</th>
-                <th className="py-2 pr-3">Size</th>
-                <th className="py-2 pr-3">Duration</th>
-                <th className="py-2 pr-3">Started</th>
-                <th className="py-2 pr-3">Encrypted</th>
+                <th className="py-2 pr-3 hidden sm:table-cell">Size</th>
+                <th className="py-2 pr-3 hidden sm:table-cell">Duration</th>
+                <th className="py-2 pr-3 hidden md:table-cell">Started</th>
+                <th className="py-2 pr-3 hidden md:table-cell">Encrypted</th>
                 <th className="py-2">Actions</th>
               </tr>
             </thead>
@@ -296,12 +353,12 @@ function BackupRow({
       <td className="py-2 pr-3">
         <StatusBadge status={b.status} />
       </td>
-      <td className="py-2 pr-3 text-gray-600">
+      <td className="py-2 pr-3 text-gray-600 hidden sm:table-cell">
         {b.status === 'completed' ? formatBytes(b.size_bytes) : '—'}
       </td>
-      <td className="py-2 pr-3 text-gray-600">{formatDuration(b.duration_secs)}</td>
-      <td className="py-2 pr-3 text-gray-500">{timeAgo(b.started_at)}</td>
-      <td className="py-2 pr-3">
+      <td className="py-2 pr-3 text-gray-600 hidden sm:table-cell">{formatDuration(b.duration_secs)}</td>
+      <td className="py-2 pr-3 text-gray-500 hidden md:table-cell">{timeAgo(b.started_at)}</td>
+      <td className="py-2 pr-3 hidden md:table-cell">
         {b.encrypted ? (
           <span className="text-green-600 text-xs">Yes</span>
         ) : (

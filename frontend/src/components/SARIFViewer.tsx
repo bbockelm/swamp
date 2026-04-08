@@ -95,12 +95,12 @@ export function SARIFViewer({
   }
 
   return (
-    <div className="border rounded overflow-hidden">
+    <div className="border rounded overflow-x-auto">
       <table className="w-full text-sm">
         <thead className="bg-gray-50 border-b">
           <tr>
             <th className="text-left px-4 py-2 font-medium">Severity</th>
-            <th className="text-left px-4 py-2 font-medium">Rule</th>
+            <th className="text-left px-4 py-2 font-medium hidden sm:table-cell">Rule</th>
             <th className="text-left px-4 py-2 font-medium">Location</th>
             <th className="text-left px-4 py-2 font-medium">Message</th>
           </tr>
@@ -131,7 +131,7 @@ export function SARIFViewer({
                     {level}
                   </span>
                 </td>
-                <td className="px-4 py-2 font-mono text-xs">
+                <td className="px-4 py-2 font-mono text-xs hidden sm:table-cell">
                   {result.ruleId || '-'}
                 </td>
                 <td className="px-4 py-2 font-mono text-xs text-gray-600">

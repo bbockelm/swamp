@@ -4,8 +4,6 @@ import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, User } from "@/lib/api";
 
-const ALL_ROLES = ["admin", "analyst", "viewer"];
-
 function UserCard({ user }: { user: User }) {
   const [expanded, setExpanded] = useState(false);
   const [editingName, setEditingName] = useState(false);
@@ -16,6 +14,12 @@ function UserCard({ user }: { user: User }) {
   const { data: roles } = useQuery({
     queryKey: ["admin", "user-roles", user.id],
     queryFn: () => api.admin.listUserRoles(user.id),
+    enabled: expanded,
+  });
+
+  const { data: validRoles } = useQuery({
+    queryKey: ["admin", "valid-roles"],
+    queryFn: () => api.admin.listValidRoles(),
     enabled: expanded,
   });
 
@@ -83,7 +87,7 @@ function UserCard({ user }: { user: User }) {
     .join("");
 
   const roleNames = roles?.map((r) => r.role) ?? [];
-  const availableRoles = ALL_ROLES.filter((r) => !roleNames.includes(r));
+  const availableRoles = (validRoles ?? []).filter((r) => !roleNames.includes(r));
 
   return (
     <div className="border rounded-lg bg-white shadow-sm">
@@ -380,14 +384,19 @@ export default function AdminUsersPage() {
   const [search, setSearch] = useState("");
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [newDisplayName, setNewDisplayName] = useState("");
-  const [newRole, setNewRole] = useState("viewer");
+  const [newRole, setNewRole] = useState("user");
+
+  const { data: validRoles } = useQuery({
+    queryKey: ["admin", "valid-roles"],
+    queryFn: () => api.admin.listValidRoles(),
+  });
 
   const createUser = useMutation({
     mutationFn: () => api.admin.createUser(newDisplayName, newRole),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["admin", "users"] });
       setNewDisplayName("");
-      setNewRole("viewer");
+      setNewRole("user");
       setShowCreateForm(false);
     },
   });
@@ -462,9 +471,11 @@ export default function AdminUsersPage() {
                 onChange={(e) => setNewRole(e.target.value)}
                 className="w-full border rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
               >
-                <option value="admin">Admin</option>
-                <option value="project_creator">Project Creator</option>
-                <option value="user">User</option>
+                {(validRoles ?? []).map((r) => (
+                  <option key={r} value={r}>
+                    {r}
+                  </option>
+                ))}
               </select>
             </div>
             <button

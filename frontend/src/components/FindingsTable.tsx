@@ -269,7 +269,7 @@ export function FindingsTable({
           No findings match the current filters.
         </div>
       ) : (
-        <div className="border rounded overflow-hidden">
+        <div className="border rounded overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="bg-gray-50 border-b">
               <tr>
@@ -279,7 +279,7 @@ export function FindingsTable({
                 <th className={`${thClass} w-24`} onClick={() => handleSort('status')}>
                   Status <SortIcon field="status" sortField={sortField} sortDir={sortDir} />
                 </th>
-                <th className={thClass} onClick={() => handleSort('rule_id')}>
+                <th className={`${thClass} hidden sm:table-cell`} onClick={() => handleSort('rule_id')}>
                   Rule <SortIcon field="rule_id" sortField={sortField} sortDir={sortDir} />
                 </th>
                 <th className={thClass} onClick={() => handleSort('file_path')}>
@@ -349,7 +349,7 @@ function FindingRow({
             {statusLabel(finding.latest_status || 'open')}
           </span>
         </td>
-        <td className="px-4 py-2 font-mono text-xs">{finding.rule_id || '-'}</td>
+        <td className="px-4 py-2 font-mono text-xs hidden sm:table-cell">{finding.rule_id || '-'}</td>
         <td className="px-4 py-2 font-mono text-xs text-gray-600">
           {ghLink ? (
             <a

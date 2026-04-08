@@ -9,6 +9,7 @@ import (
 	"github.com/bbockelm/swamp/internal/config"
 	"github.com/bbockelm/swamp/internal/crypto"
 	"github.com/bbockelm/swamp/internal/db"
+	"github.com/bbockelm/swamp/internal/logbuffer"
 	"github.com/bbockelm/swamp/internal/storage"
 )
 
@@ -20,6 +21,7 @@ type Handler struct {
 	encryptor *crypto.Encryptor
 	backupSvc *backup.Service
 	executor  agent.AnalysisExecutor
+	logBuf    *logbuffer.Buffer
 }
 
 // New creates a Handler with all dependencies.
@@ -35,6 +37,11 @@ func (h *Handler) SetBackupService(svc *backup.Service) {
 // SetExecutor sets the agent executor on the handler.
 func (h *Handler) SetExecutor(exec agent.AnalysisExecutor) {
 	h.executor = exec
+}
+
+// SetLogBuffer sets the log ring buffer on the handler.
+func (h *Handler) SetLogBuffer(buf *logbuffer.Buffer) {
+	h.logBuf = buf
 }
 
 // HealthCheck returns a simple health status.

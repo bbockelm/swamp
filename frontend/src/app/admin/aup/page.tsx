@@ -85,7 +85,7 @@ export default function AdminAUPPage() {
         </button>
 
         {showUsers && config?.users && (
-          <div className="border rounded overflow-hidden">
+          <div className="border rounded overflow-x-auto">
             <table className="w-full text-sm">
               <thead className="bg-gray-50 border-b">
                 <tr>

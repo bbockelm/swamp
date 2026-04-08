@@ -17,6 +17,20 @@ import (
 
 // --- Admin: User Management ---
 
+// GetRecentLogs returns the recent warn/error log entries from the in-memory ring buffer.
+func (h *Handler) GetRecentLogs(w http.ResponseWriter, r *http.Request) {
+	if h.logBuf == nil {
+		respondJSON(w, http.StatusOK, []struct{}{})
+		return
+	}
+	respondJSON(w, http.StatusOK, h.logBuf.Entries())
+}
+
+// ListValidRoles returns the list of valid role names.
+func (h *Handler) ListValidRoles(w http.ResponseWriter, r *http.Request) {
+	respondJSON(w, http.StatusOK, ValidRolesList())
+}
+
 func (h *Handler) CreateUser(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		DisplayName string `json:"display_name"`

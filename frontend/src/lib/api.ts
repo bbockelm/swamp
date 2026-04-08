@@ -18,7 +18,10 @@ async function fetchJSON<T>(url: string, opts?: RequestInit): Promise<T> {
     },
   });
   if (res.status === 401) {
-    window.location.href = "/";
+    // Redirect to login, preserving the current URL so the user returns
+    // here after authenticating (e.g. /invite?token=... flow).
+    const returnTo = window.location.pathname + window.location.search;
+    window.location.href = `/login?return_to=${encodeURIComponent(returnTo)}`;
     throw new ApiError(401, "Unauthorized");
   }
   if (!res.ok) {
@@ -272,6 +275,13 @@ export interface AUPConfig {
   agreed: number;
   total_users: number;
   users: AUPUserStatus[];
+}
+
+export interface LogEntry {
+  timestamp: string;
+  level: string;
+  message: string;
+  fields?: Record<string, string>;
 }
 
 export interface AUPUserStatus {
@@ -610,6 +620,8 @@ export const api = {
       }),
     deleteUser: (id: string): Promise<void> =>
       fetchJSON(`${BASE}/admin/users/${id}`, { method: "DELETE" }),
+    listValidRoles: (): Promise<string[]> =>
+      fetchJSON(`${BASE}/admin/roles`),
     listUserRoles: (userId: string): Promise<UserRole[]> =>
       fetchJSON(`${BASE}/admin/users/${userId}/roles`),
     addRole: (userId: string, role: string): Promise<void> =>
@@ -717,5 +729,7 @@ export const api = {
         method: "PUT",
         body: JSON.stringify(data),
       }),
+    getRecentLogs: (): Promise<LogEntry[]> =>
+      fetchJSON(`${BASE}/admin/logs`),
   },
 };

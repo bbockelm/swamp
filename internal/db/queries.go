@@ -1665,6 +1665,23 @@ func (q *Queries) DeleteBackup(ctx context.Context, id string) error {
 	return err
 }
 
+// GetLastCompletedBackupTime returns the completion time of the most recent
+// successful backup, or nil if no completed backup exists.
+func (q *Queries) GetLastCompletedBackupTime(ctx context.Context) (*time.Time, error) {
+	var t time.Time
+	err := q.pool.QueryRow(ctx, `
+		SELECT completed_at FROM backups
+		WHERE status='completed' AND completed_at IS NOT NULL
+		ORDER BY completed_at DESC LIMIT 1`).Scan(&t)
+	if err != nil {
+		if err.Error() == "no rows in result set" {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &t, nil
+}
+
 func (q *Queries) DeleteFailedBackups(ctx context.Context) (int64, error) {
 	tag, err := q.pool.Exec(ctx, `DELETE FROM backups WHERE status='failed'`)
 	if err != nil {

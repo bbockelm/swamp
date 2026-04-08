@@ -19,6 +19,7 @@ import (
 	"github.com/bbockelm/swamp/internal/config"
 	"github.com/bbockelm/swamp/internal/crypto"
 	"github.com/bbockelm/swamp/internal/db"
+	"github.com/bbockelm/swamp/internal/logbuffer"
 	"github.com/bbockelm/swamp/internal/router"
 	"github.com/bbockelm/swamp/internal/storage"
 )
@@ -73,6 +74,13 @@ func run() error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	// Set up in-memory log ring buffer (captures info+ for admin UI).
+	logBuf := logbuffer.New(10000)
+	consoleWriter := &zerolog.ConsoleWriter{Out: os.Stderr, TimeFormat: time.RFC3339}
+	levelWriter := zerolog.MultiLevelWriter(consoleWriter)
+	hookWriter := logbuffer.NewHookWriter(logBuf, zerolog.InfoLevel, levelWriter)
+	log.Logger = zerolog.New(hookWriter).With().Timestamp().Logger()
+
 	cfg, err := config.Load()
 	if err != nil {
 		return fmt.Errorf("loading config: %w", err)
@@ -123,6 +131,7 @@ func run() error {
 	backupSvc := backup.NewService(cfg, queries, store, enc)
 	h.SetBackupService(backupSvc)
 	h.SetExecutor(exec)
+	h.SetLogBuffer(logBuf)
 
 	// Clean up any backups stuck in "running" state from previous server instances,
 	// then start periodic reconciliation loop.
@@ -130,6 +139,7 @@ func run() error {
 		log.Error().Err(err).Msg("Failed to reconcile stale backups")
 	}
 	backupSvc.StartReconcileLoop(ctx)
+	backupSvc.StartScheduledBackupLoop(ctx)
 
 	// Executor lifecycle: mark stale jobs and start sync loop.
 	exec.Start(ctx)

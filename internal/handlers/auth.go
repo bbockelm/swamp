@@ -49,6 +49,15 @@ var validRoles = map[string]bool{
 	RoleUser:           true,
 }
 
+// ValidRolesList returns the list of valid role names.
+func ValidRolesList() []string {
+	roles := make([]string, 0, len(validRoles))
+	for r := range validRoles {
+		roles = append(roles, r)
+	}
+	return roles
+}
+
 type contextKey string
 
 const sessionContextKey contextKey = "session"
@@ -403,7 +412,15 @@ func (h *Handler) DevLoginLinkComplete(w http.ResponseWriter, r *http.Request) {
 		MaxAge: int(sessionDuration.Seconds()), HttpOnly: true, SameSite: http.SameSiteLaxMode,
 	})
 
-	http.Redirect(w, r, "/", http.StatusFound)
+	// Redirect to the original URL or frontend root
+	redirectTo := "/"
+	if returnCookie, err := r.Cookie("swamp_return_to"); err == nil && returnCookie.Value != "" {
+		redirectTo = returnCookie.Value
+		http.SetCookie(w, &http.Cookie{
+			Name: "swamp_return_to", Value: "", Path: "/", MaxAge: -1,
+		})
+	}
+	http.Redirect(w, r, redirectTo, http.StatusFound)
 }
 
 // GetAuthMode returns the auth configuration for the frontend.

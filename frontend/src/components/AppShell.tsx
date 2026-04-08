@@ -68,7 +68,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   return (
     <div className="flex min-h-screen">
       <Sidebar roles={roles} userName={session?.user?.display_name || session?.user?.email} />
-      <main className="flex-1 min-w-0 overflow-auto p-6 lg:p-8">
+      <main className="flex-1 min-w-0 overflow-auto pt-16 px-4 pb-6 lg:pt-8 lg:px-8 lg:pb-8">
         {needsAup ? (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
             <div className="bg-white rounded-lg shadow-xl p-8 max-w-lg w-full mx-4">
