@@ -267,6 +267,7 @@ func (e *ProcessExecutor) launchProcess(analysis *models.Analysis, packages []mo
 		fmt.Sprintf("MAX_ANALYSIS_DURATION=%s", e.cfg.MaxAnalysisDuration.String()),
 		fmt.Sprintf("HOME=%s", workDir),
 		fmt.Sprintf("PATH=%s", os.Getenv("PATH")),
+		fmt.Sprintf("SHELL=%s", resolveShell()),
 		"TERM=xterm-256color",
 	}
 

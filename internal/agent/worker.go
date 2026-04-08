@@ -335,6 +335,7 @@ func runWorkerAgent(ctx context.Context, cfg *config.Config, session *WorkerExch
 	cmd.Env = []string{
 		fmt.Sprintf("HOME=%s", workDir),
 		fmt.Sprintf("PATH=%s", os.Getenv("PATH")),
+		fmt.Sprintf("SHELL=%s", resolveShell()),
 		// Point the Anthropic SDK at the SWAMP server proxy instead of
 		// api.anthropic.com. The real API key never reaches this process/pod.
 		// ProxyToken is a dedicated credential that can only authenticate
