@@ -383,6 +383,13 @@ func (e *K8sExecutor) buildJobSpec(jobName, analysisID, workerToken string) map[
 		},
 	}
 
+	// Image pull secrets.
+	if e.cfg.K8sImagePullSecret != "" {
+		podSpec["imagePullSecrets"] = []map[string]string{
+			{"name": e.cfg.K8sImagePullSecret},
+		}
+	}
+
 	// Node selector.
 	if ns := e.cfg.ParseNodeSelector(); len(ns) > 0 {
 		podSpec["nodeSelector"] = ns

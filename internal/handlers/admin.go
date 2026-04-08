@@ -400,6 +400,7 @@ var executorConfigKeys = []struct {
 	{"k8s_worker_node_selector", "k8s_worker_node_selector"},
 	{"k8s_worker_tolerations", "k8s_worker_tolerations"},
 	{"k8s_worker_labels", "k8s_worker_labels"},
+	{"k8s_image_pull_secret", "k8s_image_pull_secret"},
 	{"k8s_kubeconfig", "k8s_kubeconfig"},
 	{"k8s_pod_ttl_seconds", "k8s_pod_ttl_seconds"},
 	{"agent_model", "agent_model"},
@@ -417,6 +418,9 @@ func (h *Handler) GetExecutorConfig(w http.ResponseWriter, r *http.Request) {
 		val, _ := h.queries.GetAppConfig(ctx, kv.key)
 		result[kv.json] = val
 	}
+	// Provide env-based defaults as hints so the frontend can suggest them.
+	result["hint_server_image"] = h.cfg.K8sServerImage
+	result["hint_image_pull_secret"] = h.cfg.K8sImagePullSecret
 	respondJSON(w, http.StatusOK, result)
 }
 

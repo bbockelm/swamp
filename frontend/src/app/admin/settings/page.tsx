@@ -165,8 +165,9 @@ const AGENT_PROVIDERS = [
 
 const K8S_FIELDS = [
   { key: 'k8s_namespace', label: 'Namespace', placeholder: 'swamp' },
-  { key: 'k8s_kubeconfig', label: 'Kubeconfig Path', placeholder: '/home/swamp/.kube/config' },
-  { key: 'k8s_worker_image', label: 'Worker Image', placeholder: 'ghcr.io/org/swamp-worker:latest' },
+  { key: 'k8s_kubeconfig', label: 'Kubeconfig Path', placeholder: '/home/swamp/.kube/config', help: 'Path to kubeconfig file on the server. Leave empty for in-cluster service account credentials.' },
+  { key: 'k8s_worker_image', label: 'Worker Image', placeholder: 'ghcr.io/org/swamp-worker:latest', hintKey: 'hint_server_image', hintLabel: 'server image' },
+  { key: 'k8s_image_pull_secret', label: 'Image Pull Secret', placeholder: 'registry-credentials', hintKey: 'hint_image_pull_secret', hintLabel: 'env default' },
   { key: 'k8s_worker_service_account', label: 'Service Account', placeholder: 'swamp-worker' },
   { key: 'k8s_worker_cpu_request', label: 'CPU Request', placeholder: '500m' },
   { key: 'k8s_worker_cpu_limit', label: 'CPU Limit', placeholder: '2' },
@@ -329,18 +330,34 @@ function ExecutorConfigSection() {
           <div className="border-t pt-4">
             <h3 className="text-sm font-medium text-gray-700 mb-2">Kubernetes Settings</h3>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              {K8S_FIELDS.map((field) => (
-                <div key={field.key}>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">{field.label}</label>
-                  <input
-                    type="text"
-                    value={currentForm[field.key] ?? ''}
-                    onChange={(e) => setForm({ ...currentForm, [field.key]: e.target.value })}
-                    placeholder={field.placeholder}
-                    className="w-full border rounded-md px-3 py-2 text-sm"
-                  />
-                </div>
-              ))}
+              {K8S_FIELDS.map((field) => {
+                const hint = field.hintKey ? config?.[field.hintKey] : undefined;
+                const placeholder = hint || field.placeholder;
+                return (
+                  <div key={field.key}>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">{field.label}</label>
+                    <input
+                      type="text"
+                      value={currentForm[field.key] ?? ''}
+                      onChange={(e) => setForm({ ...currentForm, [field.key]: e.target.value })}
+                      placeholder={placeholder}
+                      className="w-full border rounded-md px-3 py-2 text-sm"
+                    />
+                    {hint && !currentForm[field.key] && (
+                      <button
+                        type="button"
+                        className="text-xs text-blue-600 hover:underline mt-0.5"
+                        onClick={() => setForm({ ...currentForm, [field.key]: hint })}
+                      >
+                        Use {field.hintLabel}: {hint}
+                      </button>
+                    )}
+                    {field.help && (
+                      <p className="text-xs text-gray-400 mt-0.5">{field.help}</p>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           </div>
         )}
