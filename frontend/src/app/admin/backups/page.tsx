@@ -9,7 +9,7 @@ function NextBackupCountdown({ lastCompletedAt }: { lastCompletedAt: string | nu
     queryKey: ['admin', 'backup-settings'],
     queryFn: api.admin.getBackupSettings,
   });
-  const [now, setNow] = useState(Date.now());
+  const [now, setNow] = useState(() => Date.now());
 
   useEffect(() => {
     const id = setInterval(() => setNow(Date.now()), 10000);
