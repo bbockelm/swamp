@@ -336,6 +336,7 @@ func (e *Executor) runAgent(ctx context.Context, workDir, prompt string, analysi
 	cmd.Dir = workDir
 	cmd.Env = append(os.Environ(),
 		fmt.Sprintf("HOME=%s", workDir), // Isolate agent home
+		"SHELL=/bin/bash",               // Claude CLI requires a POSIX shell
 	)
 
 	cmd.Env = append(cmd.Env, fmt.Sprintf("ANTHROPIC_API_KEY=%s", anthropicKey))
