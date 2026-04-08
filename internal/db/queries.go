@@ -2043,16 +2043,16 @@ func (q *Queries) LoadAllWorkerTokens(ctx context.Context) (sessions map[string]
 
 func (q *Queries) CreateProjectProviderKey(ctx context.Context, k *models.ProjectProviderKey) error {
 	return q.pool.QueryRow(ctx,
-		`INSERT INTO project_provider_keys (project_id, provider, label, key_hint, encrypted_key, encrypted_dek, dek_nonce, created_by)
-		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id, created_at`,
+		`INSERT INTO project_provider_keys (project_id, provider, label, key_hint, encrypted_key, encrypted_dek, dek_nonce, created_by, endpoint_url)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id, created_at`,
 		k.ProjectID, k.Provider, k.Label, k.KeyHint,
-		k.EncryptedKey, k.EncryptedDEK, k.DEKNonce, k.CreatedBy,
+		k.EncryptedKey, k.EncryptedDEK, k.DEKNonce, k.CreatedBy, k.EndpointURL,
 	).Scan(&k.ID, &k.CreatedAt)
 }
 
 func (q *Queries) ListProjectProviderKeys(ctx context.Context, projectID string) ([]models.ProjectProviderKey, error) {
 	rows, err := q.pool.Query(ctx,
-		`SELECT id, project_id, provider, label, key_hint, is_active, created_by, created_at, revoked_at
+		`SELECT id, project_id, provider, label, key_hint, is_active, created_by, created_at, revoked_at, endpoint_url
 		 FROM project_provider_keys
 		 WHERE project_id = $1
 		 ORDER BY created_at DESC`, projectID)
@@ -2064,7 +2064,7 @@ func (q *Queries) ListProjectProviderKeys(ctx context.Context, projectID string)
 	for rows.Next() {
 		var k models.ProjectProviderKey
 		if err := rows.Scan(&k.ID, &k.ProjectID, &k.Provider, &k.Label, &k.KeyHint,
-			&k.IsActive, &k.CreatedBy, &k.CreatedAt, &k.RevokedAt); err != nil {
+			&k.IsActive, &k.CreatedBy, &k.CreatedAt, &k.RevokedAt, &k.EndpointURL); err != nil {
 			return nil, err
 		}
 		keys = append(keys, k)
@@ -2076,11 +2076,11 @@ func (q *Queries) GetProjectProviderKey(ctx context.Context, id string) (*models
 	var k models.ProjectProviderKey
 	err := q.pool.QueryRow(ctx,
 		`SELECT id, project_id, provider, label, key_hint, encrypted_key, encrypted_dek, dek_nonce,
-		        is_active, created_by, created_at, revoked_at
+		        is_active, created_by, created_at, revoked_at, endpoint_url
 		 FROM project_provider_keys WHERE id = $1`, id,
 	).Scan(&k.ID, &k.ProjectID, &k.Provider, &k.Label, &k.KeyHint,
 		&k.EncryptedKey, &k.EncryptedDEK, &k.DEKNonce,
-		&k.IsActive, &k.CreatedBy, &k.CreatedAt, &k.RevokedAt)
+		&k.IsActive, &k.CreatedBy, &k.CreatedAt, &k.RevokedAt, &k.EndpointURL)
 	if err != nil {
 		return nil, err
 	}
@@ -2104,13 +2104,13 @@ func (q *Queries) GetActiveProviderKey(ctx context.Context, projectID, provider 
 	var k models.ProjectProviderKey
 	err := q.pool.QueryRow(ctx,
 		`SELECT id, project_id, provider, label, key_hint, encrypted_key, encrypted_dek, dek_nonce,
-		        is_active, created_by, created_at, revoked_at
+		        is_active, created_by, created_at, revoked_at, endpoint_url
 		 FROM project_provider_keys
 		 WHERE project_id = $1 AND provider = $2 AND is_active AND revoked_at IS NULL
 		 ORDER BY created_at DESC LIMIT 1`, projectID, provider,
 	).Scan(&k.ID, &k.ProjectID, &k.Provider, &k.Label, &k.KeyHint,
 		&k.EncryptedKey, &k.EncryptedDEK, &k.DEKNonce,
-		&k.IsActive, &k.CreatedBy, &k.CreatedAt, &k.RevokedAt)
+		&k.IsActive, &k.CreatedBy, &k.CreatedAt, &k.RevokedAt, &k.EndpointURL)
 	if err != nil {
 		return nil, err
 	}

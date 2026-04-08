@@ -833,6 +833,7 @@ function AnalysesTab({ projectId }: { projectId: string }) {
     queryFn: () => api.agent.status(),
     staleTime: 60_000,
   });
+  const isExternalProvider = agentStatus?.provider === 'external';
 
   const { data: packages } = useQuery({
     queryKey: ["packages", projectId],
@@ -903,17 +904,32 @@ function AnalysesTab({ projectId }: { projectId: string }) {
             <label className="block text-xs font-medium text-gray-500 mb-1">
               Model
             </label>
-            <select
-              value={agentModel}
-              onChange={(e) => setAgentModel(e.target.value)}
-              className="w-full border rounded px-3 py-2 text-sm bg-white"
-            >
-              {(agentStatus?.models || [{ id: '', name: 'Auto (server default)' }]).map((m) => (
-                <option key={m.id} value={m.id}>
-                  {m.name}{agentStatus?.default_model && m.id === '' ? ` (${agentStatus.default_model || 'auto'})` : ''}
-                </option>
-              ))}
-            </select>
+            {isExternalProvider ? (
+              <>
+                <input
+                  type="text"
+                  value={agentModel}
+                  onChange={(e) => setAgentModel(e.target.value)}
+                  placeholder={agentStatus?.default_model || 'Default from settings'}
+                  className="w-full border rounded px-3 py-2 text-sm bg-white"
+                />
+                <p className="text-xs text-gray-500 mt-1">
+                  Leave empty to use the default model{agentStatus?.default_model ? ` (${agentStatus.default_model})` : ''}.
+                </p>
+              </>
+            ) : (
+              <select
+                value={agentModel}
+                onChange={(e) => setAgentModel(e.target.value)}
+                className="w-full border rounded px-3 py-2 text-sm bg-white"
+              >
+                {(agentStatus?.models || [{ id: '', name: 'Auto (server default)' }]).map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.name}{agentStatus?.default_model && m.id === '' ? ` (${agentStatus.default_model || 'auto'})` : ''}
+                  </option>
+                ))}
+              </select>
+            )}
           </div>
           <div className="mb-3">
             <label className="block text-xs font-medium text-gray-500 mb-1">
@@ -1881,6 +1897,7 @@ function ProviderKeysTab({ projectId }: { projectId: string }) {
   const [provider, setProvider] = useState('anthropic');
   const [label, setLabel] = useState('');
   const [apiKey, setApiKey] = useState('');
+  const [endpointUrl, setEndpointUrl] = useState('');
 
   const { data: keys, isLoading } = useQuery({
     queryKey: ['provider-keys', projectId],
@@ -1893,12 +1910,16 @@ function ProviderKeysTab({ projectId }: { projectId: string }) {
         provider,
         label,
         api_key: apiKey,
+        ...(provider === 'custom' || (provider === 'nrp' && endpointUrl)
+          ? { endpoint_url: endpointUrl }
+          : {}),
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['provider-keys', projectId] });
       setAdding(false);
       setLabel('');
       setApiKey('');
+      setEndpointUrl('');
     },
   });
 
@@ -1953,8 +1974,30 @@ function ProviderKeysTab({ projectId }: { projectId: string }) {
               className="w-full border rounded px-3 py-2"
             >
               <option value="anthropic">Anthropic</option>
+              <option value="nrp">NRP (ACCESS)</option>
+              <option value="custom">Custom Endpoint</option>
             </select>
           </div>
+          {(provider === 'custom' || provider === 'nrp') && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Endpoint URL {provider === 'custom' && <span className="text-red-500">*</span>}
+              </label>
+              <input
+                type="url"
+                value={endpointUrl}
+                onChange={(e) => setEndpointUrl(e.target.value)}
+                required={provider === 'custom'}
+                placeholder="https://api.example.com/v1"
+                className="w-full border rounded px-3 py-2 font-mono text-sm"
+              />
+              {provider === 'nrp' && (
+                <p className="text-xs text-gray-500 mt-1">
+                  Optional. Leave empty to use the global NRP endpoint.
+                </p>
+              )}
+            </div>
+          )}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
               Label
@@ -1998,6 +2041,7 @@ function ProviderKeysTab({ projectId }: { projectId: string }) {
               onClick={() => {
                 setAdding(false);
                 setApiKey('');
+                setEndpointUrl('');
               }}
               className="border px-4 py-2 rounded text-sm"
             >

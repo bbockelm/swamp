@@ -178,6 +178,7 @@ export interface ProjectProviderKey {
   provider: string;
   label: string;
   key_hint: string;
+  endpoint_url?: string;
   is_active: boolean;
   created_by: string;
   created_at: string;
@@ -321,6 +322,7 @@ export const api = {
   agent: {
     status: (): Promise<{
       ready: boolean;
+      provider?: string;
       default_model?: string;
       models?: { id: string; name: string }[];
     }> => fetchJSON(`${BASE}/agent/status`),
@@ -587,7 +589,7 @@ export const api = {
       fetchJSON(`${BASE}/projects/${projectId}/provider-keys`),
     create: (
       projectId: string,
-      data: { provider: string; label: string; api_key: string },
+      data: { provider: string; label: string; api_key: string; endpoint_url?: string },
     ): Promise<ProjectProviderKey> =>
       fetchJSON(`${BASE}/projects/${projectId}/provider-keys`, {
         method: "POST",

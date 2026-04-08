@@ -78,37 +78,6 @@ func (wh *WorkerHandler) ExchangeToken(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusOK, resp)
 }
 
-// ExchangeSidecarToken handles POST /api/v1/internal/worker/exchange-sidecar.
-// The LLM proxy sidecar container sends its one-time token and receives the
-// real external LLM API key and endpoint URL. The token is consumed on use.
-// Credentials are never stored in the pod spec — only the one-time token is.
-func (wh *WorkerHandler) ExchangeSidecarToken(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Token string `json:"token"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		respondError(w, http.StatusBadRequest, "Invalid request body")
-		return
-	}
-	if req.Token == "" {
-		respondError(w, http.StatusBadRequest, "Token is required")
-		return
-	}
-
-	apiKey, endpointURL, err := wh.tokenStore.ExchangeSidecarToken(req.Token)
-	if err != nil {
-		log.Warn().Err(err).Msg("Sidecar token exchange failed")
-		respondError(w, http.StatusUnauthorized, "Invalid or expired sidecar token")
-		return
-	}
-
-	log.Info().Msg("Sidecar token exchanged successfully")
-	respondJSON(w, http.StatusOK, map[string]string{
-		"api_key":      apiKey,
-		"endpoint_url": endpointURL,
-	})
-}
-
 // ProxyAnthropic reverse-proxies Anthropic API requests from worker pods.
 // The worker sends a dedicated proxy token as the x-api-key header (set via
 // ANTHROPIC_API_KEY env var). This token is separate from the session token
@@ -209,6 +178,162 @@ func (wh *WorkerHandler) ProxyAnthropic(w http.ResponseWriter, r *http.Request) 
 	r.Header.Del("Authorization")
 
 	wh.anthropicProxy.ServeHTTP(w, r)
+}
+
+// ProxyLLM reverse-proxies LLM API requests from worker pods to the
+// appropriate upstream provider. It supports anthropic, nrp, and custom
+// providers by resolving the correct API key and endpoint from the project's
+// provider key configuration.
+//
+// Route: /api/v1/internal/worker/llm/*
+// The worker sets its base URL to point here. The proxy token authenticates
+// the request and maps it to an analysis + project for key resolution.
+func (wh *WorkerHandler) ProxyLLM(w http.ResponseWriter, r *http.Request) {
+	// Extract proxy token from Authorization header (Bearer) or x-api-key.
+	proxyToken := ""
+	if auth := r.Header.Get("Authorization"); strings.HasPrefix(auth, "Bearer ") {
+		proxyToken = strings.TrimPrefix(auth, "Bearer ")
+	}
+	if proxyToken == "" {
+		proxyToken = r.Header.Get("x-api-key")
+	}
+	if proxyToken == "" {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	analysisID, err := wh.tokenStore.ValidateProxyToken(proxyToken)
+	if err != nil {
+		log.Warn().Err(err).Msg("LLM proxy: invalid proxy token")
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	analysis, err := wh.h.queries.GetAnalysis(r.Context(), analysisID)
+	if err != nil {
+		log.Error().Err(err).Str("analysis_id", analysisID).Msg("LLM proxy: failed to load analysis")
+		http.Error(w, "Proxy not configured", http.StatusServiceUnavailable)
+		return
+	}
+
+	// Resolve which provider key to use for this project.
+	apiKey, endpointURL, err := wh.resolveLLMCredentials(r, analysis)
+	if err != nil {
+		log.Error().Err(err).Str("analysis_id", analysisID).Msg("LLM proxy: failed to resolve credentials")
+		http.Error(w, "No API key configured for this project", http.StatusServiceUnavailable)
+		return
+	}
+
+	// Strip the proxy prefix from the path.
+	const proxyPrefix = "/api/v1/internal/worker/llm"
+	if strings.HasPrefix(r.URL.Path, proxyPrefix) {
+		r.URL.Path = strings.TrimPrefix(r.URL.Path, proxyPrefix)
+		if r.URL.Path == "" {
+			r.URL.Path = "/"
+		}
+	}
+
+	// Parse the upstream endpoint and proxy the request.
+	target, err := url.Parse(endpointURL)
+	if err != nil {
+		log.Error().Err(err).Str("endpoint", endpointURL).Msg("LLM proxy: invalid endpoint URL")
+		http.Error(w, "Invalid upstream endpoint", http.StatusInternalServerError)
+		return
+	}
+
+	proxy := &httputil.ReverseProxy{
+		Director: func(req *http.Request) {
+			req.URL.Scheme = target.Scheme
+			req.URL.Host = target.Host
+			req.Host = target.Host
+			// Prepend the base path from the target (e.g. /v1).
+			if target.Path != "" && target.Path != "/" {
+				req.URL.Path = singleJoiningSlash(target.Path, req.URL.Path)
+			}
+			// Set the real API key.
+			req.Header.Set("Authorization", "Bearer "+apiKey)
+			req.Header.Del("x-api-key")
+		},
+		FlushInterval: -1,
+	}
+
+	proxy.ServeHTTP(w, r)
+}
+
+// resolveLLMCredentials resolves the API key and endpoint URL for an analysis
+// based on its project's provider key configuration. Tries project-level keys
+// first (nrp, custom, external_llm), then falls back to global config.
+func (wh *WorkerHandler) resolveLLMCredentials(r *http.Request, analysis *models.Analysis) (apiKey, endpointURL string, err error) {
+	if wh.h.encryptor == nil {
+		return "", "", fmt.Errorf("encryption not configured")
+	}
+
+	ctx := r.Context()
+
+	// Try provider keys in order: nrp, custom, external_llm
+	for _, provider := range []string{"nrp", "custom", "external_llm"} {
+		k, err := wh.h.queries.GetActiveProviderKey(ctx, analysis.ProjectID, provider)
+		if err != nil {
+			continue
+		}
+		dek, err := wh.h.encryptor.UnwrapDEK(k.EncryptedDEK, k.DEKNonce)
+		if err != nil {
+			continue
+		}
+		pt, err := crypto.Decrypt(dek, k.EncryptedKey)
+		if err != nil {
+			continue
+		}
+		key := strings.TrimSpace(string(pt))
+		if key == "" {
+			continue
+		}
+		ep := k.EndpointURL
+		if ep == "" {
+			// Use global external LLM endpoint as default.
+			ep = wh.h.cfg.ExternalLLMEndpoint
+		}
+		if ep == "" {
+			continue
+		}
+		return key, ep, nil
+	}
+
+	// Fall back to global external LLM config if project allows global key.
+	project, err := wh.h.queries.GetProject(ctx, analysis.ProjectID)
+	if err != nil {
+		return "", "", fmt.Errorf("lookup project: %w", err)
+	}
+	if !project.UsesGlobalKey {
+		return "", "", fmt.Errorf("project does not have an API key configured")
+	}
+
+	// Try global external LLM key.
+	globalKey := strings.TrimSpace(wh.h.cfg.ExternalLLMAPIKey)
+	if globalKey == "" && wh.h.cfg.ExternalLLMAPIKeyFile != "" {
+		if keyData, err := os.ReadFile(wh.h.cfg.ExternalLLMAPIKeyFile); err == nil {
+			globalKey = strings.TrimSpace(string(keyData))
+		}
+	}
+	ep := wh.h.cfg.ExternalLLMEndpoint
+	if globalKey != "" && ep != "" {
+		return globalKey, ep, nil
+	}
+
+	return "", "", fmt.Errorf("no LLM API key configured for this project")
+}
+
+// singleJoiningSlash joins two URL paths with exactly one slash between them.
+func singleJoiningSlash(a, b string) string {
+	aSlash := strings.HasSuffix(a, "/")
+	bSlash := strings.HasPrefix(b, "/")
+	switch {
+	case aSlash && bSlash:
+		return a + b[1:]
+	case !aSlash && !bSlash:
+		return a + "/" + b
+	}
+	return a + b
 }
 
 // StreamOutput handles POST /api/v1/internal/worker/stream.

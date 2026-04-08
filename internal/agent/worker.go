@@ -381,27 +381,29 @@ func (s *workerStreamer) flush() {
 }
 
 // runWorkerOpenCode runs opencode as the analysis agent inside the worker pod.
-// It uses session.ExtLLMProxyURL as the OpenAI-compatible base URL (pointing to
-// the sidecar proxy in K8s, or the real endpoint in process mode).
+// It uses session.ExtLLMProxyURL as the OpenAI-compatible base URL.
 //
-// In K8s mode: baseURL is http://127.0.0.1:<port>/v1 and no API key is needed
-// since the sidecar proxy injects the real key.
+// Normal mode: ExtLLMProxyURL points to the SWAMP server's /api/v1/internal/worker/llm
+// proxy and ProxyToken is used to authenticate. The SWAMP proxy resolves the
+// real API key server-side.
 //
-// In process mode: baseURL is the real external endpoint. The API key is
-// read from the EXTERNAL_LLM_API_KEY environment variable which the process
-// executor passes to the subprocess at launch time.
+// K8s dev mode (K8S_DIRECT_LLM=true): ExtLLMProxyURL is the real LLM endpoint
+// and ExtLLMDirectKey is the real API key. Used when the SWAMP server does not
+// have a publicly routable address reachable by worker pods.
 func runWorkerOpenCode(ctx context.Context, cfg *config.Config, session *WorkerExchangeResponse, workDir, prompt, model string, streamer *workerStreamer) error {
 	baseURL := session.ExtLLMProxyURL
 	if baseURL == "" {
 		return fmt.Errorf("external LLM proxy URL not configured in worker session")
 	}
 
-	// For K8s sidecar: no auth needed from the worker side.
-	// For process mode: the real key is in EXTERNAL_LLM_API_KEY env var.
-	apiKey := os.Getenv("EXTERNAL_LLM_API_KEY")
+	// In K8s dev mode the real key was passed directly; otherwise use the
+	// proxy token so SWAMP can inject the real key before forwarding.
+	apiKey := session.ProxyToken
+	if session.ExtLLMDirectKey != "" {
+		apiKey = session.ExtLLMDirectKey
+	}
 	if apiKey == "" {
-		// K8s sidecar path: use placeholder (proxy injects real key).
-		apiKey = "proxy"
+		return fmt.Errorf("no API key available for LLM authentication")
 	}
 
 	wrap := &workerStreamerHub{streamer: streamer}

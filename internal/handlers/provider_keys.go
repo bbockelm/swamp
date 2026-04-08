@@ -42,9 +42,10 @@ func (h *Handler) CreateProjectProviderKey(w http.ResponseWriter, r *http.Reques
 	}
 
 	var req struct {
-		Provider string `json:"provider"`
-		Label    string `json:"label"`
-		APIKey   string `json:"api_key"`
+		Provider    string `json:"provider"`
+		Label       string `json:"label"`
+		APIKey      string `json:"api_key"`
+		EndpointURL string `json:"endpoint_url"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		respondError(w, http.StatusBadRequest, "Invalid JSON")
@@ -58,9 +59,18 @@ func (h *Handler) CreateProjectProviderKey(w http.ResponseWriter, r *http.Reques
 		req.Provider = "anthropic"
 	}
 	req.Provider = strings.ToLower(strings.TrimSpace(req.Provider))
-	if req.Provider != "anthropic" {
-		respondError(w, http.StatusBadRequest, "Only anthropic provider is currently supported")
+	validProviders := map[string]bool{"anthropic": true, "nrp": true, "custom": true}
+	if !validProviders[req.Provider] {
+		respondError(w, http.StatusBadRequest, "Provider must be one of: anthropic, nrp, custom")
 		return
+	}
+	if req.Provider == "custom" && req.EndpointURL == "" {
+		respondError(w, http.StatusBadRequest, "endpoint_url is required for custom provider")
+		return
+	}
+	if req.Provider == "nrp" && req.EndpointURL == "" {
+		// Default NRP endpoint -- can be overridden
+		req.EndpointURL = ""
 	}
 
 	// Generate a per-key DEK and encrypt the API key.
@@ -94,6 +104,7 @@ func (h *Handler) CreateProjectProviderKey(w http.ResponseWriter, r *http.Reques
 		Provider:     req.Provider,
 		Label:        req.Label,
 		KeyHint:      hint,
+		EndpointURL:  req.EndpointURL,
 		EncryptedKey: encryptedKey,
 		EncryptedDEK: encryptedDEK,
 		DEKNonce:     dekNonce,

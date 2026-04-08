@@ -77,11 +77,6 @@ type Config struct {
 	// OpenCodeBinary is the path to the opencode CLI binary used with external LLMs.
 	OpenCodeBinary string `envconfig:"OPENCODE_BINARY" default:"opencode"`
 
-	// LLM proxy sidecar settings (used when running as a K8s sidecar proxy).
-	LLMProxyMode  bool   `envconfig:"SWAMP_LLM_PROXY_MODE" default:"false"`
-	LLMProxyToken string `envconfig:"SWAMP_LLM_PROXY_TOKEN" default:""`
-	LLMProxyPort  int    `envconfig:"LLM_PROXY_PORT" default:"11434"`
-
 	// Current AUP version users must agree to.
 	AUPVersion string `envconfig:"AUP_VERSION" default:"1.0"`
 
@@ -105,6 +100,12 @@ type Config struct {
 	K8sWorkerAnnotations    string `envconfig:"K8S_WORKER_ANNOTATIONS" default:""`   // key=value,key2=value2
 	K8sPodTTLSeconds        int    `envconfig:"K8S_POD_TTL_SECONDS" default:"3600"`  // cleanup after completion via Job TTL
 	Kubeconfig              string `envconfig:"KUBECONFIG" default:""`               // path to kubeconfig file (if empty, uses in-cluster credentials)
+	// K8sDirectLLM bypasses the SWAMP LLM proxy and passes the real API key and
+	// endpoint URL directly to K8s worker pods. Use in dev environments where
+	// the SWAMP server does not have a publicly routable address reachable by
+	// pods. Avoid in production — the key is stored in the token exchange
+	// response which transits the network.
+	K8sDirectLLM bool `envconfig:"K8S_DIRECT_LLM" default:"false"`
 
 	// Worker mode settings (used inside worker pods / detached processes).
 	WorkerMode     bool   `envconfig:"SWAMP_WORKER_MODE" default:"false"`
@@ -224,11 +225,6 @@ func (c *Config) LoadAgentKeyFile() error {
 	c.AgentAPIKey = key
 	log.Info().Str("file", file).Str("agent", c.AgentBinary).Msg("Loaded agent API key from file")
 	return nil
-}
-
-// IsLLMProxyMode returns true if this process should run as an LLM sidecar proxy.
-func (c *Config) IsLLMProxyMode() bool {
-	return c.LLMProxyMode
 }
 
 // LoadExternalLLMKeyFile reads the external LLM API key from a file if not already set.

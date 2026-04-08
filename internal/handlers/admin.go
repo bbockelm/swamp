@@ -389,6 +389,7 @@ var executorConfigKeys = []struct {
 	json string
 }{
 	{"executor_mode", "executor_mode"},
+	{"agent_provider", "agent_provider"},
 	{"k8s_namespace", "k8s_namespace"},
 	{"k8s_worker_image", "k8s_worker_image"},
 	{"k8s_worker_service_account", "k8s_worker_service_account"},
@@ -402,6 +403,8 @@ var executorConfigKeys = []struct {
 	{"k8s_kubeconfig", "k8s_kubeconfig"},
 	{"k8s_pod_ttl_seconds", "k8s_pod_ttl_seconds"},
 	{"agent_model", "agent_model"},
+	{"external_llm_analysis_model", "external_llm_analysis_model"},
+	{"external_llm_poc_model", "external_llm_poc_model"},
 	{"max_concurrent_analyses", "max_concurrent_analyses"},
 }
 
@@ -427,6 +430,11 @@ func (h *Handler) UpdateExecutorConfig(w http.ResponseWriter, r *http.Request) {
 	validModes := map[string]bool{"local": true, "process": true, "kubernetes": true}
 	if mode, ok := req["executor_mode"]; ok && !validModes[mode] {
 		respondError(w, http.StatusBadRequest, "Invalid executor_mode: must be local, process, or kubernetes")
+		return
+	}
+	validProviders := map[string]bool{"anthropic": true, "external": true}
+	if provider, ok := req["agent_provider"]; ok && provider != "" && !validProviders[provider] {
+		respondError(w, http.StatusBadRequest, "Invalid agent_provider: must be anthropic or external")
 		return
 	}
 

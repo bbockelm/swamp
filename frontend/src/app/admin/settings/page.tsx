@@ -158,6 +158,11 @@ const EXECUTOR_MODES = [
   { value: 'kubernetes', label: 'Kubernetes', desc: 'Run analyses as Kubernetes jobs. Scalable and persistent.' },
 ];
 
+const AGENT_PROVIDERS = [
+  { value: 'anthropic', label: 'Anthropic (Claude CLI)' },
+  { value: 'external', label: 'External (OpenCode / OpenAI-compatible)' },
+];
+
 const K8S_FIELDS = [
   { key: 'k8s_namespace', label: 'Namespace', placeholder: 'swamp' },
   { key: 'k8s_kubeconfig', label: 'Kubeconfig Path', placeholder: '/home/swamp/.kube/config' },
@@ -173,6 +178,19 @@ const K8S_FIELDS = [
   { key: 'k8s_pod_ttl_seconds', label: 'Job TTL (seconds)', placeholder: '3600' },
 ];
 
+const EXTERNAL_LLM_MODEL_FIELDS = [
+  {
+    key: 'external_llm_analysis_model',
+    label: 'External LLM Analysis Model',
+    placeholder: 'openai/gpt-4.1-mini',
+  },
+  {
+    key: 'external_llm_poc_model',
+    label: 'External LLM PoC Model',
+    placeholder: 'openai/gpt-4.1-mini',
+  },
+];
+
 function ExecutorConfigSection() {
   const queryClient = useQueryClient();
   const { data: config, isLoading } = useQuery({
@@ -184,8 +202,10 @@ function ExecutorConfigSection() {
 
   const currentForm: Record<string, string> = form ?? {
     executor_mode: config?.executor_mode ?? '',
+    agent_provider: config?.agent_provider ?? '',
     agent_model: config?.agent_model ?? '',
     max_concurrent_analyses: config?.max_concurrent_analyses ?? '',
+    ...Object.fromEntries(EXTERNAL_LLM_MODEL_FIELDS.map(f => [f.key, config?.[f.key] ?? ''])),
     ...Object.fromEntries(K8S_FIELDS.map(f => [f.key, config?.[f.key] ?? ''])),
   };
 
@@ -255,6 +275,20 @@ function ExecutorConfigSection() {
           <h3 className="text-sm font-medium text-gray-700 mb-2">General</h3>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Agent Provider</label>
+              <select
+                value={currentForm.agent_provider || 'anthropic'}
+                onChange={(e) => setForm({ ...currentForm, agent_provider: e.target.value })}
+                className="w-full border rounded-md px-3 py-2 text-sm bg-white"
+              >
+                {AGENT_PROVIDERS.map((provider) => (
+                  <option key={provider.value} value={provider.value}>
+                    {provider.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Agent Model</label>
               <input
                 type="text"
@@ -275,6 +309,18 @@ function ExecutorConfigSection() {
                 className="w-full border rounded-md px-3 py-2 text-sm"
               />
             </div>
+            {EXTERNAL_LLM_MODEL_FIELDS.map((field) => (
+              <div key={field.key}>
+                <label className="block text-sm font-medium text-gray-700 mb-1">{field.label}</label>
+                <input
+                  type="text"
+                  value={currentForm[field.key] ?? ''}
+                  onChange={(e) => setForm({ ...currentForm, [field.key]: e.target.value })}
+                  placeholder={field.placeholder}
+                  className="w-full border rounded-md px-3 py-2 text-sm"
+                />
+              </div>
+            ))}
           </div>
         </div>
 
@@ -288,7 +334,7 @@ function ExecutorConfigSection() {
                   <label className="block text-sm font-medium text-gray-700 mb-1">{field.label}</label>
                   <input
                     type="text"
-                    value={currentForm[field.key]}
+                    value={currentForm[field.key] ?? ''}
                     onChange={(e) => setForm({ ...currentForm, [field.key]: e.target.value })}
                     placeholder={field.placeholder}
                     className="w-full border rounded-md px-3 py-2 text-sm"

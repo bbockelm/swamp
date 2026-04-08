@@ -26,8 +26,8 @@ RUN apk add --no-cache \
     nodejs \
     npm \
     python3 \
-  && npm install -g @anthropic-ai/claude-code opencode-ai \
-  && npm cache clean --force
+    && npm install -g @anthropic-ai/claude-code opencode-ai \
+    && npm cache clean --force
 
 COPY --from=go-builder /swamp-server /usr/local/bin/swamp-server
 

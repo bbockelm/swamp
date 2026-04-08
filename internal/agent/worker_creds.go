@@ -25,7 +25,6 @@ import (
 type WorkerTokenStore struct {
 	mu             sync.Mutex
 	tokens         map[string]*workerTokenEntry  // keyed by token hash (in-memory only)
-	sidecarTokens  map[string]*sidecarTokenEntry // keyed by token hash (in-memory only, never persisted)
 	sessions       map[string]*WorkerSession     // keyed by session token hash (cached from DB)
 	proxyTokens    map[string]string             // keyed by proxy token hash → analysisID (cached from DB)
 	lastUsed       map[string]time.Time          // keyed by token hash → last DB touch time (debounce)
@@ -55,21 +54,10 @@ type workerTokenEntry struct {
 
 	// External LLM fields (populated when AgentProvider == "external").
 	agentProvider       string // "anthropic" or "external"
-	extLLMProxyURL      string // URL of the K8s sidecar proxy, e.g. http://localhost:11434/v1
+	extLLMProxyURL      string // URL of the SWAMP LLM proxy, e.g. https://swamp.example.com/api/v1/internal/worker/llm
+	extLLMDirectKey     string // non-empty in dev mode: real API key passed directly to the worker
 	extLLMAnalysisModel string // model for Phase 1
 	extLLMPoCModel      string // model for Phase 2
-}
-
-// sidecarTokenEntry holds credentials for the LLM proxy sidecar container.
-// The sidecar exchanges this one-time token to obtain the real external LLM
-// API key and endpoint without those values appearing in the pod spec.
-type sidecarTokenEntry struct {
-	analysisID string
-	extLLMKey  string // real external LLM API key
-	extLLMURL  string // real external LLM endpoint URL
-	createdAt  time.Time
-	ttl        time.Duration
-	used       bool
 }
 
 // WorkerSession is the session created after a successful token exchange.
@@ -94,7 +82,8 @@ type WorkerExchangeResponse struct {
 
 	// External LLM fields — populated when AgentProvider is "external".
 	AgentProvider       string `json:"agent_provider,omitempty"`
-	ExtLLMProxyURL      string `json:"ext_llm_proxy_url,omitempty"`      // sidecar URL, e.g. http://localhost:11434/v1
+	ExtLLMProxyURL      string `json:"ext_llm_proxy_url,omitempty"`      // SWAMP LLM proxy URL
+	ExtLLMDirectKey     string `json:"ext_llm_direct_key,omitempty"`     // dev mode: real API key (bypasses proxy)
 	ExtLLMAnalysisModel string `json:"ext_llm_analysis_model,omitempty"` // Phase 1 model
 	ExtLLMPoCModel      string `json:"ext_llm_poc_model,omitempty"`      // Phase 2 model
 }
@@ -111,7 +100,6 @@ type workerPackageInfo struct {
 func NewWorkerTokenStore() *WorkerTokenStore {
 	return &WorkerTokenStore{
 		tokens:        make(map[string]*workerTokenEntry),
-		sidecarTokens: make(map[string]*sidecarTokenEntry),
 		sessions:      make(map[string]*WorkerSession),
 		proxyTokens:   make(map[string]string),
 		lastUsed:      make(map[string]time.Time),
@@ -123,7 +111,6 @@ func NewWorkerTokenStore() *WorkerTokenStore {
 func NewWorkerTokenStoreWithDB(queries *db.Queries) *WorkerTokenStore {
 	s := &WorkerTokenStore{
 		tokens:        make(map[string]*workerTokenEntry),
-		sidecarTokens: make(map[string]*sidecarTokenEntry),
 		sessions:      make(map[string]*WorkerSession),
 		proxyTokens:   make(map[string]string),
 		lastUsed:      make(map[string]time.Time),
@@ -138,14 +125,16 @@ func NewWorkerTokenStoreWithDB(queries *db.Queries) *WorkerTokenStore {
 // proxyURL is the Anthropic API proxy endpoint on the SWAMP server;
 // the real API key never leaves this process.
 // For external LLM workers, set agentProvider="external" and extLLMProxyURL to
-// the sidecar proxy URL (e.g. http://localhost:11434/v1).
+// the SWAMP LLM proxy URL. In K8s dev mode where the SWAMP server is not
+// reachable by pods, set extLLMDirectKey to the real API key and extLLMProxyURL
+// to the real LLM endpoint; the worker will use them directly.
 func (s *WorkerTokenStore) IssueToken(
 	analysisID string,
 	packages []models.SoftwarePackage,
 	agentModel, proxyURL, customPrompt string,
 	analysisCtx *models.AnalysisContext,
 	ttl time.Duration,
-	agentProvider, extLLMProxyURL, extLLMAnalysisModel, extLLMPoCModel string,
+	agentProvider, extLLMProxyURL, extLLMDirectKey, extLLMAnalysisModel, extLLMPoCModel string,
 ) (string, error) {
 	raw := make([]byte, 32)
 	if _, err := rand.Read(raw); err != nil {
@@ -167,58 +156,11 @@ func (s *WorkerTokenStore) IssueToken(
 		ttl:                 ttl,
 		agentProvider:       agentProvider,
 		extLLMProxyURL:      extLLMProxyURL,
+		extLLMDirectKey:     extLLMDirectKey,
 		extLLMAnalysisModel: extLLMAnalysisModel,
 		extLLMPoCModel:      extLLMPoCModel,
 	}
 	return token, nil
-}
-
-// IssueSidecarToken creates a one-time token for the LLM proxy sidecar container.
-// The sidecar exchanges this token to obtain the real external LLM API key and
-// endpoint URL without those credentials appearing in the pod spec.
-func (s *WorkerTokenStore) IssueSidecarToken(analysisID, extLLMKey, extLLMURL string, ttl time.Duration) (string, error) {
-	raw := make([]byte, 32)
-	if _, err := rand.Read(raw); err != nil {
-		return "", fmt.Errorf("generating sidecar token: %w", err)
-	}
-	token := hex.EncodeToString(raw)
-	hash := hashToken(token)
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.sidecarTokens[hash] = &sidecarTokenEntry{
-		analysisID: analysisID,
-		extLLMKey:  extLLMKey,
-		extLLMURL:  extLLMURL,
-		createdAt:  time.Now(),
-		ttl:        ttl,
-	}
-	return token, nil
-}
-
-// ExchangeSidecarToken validates and consumes a sidecar one-time token,
-// returning the external LLM API key and endpoint URL.
-func (s *WorkerTokenStore) ExchangeSidecarToken(token string) (apiKey, endpointURL string, err error) {
-	hash := hashToken(token)
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	entry, ok := s.sidecarTokens[hash]
-	if !ok {
-		return "", "", fmt.Errorf("invalid or expired sidecar token")
-	}
-	if entry.used {
-		return "", "", fmt.Errorf("sidecar token already used")
-	}
-	if time.Since(entry.createdAt) > entry.ttl {
-		delete(s.sidecarTokens, hash)
-		return "", "", fmt.Errorf("sidecar token expired")
-	}
-
-	entry.used = true
-	delete(s.sidecarTokens, hash)
-	return entry.extLLMKey, entry.extLLMURL, nil
 }
 
 // ExchangeToken validates and consumes a one-time token, returning a session.
@@ -301,6 +243,7 @@ func (s *WorkerTokenStore) ExchangeToken(token string) (*WorkerExchangeResponse,
 		AnalysisContext:     entry.analysisContext,
 		AgentProvider:       entry.agentProvider,
 		ExtLLMProxyURL:      entry.extLLMProxyURL,
+		ExtLLMDirectKey:     entry.extLLMDirectKey,
 		ExtLLMAnalysisModel: entry.extLLMAnalysisModel,
 		ExtLLMPoCModel:      entry.extLLMPoCModel,
 	}, nil
@@ -384,11 +327,6 @@ func (s *WorkerTokenStore) CleanupExpired() {
 	for hash, entry := range s.tokens {
 		if now.Sub(entry.createdAt) > entry.ttl {
 			delete(s.tokens, hash)
-		}
-	}
-	for hash, entry := range s.sidecarTokens {
-		if now.Sub(entry.createdAt) > entry.ttl {
-			delete(s.sidecarTokens, hash)
 		}
 	}
 

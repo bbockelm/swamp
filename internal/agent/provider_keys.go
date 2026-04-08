@@ -61,6 +61,73 @@ func ResolveEffectiveLLMConfig(cfg *config.Config, project *models.Project) Effe
 	return result
 }
 
+// ExternalLLMCredentials holds a resolved API key and endpoint URL for an
+// external LLM provider. Used when the worker needs direct access to the LLM.
+type ExternalLLMCredentials struct {
+	APIKey      string
+	EndpointURL string
+}
+
+// resolveExternalLLMDirect resolves both the API key and endpoint URL for the
+// external LLM configured for an analysis. It checks project-level provider
+// keys first (nrp, custom, external_llm), then falls back to global config
+// if the project allows global key usage.
+func resolveExternalLLMDirect(ctx context.Context, queries *db.Queries, enc *crypto.Encryptor, cfg *config.Config, analysis *models.Analysis) (ExternalLLMCredentials, error) {
+	if queries != nil && enc != nil && analysis != nil && analysis.ProjectID != "" {
+		for _, provider := range []string{"nrp", "custom", "external_llm"} {
+			k, err := queries.GetActiveProviderKey(ctx, analysis.ProjectID, provider)
+			if err != nil {
+				continue
+			}
+			dek, err := enc.UnwrapDEK(k.EncryptedDEK, k.DEKNonce)
+			if err != nil {
+				continue
+			}
+			pt, err := crypto.Decrypt(dek, k.EncryptedKey)
+			if err != nil {
+				continue
+			}
+			key := strings.TrimSpace(string(pt))
+			if key == "" {
+				continue
+			}
+			ep := k.EndpointURL
+			if ep == "" {
+				ep = cfg.ExternalLLMEndpoint
+			}
+			if ep == "" {
+				continue
+			}
+			return ExternalLLMCredentials{APIKey: key, EndpointURL: ep}, nil
+		}
+
+		// No project key found. Check if global key is allowed.
+		project, err := queries.GetProject(ctx, analysis.ProjectID)
+		if err != nil {
+			return ExternalLLMCredentials{}, fmt.Errorf("lookup project: %w", err)
+		}
+		if !project.UsesGlobalKey {
+			return ExternalLLMCredentials{}, fmt.Errorf("project %s does not have an external LLM API key configured", analysis.ProjectID)
+		}
+	}
+
+	// Fall back to global external LLM config.
+	key := strings.TrimSpace(cfg.ExternalLLMAPIKey)
+	if key == "" && cfg.ExternalLLMAPIKeyFile != "" {
+		keyData, err := os.ReadFile(cfg.ExternalLLMAPIKeyFile)
+		if err != nil {
+			return ExternalLLMCredentials{}, fmt.Errorf("read external LLM API key file: %w", err)
+		}
+		key = strings.TrimSpace(string(keyData))
+	}
+	ep := cfg.ExternalLLMEndpoint
+	if key != "" && ep != "" {
+		return ExternalLLMCredentials{APIKey: key, EndpointURL: ep}, nil
+	}
+
+	return ExternalLLMCredentials{}, fmt.Errorf("no external LLM credentials configured")
+}
+
 func resolveAnthropicAPIKey(ctx context.Context, queries *db.Queries, enc *crypto.Encryptor, cfg *config.Config, analysis *models.Analysis) (string, error) {
 	if queries != nil && enc != nil && analysis != nil && analysis.ProjectID != "" {
 		// First, try to get a project-specific API key.

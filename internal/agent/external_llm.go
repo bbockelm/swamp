@@ -23,28 +23,70 @@ type outputBroadcaster interface {
 	Broadcast(analysisID string, data []byte)
 }
 
-// writeOpenCodeConfig writes an opencode.json configuration file to workDir.
-// It configures the built-in OpenAI provider (which is bundled with opencode
-// and requires no npm downloads) with the given base URL.
+// writeOpenCodeConfig writes opencode configuration files to workDir.
 //
-// The API key is supplied via the OPENAI_API_KEY environment variable so it
-// does not appear in the config file on disk.
-func writeOpenCodeConfig(workDir, baseURL string) error {
+// The shape intentionally mirrors known-good custom OpenAI-compatible config:
+// custom provider + npm adapter + explicit model mapping.
+func writeOpenCodeConfig(workDir, baseURL, apiKey, model string) error {
+	const (
+		providerName = "custom"
+		maxContext   = 200000
+		maxOutput    = 16384
+	)
+
+	providerCfg := map[string]any{
+		"npm":  "@ai-sdk/openai-compatible",
+		"name": "Custom OpenAI-Compatible",
+		"options": map[string]any{
+			"baseURL": baseURL,
+			"apiKey":  apiKey,
+		},
+	}
+	if model != "" {
+		providerCfg["models"] = map[string]any{
+			model: map[string]any{
+				"name": model,
+				"limit": map[string]any{
+					"context": maxContext,
+					"output":  maxOutput,
+				},
+			},
+		}
+	}
+
 	cfg := map[string]any{
 		"$schema": "https://opencode.ai/config.json",
 		"provider": map[string]any{
-			"openai": map[string]any{
-				"options": map[string]any{
-					"baseURL": baseURL,
-				},
-			},
+			providerName: providerCfg,
 		},
+		"permission": "allow",
 	}
+	if model != "" {
+		cfg["model"] = providerName + "/" + model
+		cfg["small_model"] = providerName + "/" + model
+	}
+
 	data, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal opencode config: %w", err)
 	}
-	return os.WriteFile(filepath.Join(workDir, "opencode.json"), data, 0640)
+
+	// opencode resolves config from XDG config paths (typically
+	// $XDG_CONFIG_HOME/opencode/config.json); write both modern and legacy names.
+	configDir := filepath.Join(workDir, "opencode")
+	if err := os.MkdirAll(configDir, 0750); err != nil {
+		return fmt.Errorf("create opencode config dir: %w", err)
+	}
+	for _, p := range []string{
+		filepath.Join(configDir, "config.json"),
+		filepath.Join(configDir, "opencode.json"),
+		filepath.Join(workDir, "opencode.json"), // legacy/debug visibility
+	} {
+		if err := os.WriteFile(p, data, 0640); err != nil {
+			return fmt.Errorf("write opencode config %s: %w", p, err)
+		}
+	}
+	return nil
 }
 
 // runOpenCodeAgent invokes the opencode CLI with the given prompt and streams
@@ -61,14 +103,14 @@ func (e *Executor) runOpenCodeAgent(ctx context.Context, workDir, prompt, analys
 // runOpenCodeProcess is the shared implementation used by both the local
 // Executor and the K8s worker (via runWorkerOpenCode in worker.go).
 func runOpenCodeProcess(ctx context.Context, binary, workDir, prompt, analysisID, baseURL, apiKey, model string, hub outputBroadcaster) error {
-	if err := writeOpenCodeConfig(workDir, baseURL); err != nil {
+	if err := writeOpenCodeConfig(workDir, baseURL, apiKey, model); err != nil {
 		return fmt.Errorf("write opencode config: %w", err)
 	}
 
-	// opencode run [--model openai/<model>] --format json "<prompt>"
+	// opencode run [--model custom/<model>] --format json "<prompt>"
 	args := []string{"run", "--format", "json"}
 	if model != "" {
-		args = append(args, "--model", "openai/"+model)
+		args = append(args, "--model", "custom/"+model)
 	}
 	args = append(args, prompt)
 
@@ -76,8 +118,10 @@ func runOpenCodeProcess(ctx context.Context, binary, workDir, prompt, analysisID
 	cmd.Dir = workDir
 	cmd.Env = append(os.Environ(),
 		fmt.Sprintf("HOME=%s", workDir),
-		fmt.Sprintf("OPENAI_BASE_URL=%s", baseURL),
-		fmt.Sprintf("OPENAI_API_KEY=%s", apiKey),
+		fmt.Sprintf("XDG_CONFIG_HOME=%s", workDir),
+		fmt.Sprintf("XDG_DATA_HOME=%s", workDir),
+		fmt.Sprintf("XDG_CACHE_HOME=%s", workDir),
+		fmt.Sprintf("XDG_STATE_HOME=%s", workDir),
 	)
 
 	stdoutFile, err := os.Create(filepath.Join(workDir, "output", "agent_stdout.log"))

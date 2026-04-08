@@ -3,6 +3,7 @@ package handlers
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 
 	"github.com/bbockelm/swamp/internal/agent"
 	"github.com/bbockelm/swamp/internal/backup"
@@ -52,18 +53,32 @@ func (h *Handler) HealthCheck(w http.ResponseWriter, r *http.Request) {
 // AgentStatus returns whether the analysis agent is configured and ready.
 func (h *Handler) AgentStatus(w http.ResponseWriter, r *http.Request) {
 	ready := h.executor != nil && h.executor.AgentReady()
+	provider := "anthropic"
+	defaultModel := ""
+	if h.cfg != nil {
+		provider = strings.ToLower(strings.TrimSpace(h.cfg.AgentProvider))
+		if provider == "external" {
+			defaultModel = h.cfg.ExternalLLMAnalysisModel
+		} else {
+			defaultModel = h.cfg.AgentModel
+		}
+	}
 	models := []map[string]string{
 		{"id": "", "name": "Auto (claude CLI default)"},
 		{"id": "claude-haiku-4-20250514", "name": "Claude Haiku 4"},
 		{"id": "claude-sonnet-4-20250514", "name": "Claude Sonnet 4"},
 		{"id": "claude-opus-4-20250514", "name": "Claude Opus 4"},
 	}
-	defaultModel := ""
-	if h.cfg != nil {
-		defaultModel = h.cfg.AgentModel
+	if provider == "external" {
+		label := "Configured external model"
+		if defaultModel != "" {
+			label = "Configured external model (" + defaultModel + ")"
+		}
+		models = []map[string]string{{"id": "", "name": label}}
 	}
 	respondJSON(w, http.StatusOK, map[string]any{
 		"ready":         ready,
+		"provider":      provider,
 		"default_model": defaultModel,
 		"models":        models,
 	})

@@ -124,12 +124,14 @@ These options control where analyses run:
 | `K8S_WORKER_LABELS`          |                                | Extra labels for worker Jobs/Pods (`k=v,k2=v2`)                                  |
 | `K8S_WORKER_ANNOTATIONS`     |                                | Extra annotations for worker Jobs/Pods (`k=v,k2=v2`)                             |
 | `K8S_POD_TTL_SECONDS`        | `3600`                         | Job TTL after completion (`ttlSecondsAfterFinished`)                             |
+| `K8S_DIRECT_LLM`             | `false`                        | Dev mode: worker Pods call external LLM endpoint directly instead of SWAMP proxy |
 | `KUBECONFIG`                 |                                | Path to kubeconfig used by the server; if empty, in-cluster credentials are used |
 
 Notes:
 
 - In `kubernetes` mode, SWAMP creates Kubernetes Jobs (not raw Pods).
 - `KUBECONFIG` is read by the SWAMP server process that creates Jobs.
+- Set `K8S_DIRECT_LLM=true` for development clusters where worker Pods cannot reach SWAMP at a public URL. In this mode, SWAMP passes the resolved external LLM API key and endpoint directly to workers.
 - The admin settings UI persists equivalent keys in DB (for example `k8s_kubeconfig`), which override environment values when present.
 
 ### Kubernetes setup (minimal permissions)
@@ -168,20 +170,20 @@ apiVersion: v1
 kind: Config
 clusters:
 - name: ${CLUSTER_NAME}
-	cluster:
-		server: ${API_SERVER}
-		certificate-authority-data: ${CA_DATA}
+  cluster:
+    server: ${API_SERVER}
+    certificate-authority-data: ${CA_DATA}
 contexts:
 - name: swamp-job-launcher@${CLUSTER_NAME}
-	context:
-		cluster: ${CLUSTER_NAME}
-		namespace: swamp
-		user: swamp-job-launcher
+  context:
+    cluster: ${CLUSTER_NAME}
+    namespace: swamp
+    user: swamp-job-launcher
 current-context: swamp-job-launcher@${CLUSTER_NAME}
 users:
 - name: swamp-job-launcher
-	user:
-		token: ${TOKEN}
+  user:
+    token: ${TOKEN}
 EOF
 ```
 
@@ -194,6 +196,32 @@ export KUBECONFIG=/tmp/swamp-kubeconfig
 export K8S_WORKER_IMAGE=ghcr.io/<org>/<worker-image>:<tag>
 export K8S_WORKER_SERVICE_ACCOUNT=swamp-worker
 ```
+
+### Kubernetes analysis runner image
+
+The image referenced by `K8S_WORKER_IMAGE` must contain:
+
+- The SWAMP server binary (it runs in `SWAMP_WORKER_MODE=true` for worker jobs and `SWAMP_LLM_PROXY_MODE=true` for sidecars)
+- `git` (the analysis workflow and prompts expect repository operations)
+- Node + npm runtime
+- Agent CLIs used by workers:
+	- `claude` (from `@anthropic-ai/claude-code`)
+	- `opencode` (from `opencode-ai`) for external LLM mode
+- `python3` and CA certificates
+
+This repository includes a dedicated runner image definition:
+
+- `Dockerfile.worker`
+
+Build and push example:
+
+```bash
+docker build -f Dockerfile.worker -t ghcr.io/<org>/swamp-worker:<tag> .
+docker push ghcr.io/<org>/swamp-worker:<tag>
+export K8S_WORKER_IMAGE=ghcr.io/<org>/swamp-worker:<tag>
+```
+
+Do not bake provider API keys into this image; keys are injected at runtime by SWAMP (token exchange / proxy flow).
 
 5. Start SWAMP server normally.
 

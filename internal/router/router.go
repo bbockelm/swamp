@@ -90,7 +90,10 @@ func New(cfg *config.Config, pool *pgxpool.Pool, store *storage.Store) (*chi.Mux
 	applyDBConfig("k8s_worker_tolerations", &cfg.K8sWorkerTolerations)
 	applyDBConfig("k8s_worker_labels", &cfg.K8sWorkerLabels)
 	applyDBConfig("k8s_kubeconfig", &cfg.Kubeconfig)
+	applyDBConfig("agent_provider", &cfg.AgentProvider)
 	applyDBConfig("agent_model", &cfg.AgentModel)
+	applyDBConfig("external_llm_analysis_model", &cfg.ExternalLLMAnalysisModel)
+	applyDBConfig("external_llm_poc_model", &cfg.ExternalLLMPoCModel)
 	if ttl, err := queries.GetAppConfig(context.Background(), "k8s_pod_ttl_seconds"); err == nil && ttl != "" {
 		if parsed, parseErr := strconv.Atoi(ttl); parseErr == nil {
 			cfg.K8sPodTTLSeconds = parsed
@@ -436,16 +439,13 @@ func New(cfg *config.Config, pool *pgxpool.Pool, store *storage.Store) (*chi.Mux
 			wh := handlers.NewWorkerHandler(tokenStore, hub, h)
 			r.Route("/internal/worker", func(r chi.Router) {
 				r.Post("/exchange", wh.ExchangeToken)
-				// One-time token exchange for the LLM proxy sidecar container.
-				// Returns the real external LLM API key + endpoint URL so the
-				// credentials never appear in the K8s pod spec.
-				r.Post("/exchange-sidecar", wh.ExchangeSidecarToken)
 				r.Post("/stream", wh.StreamOutput)
 				r.Post("/status", wh.UpdateStatus)
 				r.Post("/results", wh.UploadResult)
-				// Reverse proxy to Anthropic API — the real API key is injected
-				// server-side so it never reaches the worker pod.
+				// Reverse proxy for LLM API requests — the real API key is
+				// injected server-side so it never reaches the worker pod.
 				r.HandleFunc("/anthropic/*", wh.ProxyAnthropic)
+				r.HandleFunc("/llm/*", wh.ProxyLLM)
 			})
 		}
 	})

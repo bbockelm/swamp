@@ -55,14 +55,14 @@ const (
 )
 
 type kubeconfigFile struct {
-	CurrentContext string `yaml:"current-context"`
+	CurrentContext string `yaml:"current-context" json:"current-context"`
 	Clusters       []struct {
 		Name    string `yaml:"name"`
 		Cluster struct {
-			Server                   string `yaml:"server"`
-			CertificateAuthority     string `yaml:"certificate-authority"`
-			CertificateAuthorityData string `yaml:"certificate-authority-data"`
-			InsecureSkipTLSVerify    bool   `yaml:"insecure-skip-tls-verify"`
+			Server                   string `yaml:"server" json:"server"`
+			CertificateAuthority     string `yaml:"certificate-authority" json:"certificate-authority"`
+			CertificateAuthorityData string `yaml:"certificate-authority-data" json:"certificate-authority-data"`
+			InsecureSkipTLSVerify    bool   `yaml:"insecure-skip-tls-verify" json:"insecure-skip-tls-verify"`
 		} `yaml:"cluster"`
 	} `yaml:"clusters"`
 	Contexts []struct {
@@ -76,15 +76,15 @@ type kubeconfigFile struct {
 	Users []struct {
 		Name string `yaml:"name"`
 		User struct {
-			Token                 string `yaml:"token"`
-			TokenFile             string `yaml:"tokenFile"`
-			ClientCertificate     string `yaml:"client-certificate"`
-			ClientCertificateData string `yaml:"client-certificate-data"`
-			ClientKey             string `yaml:"client-key"`
-			ClientKeyData         string `yaml:"client-key-data"`
-			Username              string `yaml:"username"`
-			Password              string `yaml:"password"`
-			Exec                  any    `yaml:"exec"`
+			Token                 string `yaml:"token" json:"token"`
+			TokenFile             string `yaml:"tokenFile" json:"tokenFile"`
+			ClientCertificate     string `yaml:"client-certificate" json:"client-certificate"`
+			ClientCertificateData string `yaml:"client-certificate-data" json:"client-certificate-data"`
+			ClientKey             string `yaml:"client-key" json:"client-key"`
+			ClientKeyData         string `yaml:"client-key-data" json:"client-key-data"`
+			Username              string `yaml:"username" json:"username"`
+			Password              string `yaml:"password" json:"password"`
+			Exec                  any    `yaml:"exec" json:"exec"`
 		} `yaml:"user"`
 	} `yaml:"users"`
 }
@@ -153,53 +153,74 @@ func NewK8sClientFromKubeconfig(path string) (K8sClient, error) {
 		return nil, fmt.Errorf("kubeconfig %s has no current-context", resolvedPath)
 	}
 
-	ctxEntry, err := findNamedValue(cfg.Contexts, cfg.CurrentContext, func(item struct {
-		Name    string `yaml:"name"`
-		Context struct {
-			Cluster   string `yaml:"cluster"`
-			User      string `yaml:"user"`
-			Namespace string `yaml:"namespace"`
-		} `yaml:"context"`
-	}) string {
-		return item.Name
-	})
-	if err != nil {
-		return nil, fmt.Errorf("loading current context %q: %w", cfg.CurrentContext, err)
+	var (
+		ctxEntryFound     bool
+		clusterEntryFound bool
+		userEntryFound    bool
+		ctxEntry          struct {
+			Name    string `yaml:"name"`
+			Context struct {
+				Cluster   string `yaml:"cluster"`
+				User      string `yaml:"user"`
+				Namespace string `yaml:"namespace"`
+			} `yaml:"context"`
+		}
+		clusterEntry struct {
+			Name    string `yaml:"name"`
+			Cluster struct {
+				Server                   string `yaml:"server" json:"server"`
+				CertificateAuthority     string `yaml:"certificate-authority" json:"certificate-authority"`
+				CertificateAuthorityData string `yaml:"certificate-authority-data" json:"certificate-authority-data"`
+				InsecureSkipTLSVerify    bool   `yaml:"insecure-skip-tls-verify" json:"insecure-skip-tls-verify"`
+			} `yaml:"cluster"`
+		}
+		userEntry struct {
+			Name string `yaml:"name"`
+			User struct {
+				Token                 string `yaml:"token" json:"token"`
+				TokenFile             string `yaml:"tokenFile" json:"tokenFile"`
+				ClientCertificate     string `yaml:"client-certificate" json:"client-certificate"`
+				ClientCertificateData string `yaml:"client-certificate-data" json:"client-certificate-data"`
+				ClientKey             string `yaml:"client-key" json:"client-key"`
+				ClientKeyData         string `yaml:"client-key-data" json:"client-key-data"`
+				Username              string `yaml:"username" json:"username"`
+				Password              string `yaml:"password" json:"password"`
+				Exec                  any    `yaml:"exec" json:"exec"`
+			} `yaml:"user"`
+		}
+	)
+
+	for _, item := range cfg.Contexts {
+		if item.Name == cfg.CurrentContext {
+			ctxEntry = item
+			ctxEntryFound = true
+			break
+		}
+	}
+	if !ctxEntryFound {
+		return nil, fmt.Errorf("loading current context %q: no entry with that name", cfg.CurrentContext)
 	}
 
-	clusterEntry, err := findNamedValue(cfg.Clusters, ctxEntry.Context.Cluster, func(item struct {
-		Name    string `yaml:"name"`
-		Cluster struct {
-			Server                   string `yaml:"server"`
-			CertificateAuthority     string `yaml:"certificate-authority"`
-			CertificateAuthorityData string `yaml:"certificate-authority-data"`
-			InsecureSkipTLSVerify    bool   `yaml:"insecure-skip-tls-verify"`
-		} `yaml:"cluster"`
-	}) string {
-		return item.Name
-	})
-	if err != nil {
-		return nil, fmt.Errorf("loading cluster %q: %w", ctxEntry.Context.Cluster, err)
+	for _, item := range cfg.Clusters {
+		if item.Name == ctxEntry.Context.Cluster {
+			clusterEntry = item
+			clusterEntryFound = true
+			break
+		}
+	}
+	if !clusterEntryFound {
+		return nil, fmt.Errorf("loading cluster %q: no entry with that name", ctxEntry.Context.Cluster)
 	}
 
-	userEntry, err := findNamedValue(cfg.Users, ctxEntry.Context.User, func(item struct {
-		Name string `yaml:"name"`
-		User struct {
-			Token                 string `yaml:"token"`
-			TokenFile             string `yaml:"tokenFile"`
-			ClientCertificate     string `yaml:"client-certificate"`
-			ClientCertificateData string `yaml:"client-certificate-data"`
-			ClientKey             string `yaml:"client-key"`
-			ClientKeyData         string `yaml:"client-key-data"`
-			Username              string `yaml:"username"`
-			Password              string `yaml:"password"`
-			Exec                  any    `yaml:"exec"`
-		} `yaml:"user"`
-	}) string {
-		return item.Name
-	})
-	if err != nil {
-		return nil, fmt.Errorf("loading user %q: %w", ctxEntry.Context.User, err)
+	for _, item := range cfg.Users {
+		if item.Name == ctxEntry.Context.User {
+			userEntry = item
+			userEntryFound = true
+			break
+		}
+	}
+	if !userEntryFound {
+		return nil, fmt.Errorf("loading user %q: no entry with that name", ctxEntry.Context.User)
 	}
 
 	if userEntry.User.Exec != nil {
@@ -426,24 +447,24 @@ func buildKubeconfigTLSConfig(
 	clusterEntry struct {
 		Name    string `yaml:"name"`
 		Cluster struct {
-			Server                   string `yaml:"server"`
-			CertificateAuthority     string `yaml:"certificate-authority"`
-			CertificateAuthorityData string `yaml:"certificate-authority-data"`
-			InsecureSkipTLSVerify    bool   `yaml:"insecure-skip-tls-verify"`
+			Server                   string `yaml:"server" json:"server"`
+			CertificateAuthority     string `yaml:"certificate-authority" json:"certificate-authority"`
+			CertificateAuthorityData string `yaml:"certificate-authority-data" json:"certificate-authority-data"`
+			InsecureSkipTLSVerify    bool   `yaml:"insecure-skip-tls-verify" json:"insecure-skip-tls-verify"`
 		} `yaml:"cluster"`
 	},
 	userEntry struct {
 		Name string `yaml:"name"`
 		User struct {
-			Token                 string `yaml:"token"`
-			TokenFile             string `yaml:"tokenFile"`
-			ClientCertificate     string `yaml:"client-certificate"`
-			ClientCertificateData string `yaml:"client-certificate-data"`
-			ClientKey             string `yaml:"client-key"`
-			ClientKeyData         string `yaml:"client-key-data"`
-			Username              string `yaml:"username"`
-			Password              string `yaml:"password"`
-			Exec                  any    `yaml:"exec"`
+			Token                 string `yaml:"token" json:"token"`
+			TokenFile             string `yaml:"tokenFile" json:"tokenFile"`
+			ClientCertificate     string `yaml:"client-certificate" json:"client-certificate"`
+			ClientCertificateData string `yaml:"client-certificate-data" json:"client-certificate-data"`
+			ClientKey             string `yaml:"client-key" json:"client-key"`
+			ClientKeyData         string `yaml:"client-key-data" json:"client-key-data"`
+			Username              string `yaml:"username" json:"username"`
+			Password              string `yaml:"password" json:"password"`
+			Exec                  any    `yaml:"exec" json:"exec"`
 		} `yaml:"user"`
 	},
 ) (*tls.Config, error) {
