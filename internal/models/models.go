@@ -320,7 +320,7 @@ type ProjectProviderKey struct {
 	Provider     string     `json:"provider"`
 	Label        string     `json:"label"`
 	KeyHint      string     `json:"key_hint"`
-	EndpointURL  string     `json:"endpoint_url,omitempty"` // custom endpoint URL (only for "custom" provider)
+	EndpointURL  string     `json:"endpoint_url,omitempty"` // endpoint URL for custom, nrp, or external_llm providers
 	EncryptedKey []byte     `json:"-"`
 	EncryptedDEK []byte     `json:"-"`
 	DEKNonce     []byte     `json:"-"`

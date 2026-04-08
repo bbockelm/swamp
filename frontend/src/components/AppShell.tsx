@@ -6,7 +6,7 @@ import { useState, useEffect } from 'react';
 import { Sidebar } from './Sidebar';
 import { api } from '@/lib/api';
 
-const publicPaths = ['/login'];
+const publicPaths = ['/login', '/'];
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
@@ -54,8 +54,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     }
   }, [isLoading, isAuthenticated, isPublic, fullPath, router]);
 
-  // Don't gate public pages
-  if (isPublic) {
+  // Don't gate public pages for unauthenticated users
+  if (isPublic && !isAuthenticated) {
     return <>{children}</>;
   }
 

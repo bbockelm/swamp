@@ -10,7 +10,7 @@ AI-powered Software Assurance Marketplace. Users submit Git repositories for aut
 
 | Component | Technology | Notes |
 |-----------|------------|-------|
-| Backend | Go 1.24, chi/v5 router | `cmd/server/main.go` entry point |
+| Backend | Go 1.26, chi/v5 router | `cmd/server/main.go` entry point |
 | Database | PostgreSQL 16 | pgx/v5 driver, goose/v3 migrations |
 | Object Storage | S3 (MinIO for dev) | aws-sdk-go-v2; stores results, backups |
 | Frontend | Next.js 14 (App Router) | React 18, TanStack React Query v5, Tailwind CSS 3 |

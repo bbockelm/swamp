@@ -21,31 +21,252 @@ function timeAgo(dateStr: string | null): string {
 }
 
 export default function Dashboard() {
-  const { data: session } = useQuery({
+  const { data: session, isLoading } = useQuery({
     queryKey: ["session"],
     queryFn: api.auth.me,
   });
 
-  if (!session?.user) {
+  if (isLoading) {
     return (
       <div className="flex items-center justify-center min-h-[60vh]">
-        <div className="text-center">
-          <h1 className="text-3xl font-bold mb-4">SWAMP</h1>
-          <p className="text-gray-600 mb-8">
-            Software Assurance Marketplace — AI-powered security analysis
-          </p>
-          <a
-            href="/api/v1/auth/oidc/login"
-            className="bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700"
-          >
-            Sign in with CILogon
-          </a>
-        </div>
+        <div className="text-gray-400">Loading...</div>
       </div>
     );
   }
 
+  if (!session?.authenticated || !session?.user) {
+    return <LandingPage />;
+  }
+
   return <DashboardContent userName={session.user.display_name || session.user.email} />;
+}
+
+function LandingPage() {
+  return (
+    <div className="min-h-screen bg-white">
+      {/* Header */}
+      <header className="border-b">
+        <div className="max-w-5xl mx-auto px-6 py-4 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <span className="text-xl font-bold text-gray-900">SWAMP</span>
+            <span className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded font-medium">beta</span>
+          </div>
+          <Link
+            href="/login"
+            className="text-sm bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 transition"
+          >
+            Sign In
+          </Link>
+        </div>
+      </header>
+
+      {/* Hero */}
+      <section className="max-w-5xl mx-auto px-6 py-16 lg:py-24">
+        <div className="max-w-3xl">
+          <h1 className="text-4xl lg:text-5xl font-bold text-gray-900 leading-tight">
+            AI-Powered Security Analysis for Your Code
+          </h1>
+          <p className="mt-6 text-lg text-gray-600 leading-relaxed">
+            The <strong>Software Assurance Marketplace (SWAMP)</strong> uses AI
+            agents to perform deep security analysis of Git repositories. Submit
+            your code, and SWAMP automatically identifies vulnerabilities,
+            generates SARIF reports, and optionally validates findings with
+            proof-of-concept exploits.
+          </p>
+          <div className="mt-8 flex flex-wrap gap-4">
+            <Link
+              href="/login"
+              className="bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700 transition font-medium"
+            >
+              Get Started
+            </Link>
+            <a
+              href="#how-it-works"
+              className="border border-gray-300 text-gray-700 px-6 py-3 rounded-lg hover:bg-gray-50 transition font-medium"
+            >
+              Learn More
+            </a>
+          </div>
+        </div>
+      </section>
+
+      {/* How it works */}
+      <section id="how-it-works" className="bg-gray-50 border-y">
+        <div className="max-w-5xl mx-auto px-6 py-16">
+          <h2 className="text-2xl font-bold text-gray-900 mb-10">How It Works</h2>
+          <div className="grid md:grid-cols-3 gap-8">
+            <StepCard
+              step="1"
+              title="Add a Repository"
+              description="Create a project and point it at your Git repository. SWAMP supports any public or accessible Git URL — GitHub, GitLab, Bitbucket, and more."
+            />
+            <StepCard
+              step="2"
+              title="Run an Analysis"
+              description="Trigger a security analysis. An AI agent clones your code, reviews it for vulnerabilities, and produces structured findings in SARIF format."
+            />
+            <StepCard
+              step="3"
+              title="Review Findings"
+              description="Browse identified vulnerabilities with severity ratings, file locations, and code snippets. Triage findings, track them over time, and export reports."
+            />
+          </div>
+        </div>
+      </section>
+
+      {/* Features */}
+      <section className="max-w-5xl mx-auto px-6 py-16">
+        <h2 className="text-2xl font-bold text-gray-900 mb-10">Features</h2>
+        <div className="grid md:grid-cols-2 gap-6">
+          <FeatureCard
+            title="AI-Driven Analysis"
+            description="Uses Claude and other frontier AI models to perform deep semantic security review — going beyond pattern matching to understand code intent and data flow."
+          />
+          <FeatureCard
+            title="SARIF Output"
+            description="Results are produced in SARIF (Static Analysis Results Interchange Format), the industry standard for security tooling interoperability."
+          />
+          <FeatureCard
+            title="Exploit Validation"
+            description="Optionally validates findings with proof-of-concept exploit generation, helping prioritize real risks over theoretical issues."
+          />
+          <FeatureCard
+            title="Group Collaboration"
+            description="Organize projects into groups with role-based access control. Invite team members and share findings across your organization."
+          />
+          <FeatureCard
+            title="Encrypted at Rest"
+            description="All analysis results are encrypted with per-analysis keys using AES-256-GCM envelope encryption before storage."
+          />
+          <FeatureCard
+            title="Multi-Package Analysis"
+            description="Analyze multiple repositories together in a single run for cross-project vulnerability detection."
+          />
+        </div>
+      </section>
+
+      {/* Documentation */}
+      <section id="documentation" className="bg-gray-50 border-y">
+        <div className="max-w-5xl mx-auto px-6 py-16">
+          <h2 className="text-2xl font-bold text-gray-900 mb-4">Documentation</h2>
+          <p className="text-gray-600 mb-10 max-w-2xl">
+            Everything you need to get started with SWAMP and integrate it into your workflow.
+          </p>
+          <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
+            <DocCard
+              title="Quick Start"
+              items={[
+                "Sign in with your institutional credentials via CILogon",
+                "Create a group to organize your projects",
+                "Add a project with a Git repository URL",
+                "Click \"Run Analysis\" on the project page",
+                "Review findings in the SARIF viewer",
+              ]}
+            />
+            <DocCard
+              title="Analysis Pipeline"
+              items={[
+                "Phase 1: AI agent clones and reviews the codebase for security issues",
+                "Phase 2 (optional): Exploit validation generates proof-of-concept tests",
+                "Results are encrypted and stored as SARIF, Markdown reports, and logs",
+                "Findings are extracted with severity, file location, and code snippets",
+              ]}
+            />
+            <DocCard
+              title="Key Concepts"
+              items={[
+                "Projects — a Git repository to analyze",
+                "Packages — versioned snapshots of a project (branch/commit)",
+                "Analyses — a security scan run against one or more packages",
+                "Findings — individual vulnerabilities discovered by an analysis",
+                "Groups — team workspaces with role-based access (admin/member)",
+              ]}
+            />
+            <DocCard
+              title="Finding Severities"
+              items={[
+                "Critical / Error — high-impact vulnerabilities requiring immediate attention",
+                "Warning / Medium — moderate issues that should be reviewed",
+                "Note / Low / Info — informational or low-risk observations",
+                "Findings can be triaged: confirmed, false positive, mitigated, or won't fix",
+              ]}
+            />
+            <DocCard
+              title="Access & Authentication"
+              items={[
+                "Authentication via CILogon (institutional credentials)",
+                "Users must agree to the Acceptable Use Policy before access",
+                "Projects are scoped to groups — members see only their group's work",
+                "Admin, project creator, and user roles control permissions",
+                "API keys available for programmatic access",
+              ]}
+            />
+            <DocCard
+              title="API & Integrations"
+              items={[
+                "Full REST API documented in OpenAPI 3.0 format",
+                "API keys for CI/CD integration",
+                "SARIF export for integration with GitHub, VS Code, and other tools",
+                "Markdown reports for human-readable summaries",
+              ]}
+            />
+          </div>
+        </div>
+      </section>
+
+      {/* Footer */}
+      <footer className="border-t">
+        <div className="max-w-5xl mx-auto px-6 py-8 flex flex-col sm:flex-row items-center justify-between gap-4">
+          <p className="text-sm text-gray-400">
+            SWAMP — Software Assurance Marketplace
+          </p>
+          <Link
+            href="/login"
+            className="text-sm text-blue-600 hover:underline"
+          >
+            Sign In
+          </Link>
+        </div>
+      </footer>
+    </div>
+  );
+}
+
+function StepCard({ step, title, description }: { step: string; title: string; description: string }) {
+  return (
+    <div className="bg-white rounded-lg border p-6">
+      <div className="w-8 h-8 rounded-full bg-blue-600 text-white flex items-center justify-center text-sm font-bold mb-4">
+        {step}
+      </div>
+      <h3 className="font-semibold text-gray-900 mb-2">{title}</h3>
+      <p className="text-sm text-gray-600 leading-relaxed">{description}</p>
+    </div>
+  );
+}
+
+function FeatureCard({ title, description }: { title: string; description: string }) {
+  return (
+    <div className="bg-gray-50 rounded-lg border p-5">
+      <h3 className="font-semibold text-gray-900 mb-1">{title}</h3>
+      <p className="text-sm text-gray-600 leading-relaxed">{description}</p>
+    </div>
+  );
+}
+
+function DocCard({ title, items }: { title: string; items: string[] }) {
+  return (
+    <div className="bg-white rounded-lg border p-5">
+      <h3 className="font-semibold text-gray-900 mb-3">{title}</h3>
+      <ul className="space-y-2">
+        {items.map((item, i) => (
+          <li key={i} className="text-sm text-gray-600 leading-relaxed flex gap-2">
+            <span className="text-gray-300 select-none flex-shrink-0">&bull;</span>
+            <span>{item}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
 }
 
 function DashboardContent({ userName }: { userName: string }) {

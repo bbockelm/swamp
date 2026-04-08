@@ -6,7 +6,7 @@ AI-powered security analysis platform for Git repositories. Submits code to an A
 
 | Component       | Technology                                                           |
 | --------------- | -------------------------------------------------------------------- |
-| Backend         | Go 1.24, chi/v5 router                                               |
+| Backend         | Go 1.26, chi/v5 router                                               |
 | Database        | PostgreSQL 16 (pgx/v5)                                               |
 | Object Storage  | S3-compatible (MinIO for dev)                                        |
 | Frontend        | Next.js 14 (App Router), React 18, TanStack Query v5, Tailwind CSS 3 |
@@ -23,7 +23,7 @@ AI-powered security analysis platform for Git repositories. Submits code to an A
 ## Manual Setup
 
 ```bash
-# Prerequisites: Go 1.24+, Node 20+, PostgreSQL 16+, S3-compatible storage
+# Prerequisites: Go 1.26+, Node 20+, PostgreSQL 16+, S3-compatible storage
 
 # Backend
 export DATABASE_URL="postgres://swamp:swamp@localhost:5432/swamp?sslmode=disable"

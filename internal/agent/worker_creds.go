@@ -72,7 +72,7 @@ type WorkerSession struct {
 // WorkerExchangeResponse is returned to the worker after token exchange.
 type WorkerExchangeResponse struct {
 	SessionToken    string                  `json:"session_token"`
-	ProxyToken      string                  `json:"proxy_token"` // separate credential for Anthropic proxy only
+	ProxyToken      string                  `json:"proxy_token"` // separate credential for LLM proxy authentication
 	AnalysisID      string                  `json:"analysis_id"`
 	Packages        []workerPackageInfo     `json:"packages"`
 	AgentModel      string                  `json:"agent_model,omitempty"`

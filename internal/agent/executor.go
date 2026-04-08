@@ -266,16 +266,16 @@ func (e *Executor) run(analysis *models.Analysis, packages []models.SoftwarePack
 
 	switch llmConfig.Provider {
 	case "external":
-		extKey, err := resolveExternalLLMAPIKey(ctx, e.queries, e.encryptor, e.cfg, analysis)
+		extCreds, err := resolveExternalLLMDirect(ctx, e.queries, e.encryptor, e.cfg, analysis)
 		if err != nil {
 			if llmConfig.Fallback == "anthropic" {
-				log.Warn().Err(err).Str("analysis_id", analysis.ID).Msg("External LLM key resolution failed, falling back to Anthropic")
+				log.Warn().Err(err).Str("analysis_id", analysis.ID).Msg("External LLM credential resolution failed, falling back to Anthropic")
 				if err := e.runAnthropicPhases(ctx, workDir, prompt, sarifPath, packages, analysis); err != nil {
 					e.failAnalysis(ctx, analysis.ID, "Agent execution failed (Anthropic fallback)", err)
 				}
 				return
 			}
-			e.failAnalysis(ctx, analysis.ID, "External LLM key resolution failed", err)
+			e.failAnalysis(ctx, analysis.ID, "External LLM credential resolution failed", err)
 			return
 		}
 
@@ -284,7 +284,7 @@ func (e *Executor) run(analysis *models.Analysis, packages []models.SoftwarePack
 			return
 		}
 		e.hub.Broadcast(analysis.ID, []byte("[system] Starting Phase 1: Security analysis (external LLM)"))
-		phase1Err := e.runOpenCodeAgent(ctx, workDir, prompt, analysis.ID, e.cfg.ExternalLLMEndpoint, extKey, llmConfig.AnalysisModel)
+		phase1Err := e.runOpenCodeAgent(ctx, workDir, prompt, analysis.ID, extCreds.EndpointURL, extCreds.APIKey, llmConfig.AnalysisModel)
 		if phase1Err != nil {
 			if llmConfig.Fallback == "anthropic" {
 				log.Warn().Err(phase1Err).Str("analysis_id", analysis.ID).Msg("External LLM Phase 1 failed, falling back to Anthropic")
@@ -304,7 +304,7 @@ func (e *Executor) run(analysis *models.Analysis, packages []models.SoftwarePack
 			}
 			e.hub.Broadcast(analysis.ID, []byte("[system] Starting Phase 2: Exploit validation (external LLM)"))
 			phase2Prompt := BuildPrompt(&packages[0], "phase2", "", nil)
-			if err := e.runOpenCodeAgent(ctx, workDir, phase2Prompt, analysis.ID, e.cfg.ExternalLLMEndpoint, extKey, llmConfig.PoCModel); err != nil {
+			if err := e.runOpenCodeAgent(ctx, workDir, phase2Prompt, analysis.ID, extCreds.EndpointURL, extCreds.APIKey, llmConfig.PoCModel); err != nil {
 				log.Warn().Err(err).Str("analysis_id", analysis.ID).Msg("Phase 2 (exploit validation) failed")
 			}
 		}
@@ -357,10 +357,14 @@ func (e *Executor) runAnthropicPhases(ctx context.Context, workDir, prompt, sari
 	if err != nil {
 		return err
 	}
+	_ = e.updateStatus(ctx, analysis.ID, "running", "Phase 1: Security analysis (Anthropic)")
+	e.hub.Broadcast(analysis.ID, []byte("[system] Starting Phase 1: Security analysis (Anthropic)"))
 	if err := e.runAgent(ctx, workDir, prompt, analysis.ID, anthropicKey, analysis.AgentModel); err != nil {
 		return err
 	}
 	if _, statErr := os.Stat(sarifPath); statErr == nil {
+		_ = e.updateStatus(ctx, analysis.ID, "running", "Phase 2: Exploit validation (Anthropic)")
+		e.hub.Broadcast(analysis.ID, []byte("[system] Starting Phase 2: Exploit validation (Anthropic)"))
 		phase2Prompt := BuildPrompt(&packages[0], "phase2", "", nil)
 		if err := e.runAgent(ctx, workDir, phase2Prompt, analysis.ID, anthropicKey, analysis.AgentModel); err != nil {
 			log.Warn().Err(err).Str("analysis_id", analysis.ID).Msg("Phase 2 (exploit validation) failed")

@@ -118,6 +118,7 @@ func runOpenCodeProcess(ctx context.Context, binary, workDir, prompt, analysisID
 	cmd.Dir = workDir
 	cmd.Env = append(os.Environ(),
 		fmt.Sprintf("HOME=%s", workDir),
+		"SHELL=/bin/bash",
 		fmt.Sprintf("XDG_CONFIG_HOME=%s", workDir),
 		fmt.Sprintf("XDG_DATA_HOME=%s", workDir),
 		fmt.Sprintf("XDG_CACHE_HOME=%s", workDir),

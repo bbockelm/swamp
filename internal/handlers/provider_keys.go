@@ -3,6 +3,7 @@ package handlers
 import (
 	"encoding/json"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
@@ -59,18 +60,25 @@ func (h *Handler) CreateProjectProviderKey(w http.ResponseWriter, r *http.Reques
 		req.Provider = "anthropic"
 	}
 	req.Provider = strings.ToLower(strings.TrimSpace(req.Provider))
-	validProviders := map[string]bool{"anthropic": true, "nrp": true, "custom": true}
+	validProviders := map[string]bool{"anthropic": true, "nrp": true, "custom": true, "external_llm": true}
 	if !validProviders[req.Provider] {
-		respondError(w, http.StatusBadRequest, "Provider must be one of: anthropic, nrp, custom")
+		respondError(w, http.StatusBadRequest, "Provider must be one of: anthropic, nrp, custom, external_llm")
 		return
 	}
 	if req.Provider == "custom" && req.EndpointURL == "" {
 		respondError(w, http.StatusBadRequest, "endpoint_url is required for custom provider")
 		return
 	}
-	if req.Provider == "nrp" && req.EndpointURL == "" {
-		// Default NRP endpoint -- can be overridden
-		req.EndpointURL = ""
+	if req.EndpointURL != "" {
+		parsed, err := url.Parse(req.EndpointURL)
+		if err != nil || parsed.Host == "" {
+			respondError(w, http.StatusBadRequest, "endpoint_url must be a valid URL with a host")
+			return
+		}
+		if parsed.Scheme != "https" {
+			respondError(w, http.StatusBadRequest, "endpoint_url must use https")
+			return
+		}
 	}
 
 	// Generate a per-key DEK and encrypt the API key.

@@ -35,14 +35,14 @@ type EffectiveLLMConfig struct {
 // project may be nil (use global config only).
 func ResolveEffectiveLLMConfig(cfg *config.Config, project *models.Project) EffectiveLLMConfig {
 	result := EffectiveLLMConfig{
-		Provider:      cfg.AgentProvider,
+		Provider:      strings.ToLower(strings.TrimSpace(cfg.AgentProvider)),
 		AnalysisModel: cfg.ExternalLLMAnalysisModel,
 		PoCModel:      cfg.ExternalLLMPoCModel,
-		Fallback:      cfg.ExternalLLMFallback,
+		Fallback:      strings.ToLower(strings.TrimSpace(cfg.ExternalLLMFallback)),
 	}
 	if project != nil {
 		if project.AgentProvider != nil && *project.AgentProvider != "" {
-			result.Provider = *project.AgentProvider
+			result.Provider = strings.ToLower(strings.TrimSpace(*project.AgentProvider))
 		}
 		if project.ExternalLLMAnalysisModel != nil && *project.ExternalLLMAnalysisModel != "" {
 			result.AnalysisModel = *project.ExternalLLMAnalysisModel
@@ -116,9 +116,13 @@ func resolveExternalLLMDirect(ctx context.Context, queries *db.Queries, enc *cry
 	if key == "" && cfg.ExternalLLMAPIKeyFile != "" {
 		keyData, err := os.ReadFile(cfg.ExternalLLMAPIKeyFile)
 		if err != nil {
-			return ExternalLLMCredentials{}, fmt.Errorf("read external LLM API key file: %w", err)
+			if !os.IsNotExist(err) {
+				return ExternalLLMCredentials{}, fmt.Errorf("read external LLM API key file: %w", err)
+			}
+			// File does not exist — treat as "not configured".
+		} else {
+			key = strings.TrimSpace(string(keyData))
 		}
-		key = strings.TrimSpace(string(keyData))
 	}
 	ep := cfg.ExternalLLMEndpoint
 	if key != "" && ep != "" {
@@ -177,57 +181,4 @@ func resolveAnthropicAPIKey(ctx context.Context, queries *db.Queries, enc *crypt
 	}
 
 	return "", fmt.Errorf("no Anthropic API key configured")
-}
-
-// resolveExternalLLMAPIKey determines which external LLM API key to use for an analysis.
-// Resolution order:
-//  1. Project-specific key stored encrypted in the database (provider = "external_llm").
-//  2. Global ExternalLLMAPIKey / ExternalLLMAPIKeyFile from config (if project allows global key).
-func resolveExternalLLMAPIKey(ctx context.Context, queries *db.Queries, enc *crypto.Encryptor, cfg *config.Config, analysis *models.Analysis) (string, error) {
-	if queries != nil && enc != nil && analysis != nil && analysis.ProjectID != "" {
-		k, err := queries.GetActiveProviderKey(ctx, analysis.ProjectID, "external_llm")
-		if err == nil {
-			dek, err := enc.UnwrapDEK(k.EncryptedDEK, k.DEKNonce)
-			if err != nil {
-				return "", fmt.Errorf("unwrap project external LLM key DEK: %w", err)
-			}
-			pt, err := crypto.Decrypt(dek, k.EncryptedKey)
-			if err != nil {
-				return "", fmt.Errorf("decrypt project external LLM key: %w", err)
-			}
-			key := strings.TrimSpace(string(pt))
-			if key != "" {
-				return key, nil
-			}
-		}
-		if err != nil && err != pgx.ErrNoRows {
-			return "", fmt.Errorf("lookup project external LLM key: %w", err)
-		}
-
-		// No project key found. Check if global key is allowed.
-		project, err := queries.GetProject(ctx, analysis.ProjectID)
-		if err != nil {
-			return "", fmt.Errorf("lookup project: %w", err)
-		}
-		if !project.UsesGlobalKey {
-			return "", fmt.Errorf("project %s does not have an external LLM API key configured", analysis.ProjectID)
-		}
-	}
-
-	// Fall back to global external LLM key.
-	if cfg.ExternalLLMAPIKey != "" {
-		return strings.TrimSpace(cfg.ExternalLLMAPIKey), nil
-	}
-	if cfg.ExternalLLMAPIKeyFile != "" {
-		keyData, err := os.ReadFile(cfg.ExternalLLMAPIKeyFile)
-		if err != nil {
-			return "", fmt.Errorf("read external LLM API key file: %w", err)
-		}
-		k := strings.TrimSpace(string(keyData))
-		if k != "" {
-			return k, nil
-		}
-	}
-
-	return "", fmt.Errorf("no external LLM API key configured")
 }

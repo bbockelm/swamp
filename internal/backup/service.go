@@ -410,6 +410,10 @@ func (s *Service) createTarball(ctx context.Context, w io.Writer) error {
 	// Decrypt enc:v1: config values so the backup is portable across instances.
 	if s.enc != nil {
 		dbDump = decryptConfigValues(dbDump, s.enc)
+		// Decrypt provider keys and signing keys so the backup is portable
+		// across instances with different INSTANCE_KEY values.
+		dbDump = decryptProviderKeys(dbDump, s.enc)
+		dbDump = decryptSigningKeys(dbDump, s.enc)
 	}
 	if err := addToTar(tw, "database.sql", dbDump); err != nil {
 		return fmt.Errorf("adding database dump: %w", err)
@@ -612,6 +616,225 @@ func decryptConfigValues(dump []byte, enc *crypto.Encryptor) []byte {
 	return bytes.Join(lines, []byte("\n"))
 }
 
+// decryptProviderKeys decrypts envelope-encrypted API keys in the
+// project_provider_keys COPY block. Each row's encrypted_key is decrypted
+// using its per-row DEK (unwrapped via the instance KEK), and the plaintext
+// replaces encrypted_key. The encrypted_dek and dek_nonce columns are NULLed.
+func decryptProviderKeys(dump []byte, enc *crypto.Encryptor) []byte {
+	return decryptEnvelopeCopyBlock(dump, enc,
+		"project_provider_keys",
+		"encrypted_key", "encrypted_dek", "dek_nonce",
+	)
+}
+
+// decryptSigningKeys decrypts envelope-encrypted private keys in the
+// oauth2_signing_keys COPY block. The decrypted PEM is written back to
+// private_key_pem and encrypted_private_key/encrypted_dek/dek_nonce are NULLed.
+func decryptSigningKeys(dump []byte, enc *crypto.Encryptor) []byte {
+	lines := bytes.Split(dump, []byte("\n"))
+	inCopy := false
+	var privPEMCol, encPrivCol, dekCol, nonceCol = -1, -1, -1, -1
+
+	for i, line := range lines {
+		lineStr := string(line)
+
+		if !inCopy {
+			if (strings.Contains(lineStr, "COPY public.oauth2_signing_keys") ||
+				strings.Contains(lineStr, "COPY oauth2_signing_keys")) &&
+				strings.Contains(lineStr, "FROM stdin") {
+				inCopy = true
+				start := strings.Index(lineStr, "(")
+				end := strings.LastIndex(lineStr, ")")
+				if start >= 0 && end > start {
+					cols := strings.Split(lineStr[start+1:end], ",")
+					for j, col := range cols {
+						switch strings.TrimSpace(col) {
+						case "private_key_pem":
+							privPEMCol = j
+						case "encrypted_private_key":
+							encPrivCol = j
+						case "encrypted_dek":
+							dekCol = j
+						case "dek_nonce":
+							nonceCol = j
+						}
+					}
+				}
+			}
+			continue
+		}
+
+		if bytes.Equal(line, []byte("\\.")) {
+			inCopy = false
+			privPEMCol, encPrivCol, dekCol, nonceCol = -1, -1, -1, -1
+			continue
+		}
+		if len(line) == 0 {
+			continue
+		}
+
+		fields := bytes.Split(line, []byte("\t"))
+		if dekCol < 0 || dekCol >= len(fields) || encPrivCol < 0 || encPrivCol >= len(fields) {
+			continue
+		}
+		if bytes.Equal(fields[dekCol], []byte("\\N")) {
+			continue // already plaintext or no key
+		}
+
+		encDEK := decodeCopyBytea(fields[dekCol])
+		nonce := decodeCopyBytea(fields[nonceCol])
+		encData := decodeCopyBytea(fields[encPrivCol])
+		if encDEK == nil || nonce == nil || encData == nil {
+			continue
+		}
+
+		dek, err := enc.UnwrapDEK(encDEK, nonce)
+		if err != nil {
+			log.Warn().Err(err).Msg("Backup: failed to unwrap signing key DEK")
+			continue
+		}
+		plaintext, err := crypto.Decrypt(dek, encData)
+		if err != nil {
+			log.Warn().Err(err).Msg("Backup: failed to decrypt signing key")
+			continue
+		}
+
+		// Write decrypted PEM back to private_key_pem, NULL out encryption columns.
+		if privPEMCol >= 0 && privPEMCol < len(fields) {
+			fields[privPEMCol] = escapeCopyText(plaintext)
+		}
+		fields[encPrivCol] = []byte("\\N")
+		fields[dekCol] = []byte("\\N")
+		if nonceCol >= 0 && nonceCol < len(fields) {
+			fields[nonceCol] = []byte("\\N")
+		}
+		lines[i] = bytes.Join(fields, []byte("\t"))
+	}
+
+	return bytes.Join(lines, []byte("\n"))
+}
+
+// decryptEnvelopeCopyBlock is a generic helper that decrypts envelope-encrypted
+// BYTEA columns in a pg_dump COPY block. It replaces the ciphertext column
+// with the plaintext and NULLs the DEK/nonce columns.
+func decryptEnvelopeCopyBlock(dump []byte, enc *crypto.Encryptor, tableName, ciphertextCol, dekColName, nonceColName string) []byte {
+	lines := bytes.Split(dump, []byte("\n"))
+	inCopy := false
+	var ctCol, dekCol, nonceCol = -1, -1, -1
+
+	for i, line := range lines {
+		lineStr := string(line)
+
+		if !inCopy {
+			if (strings.Contains(lineStr, "COPY public."+tableName) ||
+				strings.Contains(lineStr, "COPY "+tableName)) &&
+				strings.Contains(lineStr, "FROM stdin") {
+				inCopy = true
+				start := strings.Index(lineStr, "(")
+				end := strings.LastIndex(lineStr, ")")
+				if start >= 0 && end > start {
+					cols := strings.Split(lineStr[start+1:end], ",")
+					for j, col := range cols {
+						switch strings.TrimSpace(col) {
+						case ciphertextCol:
+							ctCol = j
+						case dekColName:
+							dekCol = j
+						case nonceColName:
+							nonceCol = j
+						}
+					}
+				}
+			}
+			continue
+		}
+
+		if bytes.Equal(line, []byte("\\.")) {
+			inCopy = false
+			ctCol, dekCol, nonceCol = -1, -1, -1
+			continue
+		}
+		if len(line) == 0 {
+			continue
+		}
+
+		fields := bytes.Split(line, []byte("\t"))
+		if dekCol < 0 || dekCol >= len(fields) || ctCol < 0 || ctCol >= len(fields) {
+			continue
+		}
+		if bytes.Equal(fields[dekCol], []byte("\\N")) {
+			continue // already plaintext or NULL
+		}
+
+		encDEK := decodeCopyBytea(fields[dekCol])
+		nonce := decodeCopyBytea(fields[nonceCol])
+		encData := decodeCopyBytea(fields[ctCol])
+		if encDEK == nil || nonce == nil || encData == nil {
+			continue
+		}
+
+		dek, err := enc.UnwrapDEK(encDEK, nonce)
+		if err != nil {
+			log.Warn().Err(err).Str("table", tableName).Msg("Backup: failed to unwrap DEK")
+			continue
+		}
+		plaintext, err := crypto.Decrypt(dek, encData)
+		if err != nil {
+			log.Warn().Err(err).Str("table", tableName).Msg("Backup: failed to decrypt data")
+			continue
+		}
+
+		// Replace ciphertext with plaintext, NULL out DEK/nonce.
+		fields[ctCol] = encodeCopyBytea(plaintext)
+		fields[dekCol] = []byte("\\N")
+		if nonceCol >= 0 && nonceCol < len(fields) {
+			fields[nonceCol] = []byte("\\N")
+		}
+		lines[i] = bytes.Join(fields, []byte("\t"))
+	}
+
+	return bytes.Join(lines, []byte("\n"))
+}
+
+// decodeCopyBytea decodes a COPY-format bytea value (\x<hex>) to raw bytes.
+func decodeCopyBytea(field []byte) []byte {
+	s := string(field)
+	if !strings.HasPrefix(s, "\\x") {
+		return nil
+	}
+	b, err := hex.DecodeString(s[2:])
+	if err != nil {
+		return nil
+	}
+	return b
+}
+
+// encodeCopyBytea encodes raw bytes to COPY-format bytea (\x<hex>).
+func encodeCopyBytea(data []byte) []byte {
+	return []byte("\\x" + hex.EncodeToString(data))
+}
+
+// escapeCopyText escapes a byte slice for use as a TEXT field in a COPY block.
+// Backslashes, tabs, newlines, and carriage returns must be escaped.
+func escapeCopyText(data []byte) []byte {
+	var buf bytes.Buffer
+	for _, b := range data {
+		switch b {
+		case '\\':
+			buf.WriteString("\\\\")
+		case '\t':
+			buf.WriteString("\\t")
+		case '\n':
+			buf.WriteString("\\n")
+		case '\r':
+			buf.WriteString("\\r")
+		default:
+			buf.WriteByte(b)
+		}
+	}
+	return buf.Bytes()
+}
+
 // sensitiveConfigKeys lists app_config keys whose values are encrypted with
 // the instance's configKEK. On restore these are re-encrypted with the new key.
 var sensitiveConfigKeys = []string{
@@ -639,6 +862,112 @@ func (s *Service) reencryptConfigValues(ctx context.Context) error {
 		}
 		if err := s.queries.SetAppConfig(ctx, key, encrypted); err != nil {
 			log.Error().Err(err).Str("key", key).Msg("Failed to save re-encrypted config value")
+		}
+	}
+	return nil
+}
+
+// reencryptProviderKeys re-encrypts project_provider_keys rows that have
+// plaintext data and NULL DEK columns (i.e. restored from a portable backup).
+func (s *Service) reencryptProviderKeys(ctx context.Context) error {
+	rows, err := s.queries.Pool().Query(ctx, `
+		SELECT id, encrypted_key FROM project_provider_keys
+		WHERE encrypted_dek IS NULL AND encrypted_key IS NOT NULL`)
+	if err != nil {
+		return fmt.Errorf("query unencrypted provider keys: %w", err)
+	}
+	defer rows.Close()
+
+	type keyRow struct {
+		id           string
+		plaintextKey []byte
+	}
+	var toEncrypt []keyRow
+	for rows.Next() {
+		var kr keyRow
+		if err := rows.Scan(&kr.id, &kr.plaintextKey); err != nil {
+			continue
+		}
+		if len(kr.plaintextKey) == 0 {
+			continue
+		}
+		toEncrypt = append(toEncrypt, kr)
+	}
+
+	for _, kr := range toEncrypt {
+		dek, err := crypto.GenerateDEK()
+		if err != nil {
+			log.Error().Err(err).Str("key_id", kr.id).Msg("Failed to generate DEK for provider key")
+			continue
+		}
+		encKey, err := crypto.Encrypt(dek, kr.plaintextKey)
+		if err != nil {
+			log.Error().Err(err).Str("key_id", kr.id).Msg("Failed to encrypt provider key")
+			continue
+		}
+		wrappedDEK, nonce, err := s.enc.WrapDEK(dek)
+		if err != nil {
+			log.Error().Err(err).Str("key_id", kr.id).Msg("Failed to wrap provider key DEK")
+			continue
+		}
+		if _, err := s.queries.Pool().Exec(ctx,
+			`UPDATE project_provider_keys SET encrypted_key = $2, encrypted_dek = $3, dek_nonce = $4 WHERE id = $1`,
+			kr.id, encKey, wrappedDEK, nonce); err != nil {
+			log.Error().Err(err).Str("key_id", kr.id).Msg("Failed to save re-encrypted provider key")
+		}
+	}
+	return nil
+}
+
+// reencryptSigningKeys re-encrypts OAuth2 signing keys that have plaintext
+// private_key_pem and NULL encryption columns (i.e. restored from a portable backup).
+func (s *Service) reencryptSigningKeys(ctx context.Context) error {
+	rows, err := s.queries.Pool().Query(ctx, `
+		SELECT id, private_key_pem FROM oauth2_signing_keys
+		WHERE encrypted_dek IS NULL AND private_key_pem != '' AND private_key_pem IS NOT NULL`)
+	if err != nil {
+		return fmt.Errorf("query unencrypted signing keys: %w", err)
+	}
+	defer rows.Close()
+
+	type skRow struct {
+		id     string
+		pemStr string
+	}
+	var toEncrypt []skRow
+	for rows.Next() {
+		var sr skRow
+		if err := rows.Scan(&sr.id, &sr.pemStr); err != nil {
+			continue
+		}
+		if sr.pemStr == "" {
+			continue
+		}
+		toEncrypt = append(toEncrypt, sr)
+	}
+
+	for _, sr := range toEncrypt {
+		dek, err := crypto.GenerateDEK()
+		if err != nil {
+			log.Error().Err(err).Str("key_id", sr.id).Msg("Failed to generate DEK for signing key")
+			continue
+		}
+		encPEM, err := crypto.Encrypt(dek, []byte(sr.pemStr))
+		if err != nil {
+			log.Error().Err(err).Str("key_id", sr.id).Msg("Failed to encrypt signing key PEM")
+			continue
+		}
+		wrappedDEK, nonce, err := s.enc.WrapDEK(dek)
+		if err != nil {
+			log.Error().Err(err).Str("key_id", sr.id).Msg("Failed to wrap signing key DEK")
+			continue
+		}
+		if _, err := s.queries.Pool().Exec(ctx,
+			`UPDATE oauth2_signing_keys
+			 SET private_key_pem = '', encrypted_private_key = $2, encrypted_dek = $3, dek_nonce = $4
+			 WHERE id = $1`,
+			sr.id, encPEM, wrappedDEK, nonce); err != nil {
+			log.Error().Err(err).Str("key_id", sr.id).Msg("Failed to save re-encrypted signing key")
 		}
 	}
 	return nil
@@ -832,6 +1161,14 @@ func (s *Service) restoreFromData(ctx context.Context, data []byte, encrypted bo
 	if s.enc != nil {
 		if err := s.reencryptConfigValues(ctx); err != nil {
 			log.Warn().Err(err).Msg("Failed to re-encrypt config values")
+		}
+		// 3a. Re-encrypt provider keys with this instance's KEK.
+		if err := s.reencryptProviderKeys(ctx); err != nil {
+			log.Warn().Err(err).Msg("Failed to re-encrypt provider keys")
+		}
+		// 3b. Re-encrypt OAuth2 signing keys with this instance's KEK.
+		if err := s.reencryptSigningKeys(ctx); err != nil {
+			log.Warn().Err(err).Msg("Failed to re-encrypt signing keys")
 		}
 	}
 

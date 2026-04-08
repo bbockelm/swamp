@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -241,6 +242,18 @@ func (wh *WorkerHandler) ProxyLLM(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// SSRF protection: require https and reject private/loopback addresses.
+	if target.Scheme != "https" {
+		log.Error().Str("endpoint", endpointURL).Msg("LLM proxy: endpoint must use https")
+		http.Error(w, "Upstream endpoint must use https", http.StatusBadRequest)
+		return
+	}
+	if err := validateNotPrivateHost(target.Hostname()); err != nil {
+		log.Error().Err(err).Str("endpoint", endpointURL).Msg("LLM proxy: SSRF blocked")
+		http.Error(w, "Upstream endpoint not allowed", http.StatusBadRequest)
+		return
+	}
+
 	proxy := &httputil.ReverseProxy{
 		Director: func(req *http.Request) {
 			req.URL.Scheme = target.Scheme
@@ -334,6 +347,25 @@ func singleJoiningSlash(a, b string) string {
 		return a + "/" + b
 	}
 	return a + b
+}
+
+// validateNotPrivateHost resolves hostname to IP addresses and rejects
+// loopback, private, and link-local addresses to prevent SSRF.
+func validateNotPrivateHost(hostname string) error {
+	ips, err := net.LookupHost(hostname)
+	if err != nil {
+		return fmt.Errorf("DNS lookup failed for %q: %w", hostname, err)
+	}
+	for _, ipStr := range ips {
+		ip := net.ParseIP(ipStr)
+		if ip == nil {
+			return fmt.Errorf("invalid IP %q for host %q", ipStr, hostname)
+		}
+		if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsUnspecified() {
+			return fmt.Errorf("host %q resolves to private/loopback address %s", hostname, ipStr)
+		}
+	}
+	return nil
 }
 
 // StreamOutput handles POST /api/v1/internal/worker/stream.
