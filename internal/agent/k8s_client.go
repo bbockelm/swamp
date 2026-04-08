@@ -560,16 +560,6 @@ func parseLeafCertificate(chain [][]byte) *x509.Certificate {
 	return leaf
 }
 
-func findNamedValue[T any](items []T, name string, key func(T) string) (T, error) {
-	var zero T
-	for _, item := range items {
-		if key(item) == name {
-			return item, nil
-		}
-	}
-	return zero, fmt.Errorf("entry %q not found", name)
-}
-
 func truncateBody(b []byte) string {
 	s := string(b)
 	if len(s) > 500 {

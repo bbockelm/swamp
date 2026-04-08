@@ -97,8 +97,10 @@ type Config struct {
 	K8sWorkerNodeSelector   string `envconfig:"K8S_WORKER_NODE_SELECTOR" default:""` // key=value,key2=value2
 	K8sWorkerTolerations    string `envconfig:"K8S_WORKER_TOLERATIONS" default:""`   // key=value:effect,...
 	K8sWorkerLabels         string `envconfig:"K8S_WORKER_LABELS" default:""`        // key=value,key2=value2
-	K8sWorkerAnnotations    string `envconfig:"K8S_WORKER_ANNOTATIONS" default:""`   // key=value,key2=value2	K8sImagePullSecret      string `envconfig:"K8S_IMAGE_PULL_SECRET" default:""`    // imagePullSecrets[].name for worker pods
-	K8sServerImage          string `envconfig:"K8S_SERVER_IMAGE" default:""`         // this server's container image (used as default suggestion for worker image)	K8sPodTTLSeconds        int    `envconfig:"K8S_POD_TTL_SECONDS" default:"3600"`  // cleanup after completion via Job TTL
+	K8sWorkerAnnotations    string `envconfig:"K8S_WORKER_ANNOTATIONS" default:""`   // key=value,key2=value2
+	K8sImagePullSecret      string `envconfig:"K8S_IMAGE_PULL_SECRET" default:""`    // imagePullSecrets[].name for worker pods
+	K8sServerImage          string `envconfig:"K8S_SERVER_IMAGE" default:""`         // this server's container image (used as default suggestion for worker image)
+	K8sPodTTLSeconds        int    `envconfig:"K8S_POD_TTL_SECONDS" default:"3600"`  // cleanup after completion via Job TTL
 	Kubeconfig              string `envconfig:"KUBECONFIG" default:""`               // path to kubeconfig file (if empty, uses in-cluster credentials)
 	// K8sDirectLLM bypasses the SWAMP LLM proxy and passes the real API key and
 	// endpoint URL directly to K8s worker pods. Use in dev environments where
