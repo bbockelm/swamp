@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -19,9 +20,13 @@ import (
 	"github.com/bbockelm/swamp/internal/db"
 	"github.com/bbockelm/swamp/internal/frontend"
 	"github.com/bbockelm/swamp/internal/handlers"
+	swampmcp "github.com/bbockelm/swamp/internal/mcp"
+	swampoauth2 "github.com/bbockelm/swamp/internal/oauth2"
 	"github.com/bbockelm/swamp/internal/openapi"
 	"github.com/bbockelm/swamp/internal/storage"
 	"github.com/bbockelm/swamp/internal/ws"
+	"github.com/ory/fosite"
+	"github.com/ory/fosite/handler/openid"
 )
 
 // New creates the application HTTP router with all routes.
@@ -112,6 +117,87 @@ func New(cfg *config.Config, pool *pgxpool.Pool, store *storage.Store) (*chi.Mux
 
 	// Health check
 	r.Get("/healthz", h.HealthCheck)
+
+	// ---- OAuth2/OIDC Provider (for MCP authentication) ----
+	// Configure extra redirect URI domains from config.
+	if cfg.OAuthExtraRedirectDomains != "" {
+		var domains []string
+		for _, d := range strings.Split(cfg.OAuthExtraRedirectDomains, ",") {
+			d = strings.TrimSpace(d)
+			if d != "" {
+				domains = append(domains, d)
+			}
+		}
+		if len(domains) > 0 {
+			swampoauth2.SetExtraAllowedDomains(domains)
+			log.Info().Strs("domains", domains).Msg("Added extra OAuth2 redirect domains")
+		}
+	}
+
+	var oauthHandlers *swampoauth2.Handlers
+	if cfg.InstanceKey != "" {
+		oauthProvider, err := swampoauth2.NewProvider(
+			context.Background(), pool, cfg.BaseURL, cfg.InstanceKey,
+		)
+		if err != nil {
+			log.Fatal().Err(err).Msg("Failed to initialize OAuth2 provider")
+		}
+
+		getUserFromReq := func(r *http.Request) (string, string, bool) {
+			cookie, err := r.Cookie("swamp_session")
+			if err != nil || cookie.Value == "" {
+				return "", "", false
+			}
+			session, err := queries.GetSession(r.Context(), handlers.HashToken(cookie.Value))
+			if err != nil {
+				return "", "", false
+			}
+			user, err := queries.GetUser(r.Context(), session.UserID)
+			if err != nil || user.Status != "active" {
+				return "", "", false
+			}
+			return user.ID, user.DisplayName, true
+		}
+
+		sessionFactory := func() fosite.Session {
+			return openid.NewDefaultSession()
+		}
+
+		oauthHandlers = swampoauth2.NewHandlers(oauthProvider, cfg.BaseURL, sessionFactory, nil)
+		consent := swampoauth2.NewConsentHandler(oauthHandlers, cfg.BaseURL, getUserFromReq)
+
+		// Set the consent handler on the OAuth2 handlers.
+		oauthHandlers.SetConsentHandler(consent.HandleConsent)
+
+		// Well-known discovery endpoints (no auth required).
+		r.Get("/.well-known/openid-configuration", oauthHandlers.Discovery)
+		r.Get("/.well-known/oauth-authorization-server", oauthHandlers.MCPAuthMetadata)
+		r.Get("/.well-known/oauth-protected-resource", oauthHandlers.MCPResourceMetadata)
+		r.Get("/.well-known/jwks.json", oauthHandlers.JWKS)
+
+		// OAuth2 endpoints (no auth middleware — fosite handles client auth).
+		r.Get("/oauth/authorize", oauthHandlers.Authorize)
+		r.Post("/oauth/authorize", oauthHandlers.Authorize)
+		r.Post("/oauth/token", oauthHandlers.Token)
+		r.Post("/oauth/revoke", oauthHandlers.Revoke)
+		r.Post("/oauth/introspect", oauthHandlers.Introspect)
+
+		// Dynamic client registration (RFC 7591, for MCP clients).
+		r.Post("/oauth/register", oauthHandlers.ClientRegistration)
+
+		// Start background cleanup: delete unused DCR clients after 6 hours,
+		// purge expired tokens, and clean up rate limiter buckets.
+		oauthHandlers.StartCleanupLoop(context.Background(), 6*time.Hour)
+
+		log.Info().Str("issuer", cfg.BaseURL).Msg("OAuth2/OIDC provider enabled")
+
+		// ---- MCP (Model Context Protocol) endpoint ----
+		// Authenticated via OAuth2 bearer tokens; provides tool-based access
+		// to SWAMP projects, analyses, findings, and results.
+		mcpSrv := swampmcp.New(queries, store, enc, oauthProvider, exec, cfg.BaseURL)
+		r.Mount("/mcp", mcpSrv.Handler())
+		log.Info().Msg("MCP endpoint enabled at /mcp")
+	}
 
 	// WebSocket endpoint for live analysis output (unauthenticated WS upgrade,
 	// but only receives broadcast data — no sensitive operations).
@@ -318,6 +404,12 @@ func New(cfg *config.Config, pool *pgxpool.Pool, store *storage.Store) (*chi.Mux
 						r.Delete("/", h.DeleteBackup)
 					})
 				})
+
+				// OAuth2 clients (admin management)
+				if oauthHandlers != nil {
+					r.Get("/oauth-clients", oauthHandlers.ListClients)
+					r.Delete("/oauth-clients", oauthHandlers.DeleteClient)
+				}
 			})
 		})
 

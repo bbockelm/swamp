@@ -360,14 +360,18 @@ func (e *ProcessExecutor) waitProcess(ctx context.Context, cancel context.Cancel
 			log.Info().Int("pid", pid).Str("analysis_id", analysisID).Msg("Worker process completed")
 		}
 	case <-ctx.Done():
-		log.Info().Int("pid", pid).Str("analysis_id", analysisID).Msg("Analysis timed out, terminating worker")
+		log.Info().Int("pid", pid).Str("analysis_id", analysisID).Msg("Analysis timed out, sending SIGTERM for graceful shutdown")
 		_ = syscall.Kill(-pid, syscall.SIGTERM)
+		// Give the worker up to 120s to save progress and upload partial results.
 		select {
 		case <-done:
-		case <-time.After(10 * time.Second):
+			log.Info().Int("pid", pid).Str("analysis_id", analysisID).Msg("Worker exited gracefully after timeout")
+		case <-time.After(120 * time.Second):
+			log.Warn().Int("pid", pid).Str("analysis_id", analysisID).Msg("Worker did not exit within grace period, sending SIGKILL")
 			_ = syscall.Kill(-pid, syscall.SIGKILL)
 			<-done
 		}
+		// Only mark failed if the worker didn't already report its own status.
 		e.failAnalysis(analysisID, "Analysis timed out", nil)
 	}
 }
@@ -484,14 +488,23 @@ func (e *ProcessExecutor) monitorProcess(ctx context.Context, cancel context.Can
 	for {
 		select {
 		case <-ctx.Done():
-			log.Info().Int("pid", pid).Str("analysis_id", analysisID).Msg("Analysis timed out, terminating monitored worker")
+			log.Info().Int("pid", pid).Str("analysis_id", analysisID).Msg("Analysis timed out, sending SIGTERM for graceful shutdown")
 			if pid > 0 {
 				_ = syscall.Kill(-pid, syscall.SIGTERM)
-				time.Sleep(5 * time.Second)
+				// Give the worker up to 120s to save progress.
+				for i := 0; i < 24; i++ {
+					time.Sleep(5 * time.Second)
+					if !lockFileHeld(e.statePath(analysisID)) {
+						log.Info().Int("pid", pid).Str("analysis_id", analysisID).Msg("Worker exited gracefully after timeout")
+						break
+					}
+				}
 				if lockFileHeld(e.statePath(analysisID)) {
+					log.Warn().Int("pid", pid).Str("analysis_id", analysisID).Msg("Worker did not exit within grace period, sending SIGKILL")
 					_ = syscall.Kill(-pid, syscall.SIGKILL)
 				}
 			}
+			// Only mark failed if the worker didn't already report its own status.
 			e.failAnalysis(analysisID, "Analysis timed out", nil)
 			return
 		case <-ticker.C:
@@ -523,7 +536,8 @@ func (e *ProcessExecutor) failAnalysis(analysisID, detail string, err error) {
 	dbCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	a, getErr := e.queries.GetAnalysis(dbCtx, analysisID)
-	if getErr == nil && a.Status == "cancelled" {
+	if getErr == nil && (a.Status == "cancelled" || a.Status == "completed" || a.Status == "timed_out") {
+		// Worker already reported a terminal status; don't overwrite it.
 		return
 	}
 	_ = e.queries.SetAnalysisCompleted(dbCtx, analysisID, "failed", detail)

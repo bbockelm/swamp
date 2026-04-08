@@ -59,7 +59,7 @@ function ElapsedTime({ since }: { since: string }) {
   return <>{m}m {rem}s</>;
 }
 
-type StatusFilter = 'all' | 'running' | 'pending' | 'completed' | 'failed' | 'cancelled';
+type StatusFilter = 'all' | 'running' | 'pending' | 'completed' | 'failed' | 'cancelled' | 'timed_out';
 
 export default function AnalysesPage() {
   const queryClient = useQueryClient();
@@ -96,6 +96,7 @@ export default function AnalysesPage() {
     completed: analyses?.filter((a) => a.status === 'completed').length ?? 0,
     failed: analyses?.filter((a) => a.status === 'failed').length ?? 0,
     cancelled: analyses?.filter((a) => a.status === 'cancelled').length ?? 0,
+    timed_out: analyses?.filter((a) => a.status === 'timed_out').length ?? 0,
   };
 
   return (
@@ -156,7 +157,7 @@ function AnalysisCard({ analysis: a, expanded, onToggle }: { analysis: Analysis;
   const { data: results } = useQuery({
     queryKey: ['analysis-results', a.id],
     queryFn: () => api.analyses.listResults(a.project_id, a.id),
-    enabled: expanded && (a.status === 'completed' || a.status === 'failed'),
+    enabled: expanded && (a.status === 'completed' || a.status === 'failed' || a.status === 'timed_out'),
   });
 
   const resubmit = useMutation({
@@ -172,7 +173,7 @@ function AnalysisCard({ analysis: a, expanded, onToggle }: { analysis: Analysis;
       queryClient.invalidateQueries({ queryKey: ['analyses', 'all'] });
     },
   });
-  const canResubmit = a.status === 'completed' || a.status === 'failed' || a.status === 'cancelled';
+  const canResubmit = a.status === 'completed' || a.status === 'failed' || a.status === 'cancelled' || a.status === 'timed_out';
   const canCancel = a.status === 'running' || a.status === 'pending';
 
   const sarifResult = results?.find((r) => r.result_type === 'sarif');
@@ -259,7 +260,7 @@ function AnalysisCard({ analysis: a, expanded, onToggle }: { analysis: Analysis;
             {a.completed_at && (
               <div>
                 <span className="text-xs text-gray-500 uppercase">
-                  {a.status === 'cancelled' ? 'Cancelled' : 'Completed'}
+                  {a.status === 'cancelled' ? 'Cancelled' : a.status === 'timed_out' ? 'Timed Out' : 'Completed'}
                 </span>
                 <p>{new Date(a.completed_at).toLocaleString()}</p>
                 {a.started_at && (

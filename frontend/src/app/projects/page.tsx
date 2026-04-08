@@ -1023,7 +1023,7 @@ function AnalysisCard({
     queryFn: () => api.analyses.listResults(projectId, analysis.id),
     enabled:
       expanded &&
-      (analysis.status === "completed" || analysis.status === "failed"),
+      (analysis.status === "completed" || analysis.status === "failed" || analysis.status === "timed_out"),
   });
 
   const cancelMutation = useMutation({
@@ -1129,7 +1129,7 @@ function AnalysisCard({
             {analysis.completed_at && (
               <div>
                 <span className="text-xs text-gray-500 uppercase">
-                  {analysis.status === "cancelled" ? "Cancelled" : "Completed"}
+                  {analysis.status === "cancelled" ? "Cancelled" : analysis.status === "timed_out" ? "Timed Out" : "Completed"}
                 </span>
                 <p>{new Date(analysis.completed_at).toLocaleString()}</p>
                 {analysis.started_at && (

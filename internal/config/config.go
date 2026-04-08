@@ -47,6 +47,9 @@ type Config struct {
 	// Instance encryption key
 	InstanceKey string `envconfig:"INSTANCE_KEY" default:""`
 
+	// Extra allowed HTTPS domains for OAuth2 DCR redirect URIs (comma-separated).
+	OAuthExtraRedirectDomains string `envconfig:"OAUTH_EXTRA_REDIRECT_DOMAINS" default:""`
+
 	// Agent settings
 	AgentBinary           string        `envconfig:"AGENT_BINARY" default:"claude"`
 	AgentModel            string        `envconfig:"AGENT_MODEL" default:""`

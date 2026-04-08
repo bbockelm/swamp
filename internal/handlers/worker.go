@@ -236,7 +236,7 @@ func (wh *WorkerHandler) UpdateStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	switch req.Status {
-	case "running", "completed", "failed":
+	case "running", "completed", "failed", "timed_out":
 	default:
 		respondError(w, http.StatusBadRequest, "Invalid status: "+req.Status)
 		return
@@ -262,6 +262,11 @@ func (wh *WorkerHandler) UpdateStatus(w http.ResponseWriter, r *http.Request) {
 	case "failed":
 		if err := wh.h.queries.SetAnalysisCompleted(r.Context(), req.AnalysisID, "failed", req.Detail); err != nil {
 			log.Error().Err(err).Msg("Failed to mark analysis failed")
+		}
+		wh.hub.CloseRoom(req.AnalysisID)
+	case "timed_out":
+		if err := wh.h.queries.SetAnalysisCompleted(r.Context(), req.AnalysisID, "timed_out", req.Detail); err != nil {
+			log.Error().Err(err).Msg("Failed to mark analysis timed out")
 		}
 		wh.hub.CloseRoom(req.AnalysisID)
 	default:

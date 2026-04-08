@@ -18,6 +18,18 @@ const nextConfig = {
         source: "/ws/:path*",
         destination: "http://localhost:8080/ws/:path*",
       },
+      {
+        source: "/.well-known/:path*",
+        destination: "http://localhost:8080/.well-known/:path*",
+      },
+      {
+        source: "/oauth/:path*",
+        destination: "http://localhost:8080/oauth/:path*",
+      },
+      {
+        source: "/mcp",
+        destination: "http://localhost:8080/mcp",
+      },
     ];
   },
 };

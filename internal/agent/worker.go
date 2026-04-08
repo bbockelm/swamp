@@ -11,9 +11,11 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/rs/zerolog/log"
@@ -114,6 +116,11 @@ func RunWorker(cfg *config.Config) error {
 	// Create a streamer that posts output lines to the server.
 	streamer := newWorkerStreamer(serverURL, sessionToken, analysisID)
 
+	// Set up graceful shutdown: catch SIGTERM/SIGINT so we can save
+	// progress (upload partial results) before the process is killed.
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
+
 	// Run Phase 1.
 	reportStatus(serverURL, sessionToken, analysisID, "running", "Phase 1: Security analysis")
 	streamer.send("[system] Starting Phase 1: Security analysis")
@@ -121,7 +128,45 @@ func RunWorker(cfg *config.Config) error {
 	ctx, cancel := context.WithTimeout(context.Background(), cfg.MaxAnalysisDuration)
 	defer cancel()
 
+	// Monitor for shutdown signals in a background goroutine.
+	// When received, cancel the agent context so it exits quickly,
+	// then the main flow will upload partial results.
+	shuttingDown := make(chan struct{})
+	go func() {
+		select {
+		case sig := <-sigCh:
+			close(shuttingDown)
+			log.Info().Str("signal", sig.String()).Msg("Received shutdown signal, saving progress...")
+			streamer.send("[system] Shutdown signal received — saving progress...")
+			cancel() // kills the running agent process
+		case <-ctx.Done():
+			// Context expired naturally or was cancelled elsewhere.
+		}
+	}()
+
+	// isShuttingDown returns true if we received a shutdown signal.
+	isShuttingDown := func() bool {
+		select {
+		case <-shuttingDown:
+			return true
+		default:
+			return false
+		}
+	}
+
 	if err := runWorkerAgent(ctx, cfg, session, workDir, prompt, streamer); err != nil {
+		if isShuttingDown() || ctx.Err() != nil {
+			// Timed out or received shutdown signal — save partial results.
+			streamer.send("[system] Analysis interrupted — uploading partial results...")
+			// Use a fresh context for uploads so they're not cancelled.
+			_ = uploadResults(serverURL, sessionToken, analysisID, outputDir)
+			reportStatus(serverURL, sessionToken, analysisID, "timed_out",
+				"Analysis timed out — partial results saved")
+			streamer.send("[system] Partial results saved")
+			streamer.flush()
+			log.Info().Str("analysis_id", analysisID).Msg("Worker saved partial results after timeout/shutdown")
+			return nil // Exit cleanly so parent doesn't mark as crashed.
+		}
 		reportStatus(serverURL, sessionToken, analysisID, "failed", "Agent execution failed (Phase 1): "+err.Error())
 		_ = uploadResults(serverURL, sessionToken, analysisID, outputDir)
 		return err
@@ -136,6 +181,20 @@ func RunWorker(cfg *config.Config) error {
 		return fmt.Errorf("agent produced no output")
 	}
 
+	// Check for shutdown before starting Phase 2.
+	if isShuttingDown() {
+		streamer.send("[system] Shutdown signal received — skipping Phase 2, uploading results...")
+		_ = uploadResults(serverURL, sessionToken, analysisID, outputDir)
+		gitCommit := ""
+		if shaBytes, err := os.ReadFile(filepath.Join(outputDir, "git_sha.txt")); err == nil {
+			gitCommit = strings.TrimSpace(string(shaBytes))
+		}
+		reportCompletion(serverURL, sessionToken, analysisID, gitCommit)
+		streamer.send("[system] Analysis complete (Phase 2 skipped due to shutdown)")
+		streamer.flush()
+		return nil
+	}
+
 	// Run Phase 2 if Phase 1 produced SARIF.
 	sarifPath := filepath.Join(outputDir, "results.sarif")
 	if _, err := os.Stat(sarifPath); err == nil {
@@ -144,6 +203,9 @@ func RunWorker(cfg *config.Config) error {
 		pkg := packageInfoToSoftwarePackage(session.Packages[0])
 		phase2Prompt := BuildPrompt(&pkg, "phase2", "", nil)
 		if err := runWorkerAgent(ctx, cfg, session, workDir, phase2Prompt, streamer); err != nil {
+			if isShuttingDown() || ctx.Err() != nil {
+				streamer.send("[system] Phase 2 interrupted — uploading results...")
+			}
 			log.Warn().Err(err).Msg("Phase 2 failed (non-fatal)")
 		}
 	}

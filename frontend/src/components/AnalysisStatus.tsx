@@ -6,6 +6,7 @@ const statusConfig: Record<
   running: { label: 'Running', color: 'text-blue-800', bg: 'bg-blue-100' },
   completed: { label: 'Completed', color: 'text-green-800', bg: 'bg-green-100' },
   failed: { label: 'Failed', color: 'text-red-800', bg: 'bg-red-100' },
+  timed_out: { label: 'Timed Out', color: 'text-orange-800', bg: 'bg-orange-100' },
   cancelled: { label: 'Cancelled', color: 'text-gray-800', bg: 'bg-gray-100' },
 };
 

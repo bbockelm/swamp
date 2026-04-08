@@ -417,7 +417,7 @@ func (e *K8sExecutor) syncLoop(ctx context.Context) {
 	}
 }
 
-// failAnalysis marks an analysis as failed.
+// failAnalysis marks an analysis as failed, unless it already has a terminal status.
 func (e *K8sExecutor) failAnalysis(analysisID, detail string, err error) {
 	errMsg := ""
 	if err != nil {
@@ -427,7 +427,7 @@ func (e *K8sExecutor) failAnalysis(analysisID, detail string, err error) {
 	dbCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	a, getErr := e.queries.GetAnalysis(dbCtx, analysisID)
-	if getErr == nil && a.Status == "cancelled" {
+	if getErr == nil && (a.Status == "cancelled" || a.Status == "completed" || a.Status == "timed_out") {
 		return
 	}
 	_ = e.queries.SetAnalysisCompleted(dbCtx, analysisID, "failed", errMsg)

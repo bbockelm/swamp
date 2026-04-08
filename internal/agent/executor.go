@@ -266,6 +266,16 @@ func (e *Executor) run(analysis *models.Analysis, packages []models.SoftwarePack
 	}
 	e.hub.Broadcast(analysis.ID, []byte("[system] Starting Phase 1: Security analysis"))
 	if err := e.runAgent(ctx, workDir, prompt, analysis.ID, anthropicKey, analysis.AgentModel); err != nil {
+		if ctx.Err() != nil {
+			// Context expired (timeout or shutdown cancellation) — partial
+			// results will be uploaded by the deferred uploadOutputDir.
+			e.hub.Broadcast(analysis.ID, []byte("[system] Analysis timed out — saving partial results..."))
+			dbCtx, dbCancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer dbCancel()
+			_ = e.queries.SetAnalysisCompleted(dbCtx, analysis.ID, "timed_out",
+				"Analysis timed out — partial results saved")
+			return
+		}
 		e.failAnalysis(ctx, analysis.ID, "Agent execution failed (Phase 1)", err)
 		return
 	}
@@ -279,13 +289,18 @@ func (e *Executor) run(analysis *models.Analysis, packages []models.SoftwarePack
 		e.hub.Broadcast(analysis.ID, []byte("[system] Starting Phase 2: Exploit validation"))
 		phase2Prompt := BuildPrompt(&packages[0], "phase2", "", nil)
 		if err := e.runAgent(ctx, workDir, phase2Prompt, analysis.ID, anthropicKey, analysis.AgentModel); err != nil {
-			// Phase 2 failure is non-fatal; log and continue.
+			if ctx.Err() != nil {
+				// Timeout during Phase 2 — Phase 1 results are still valid.
+				e.hub.Broadcast(analysis.ID, []byte("[system] Phase 2 timed out — saving Phase 1 results..."))
+			}
 			log.Warn().Err(err).Str("analysis_id", analysis.ID).Msg("Phase 2 (exploit validation) failed")
 		}
 	}
 
-	// Mark completed.
-	if err := e.queries.SetAnalysisCompleted(ctx, analysis.ID, "completed", ""); err != nil {
+	// Mark completed (use a fresh context in case the original expired during Phase 2).
+	completeCtx, completeCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer completeCancel()
+	if err := e.queries.SetAnalysisCompleted(completeCtx, analysis.ID, "completed", ""); err != nil {
 		log.Error().Err(err).Str("analysis_id", analysis.ID).Msg("Failed to mark analysis completed")
 	}
 	e.hub.Broadcast(analysis.ID, []byte("[system] Analysis complete"))
@@ -396,7 +411,7 @@ func (e *Executor) runAgent(ctx context.Context, workDir, prompt string, analysi
 	return err
 }
 
-// failAnalysis marks an analysis as failed, unless it was already cancelled.
+// failAnalysis marks an analysis as failed, unless it already has a terminal status.
 func (e *Executor) failAnalysis(ctx context.Context, analysisID, detail string, err error) {
 	errMsg := ""
 	if err != nil {
@@ -406,10 +421,10 @@ func (e *Executor) failAnalysis(ctx context.Context, analysisID, detail string, 
 	// Use a fresh context in case the original was cancelled (e.g. shutdown).
 	dbCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	// Don't overwrite "cancelled" status set by the handler.
+	// Don't overwrite terminal statuses (cancelled, completed, timed_out).
 	a, getErr := e.queries.GetAnalysis(dbCtx, analysisID)
-	if getErr == nil && a.Status == "cancelled" {
-		log.Info().Str("analysis_id", analysisID).Msg("Analysis already cancelled, not overwriting status")
+	if getErr == nil && (a.Status == "cancelled" || a.Status == "completed" || a.Status == "timed_out") {
+		log.Info().Str("analysis_id", analysisID).Str("status", a.Status).Msg("Analysis already in terminal status, not overwriting")
 	} else {
 		_ = e.queries.SetAnalysisCompleted(dbCtx, analysisID, "failed", errMsg)
 	}

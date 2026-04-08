@@ -51,7 +51,8 @@ export default function AnalysisDetailClient() {
   const isTerminal =
     analysis?.status === "completed" ||
     analysis?.status === "failed" ||
-    analysis?.status === "cancelled";
+    analysis?.status === "cancelled" ||
+    analysis?.status === "timed_out";
 
   // Poll executor liveness for active jobs to detect stale states.
   const { data: liveness } = useQuery({
@@ -103,7 +104,8 @@ export default function AnalysisDetailClient() {
   const canResubmit =
     analysis.status === "completed" ||
     analysis.status === "failed" ||
-    analysis.status === "cancelled";
+    analysis.status === "cancelled" ||
+    analysis.status === "timed_out";
 
   const sarifResult = results?.find((r) => r.result_type === "sarif");
   const markdownResult = results?.find(
@@ -607,7 +609,7 @@ function TerminalStream({
       >
         {lines.length === 0 ? (
           <div className="text-gray-500 italic text-sm flex items-center gap-2">
-            {analysisStatus === "failed" || analysisStatus === "cancelled" ? (
+            {analysisStatus === "failed" || analysisStatus === "cancelled" || analysisStatus === "timed_out" ? (
               <>Worker exited before producing output.</>
             ) : status === "connecting" ? (
               <>Connecting to analysis stream...</>

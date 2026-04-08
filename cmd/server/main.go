@@ -182,10 +182,10 @@ func run() error {
 	exec.Shutdown(shutdownCtx)
 
 	if err := srv.Shutdown(shutdownCtx); err != nil {
-		return fmt.Errorf("server shutdown: %w", err)
+		log.Warn().Err(err).Msg("Server shutdown with pending connections (connections force-closed)")
+	} else {
+		log.Info().Msg("Server stopped gracefully")
 	}
-
-	log.Info().Msg("Server stopped gracefully")
 	return nil
 }
 

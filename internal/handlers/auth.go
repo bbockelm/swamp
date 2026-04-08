@@ -69,6 +69,11 @@ func hashToken(token string) []byte {
 	return h[:]
 }
 
+// HashToken is the exported version of hashToken for use by other packages.
+func HashToken(token string) []byte {
+	return hashToken(token)
+}
+
 // generateToken creates a cryptographically random token and its SHA-256 hash.
 func generateToken() (rawToken string, tokenHash []byte, err error) {
 	buf := make([]byte, sessionTokenBytes)
