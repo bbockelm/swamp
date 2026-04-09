@@ -321,6 +321,7 @@ type ProjectProviderKey struct {
 	Label        string     `json:"label"`
 	KeyHint      string     `json:"key_hint"`
 	EndpointURL  string     `json:"endpoint_url,omitempty"` // endpoint URL for custom, nrp, or external_llm providers
+	APISchema    string     `json:"api_schema"`             // "anthropic" or "openai"
 	EncryptedKey []byte     `json:"-"`
 	EncryptedDEK []byte     `json:"-"`
 	DEKNonce     []byte     `json:"-"`
@@ -328,4 +329,42 @@ type ProjectProviderKey struct {
 	CreatedBy    string     `json:"created_by"`
 	CreatedAt    time.Time  `json:"created_at"`
 	RevokedAt    *time.Time `json:"revoked_at,omitempty"`
+}
+
+// LLMProvider is a global LLM provider configured by an admin.
+type LLMProvider struct {
+	ID           string    `json:"id"`
+	Label        string    `json:"label"`
+	APISchema    string    `json:"api_schema"` // "anthropic" or "openai"
+	BaseURL      string    `json:"base_url"`
+	DefaultModel string    `json:"default_model"`
+	KeyHint      string    `json:"key_hint"`
+	EncryptedKey []byte    `json:"-"`
+	EncryptedDEK []byte    `json:"-"`
+	DEKNonce     []byte    `json:"-"`
+	Enabled      bool      `json:"enabled"`
+	CreatedBy    string    `json:"created_by"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+}
+
+// AvailableProvider is a unified view of a provider available for analysis.
+// It can come from either a global LLM provider or a project provider key.
+type AvailableProvider struct {
+	ID           string `json:"id"`
+	Source       string `json:"source"`        // "global", "project", or "env"
+	Label        string `json:"label"`
+	APISchema    string `json:"api_schema"`    // "anthropic" or "openai"
+	BaseURL      string `json:"base_url"`
+	DefaultModel string `json:"default_model"`
+}
+
+// ProjectAllowedProvider tracks which global/env providers a project can use.
+type ProjectAllowedProvider struct {
+	ID             string    `json:"id"`
+	ProjectID      string    `json:"project_id"`
+	ProviderID     string    `json:"provider_id"`
+	ProviderSource string    `json:"provider_source"` // "global" or "env"
+	CreatedAt      time.Time `json:"created_at"`
+	CreatedBy      string    `json:"created_by"`
 }

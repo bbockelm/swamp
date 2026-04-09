@@ -84,10 +84,12 @@ func (h *Handler) CreateAnalysis(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		PackageIDs   []string        `json:"package_ids"`
-		AgentModel   string          `json:"agent_model"`
-		AgentConfig  json.RawMessage `json:"agent_config,omitempty"`
-		CustomPrompt string          `json:"custom_prompt"`
+		PackageIDs     []string        `json:"package_ids"`
+		AgentModel     string          `json:"agent_model"`
+		AgentConfig    json.RawMessage `json:"agent_config,omitempty"`
+		CustomPrompt   string          `json:"custom_prompt"`
+		ProviderID     string          `json:"provider_id"`
+		ProviderSource string          `json:"provider_source"` // "global" or "project"
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		respondError(w, http.StatusBadRequest, "Invalid request body")
@@ -107,16 +109,27 @@ func (h *Handler) CreateAnalysis(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Merge provider info into agent_config.
+	agentConfig := map[string]interface{}{}
+	if len(req.AgentConfig) > 0 {
+		_ = json.Unmarshal(req.AgentConfig, &agentConfig)
+	}
+	if req.ProviderID != "" {
+		agentConfig["llm_provider_id"] = req.ProviderID
+		if req.ProviderSource == "" {
+			req.ProviderSource = "global"
+		}
+		agentConfig["provider_source"] = req.ProviderSource
+	}
+	configBytes, _ := json.Marshal(agentConfig)
+
 	analysis := &models.Analysis{
 		ProjectID:    projectID,
 		Status:       "pending",
 		TriggeredBy:  user.ID,
 		AgentModel:   req.AgentModel,
-		AgentConfig:  req.AgentConfig,
+		AgentConfig:  json.RawMessage(configBytes),
 		CustomPrompt: req.CustomPrompt,
-	}
-	if len(analysis.AgentConfig) == 0 {
-		analysis.AgentConfig = json.RawMessage(`{}`)
 	}
 
 	// Generate a per-analysis DEK for encrypting output artifacts.

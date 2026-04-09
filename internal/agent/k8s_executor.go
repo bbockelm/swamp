@@ -167,13 +167,37 @@ func (e *K8sExecutor) launchJob(analysis *models.Analysis, packages []models.Sof
 	}
 	llmConfig := ResolveEffectiveLLMConfig(e.cfg, project)
 
+	// Try new provider-based resolution first (from analysis agent_config).
+	resolvedProvider, provErr := ResolveAnalysisProvider(ctx, e.queries, e.encryptor, e.cfg, analysis)
+	if provErr != nil {
+		e.failAnalysis(analysis.ID, "Provider resolution failed", provErr)
+		cancel()
+		<-e.countsem
+		return
+	}
+	if resolvedProvider != nil {
+		// Map the new provider to the legacy token exchange format.
+		if resolvedProvider.APISchema == "openai" {
+			llmConfig.Provider = "external"
+			llmConfig.AnalysisModel = resolvedProvider.Model
+			llmConfig.PoCModel = resolvedProvider.Model
+		} else {
+			llmConfig.Provider = "anthropic"
+		}
+		effectiveModel = resolvedProvider.Model
+	}
+
 	// For external/nrp/custom providers, the worker normally routes through the
 	// SWAMP LLM proxy. In K8s dev mode (K8S_DIRECT_LLM=true), the SWAMP server
 	// may not be reachable by pods, so we resolve the real API key and endpoint
 	// server-side and pass them directly in the token exchange response.
 	extLLMProxyURL := ""
 	extLLMDirectKey := ""
-	if llmConfig.Provider == "external" {
+	if resolvedProvider != nil && llmConfig.Provider == "external" {
+		// New provider-based flow: always pass credentials directly.
+		extLLMProxyURL = resolvedProvider.BaseURL
+		extLLMDirectKey = resolvedProvider.APIKey
+	} else if llmConfig.Provider == "external" {
 		if e.cfg.K8sDirectLLM {
 			creds, err := resolveExternalLLMDirect(ctx, e.queries, e.encryptor, e.cfg, analysis)
 			if err != nil {

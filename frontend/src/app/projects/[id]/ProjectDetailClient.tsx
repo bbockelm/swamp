@@ -1,7 +1,7 @@
 'use client';
 
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { api, type SoftwarePackage, type Analysis, type Group, type Project } from '@/lib/api';
+import { api, type SoftwarePackage, type Analysis, type Group, type Project, type AvailableProvider, type DiscoveredModel, type ProjectAllowedProvider } from '@/lib/api';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useState } from 'react';
 import Link from 'next/link';
@@ -64,8 +64,8 @@ export default function ProjectDetailClient() {
 
   const canEdit = project.my_role === 'write' || project.my_role === 'admin';
   const isAdmin = project.my_role === 'admin';
-  // System-level roles that can toggle uses_global_key
-  const canEditGlobalKey = session?.roles?.includes('admin') || session?.roles?.includes('project_creator');
+  const canManageProviders = session?.roles?.includes('admin') || session?.roles?.includes('project_creator');
+
 
   const tabs: { key: Tab; label: string }[] = [
     { key: 'packages', label: 'Packages' },
@@ -128,7 +128,7 @@ export default function ProjectDetailClient() {
         <SettingsTab
           project={project}
           groups={groups}
-          canEditGlobalKey={canEditGlobalKey}
+          canManageProviders={canManageProviders}
           onDelete={() => {
             if (confirm('Delete this project? This cannot be undone.')) {
               deleteMutation.mutate();
@@ -438,22 +438,63 @@ function AnalysesTab({
   const [selectedPkgs, setSelectedPkgs] = useState<string[]>([]);
   const [customPrompt, setCustomPrompt] = useState('');
   const [agentModel, setAgentModel] = useState('');
+  const [selectedProvider, setSelectedProvider] = useState('');
   const [analysisPage, setAnalysisPage] = useState(1);
 
+  // Fetch available providers (global + project)
+  const { data: availableProviders } = useQuery({
+    queryKey: ['available-providers', projectId],
+    queryFn: () => api.availableProviders(projectId),
+    staleTime: 60_000,
+  });
+
+  // Legacy agent status (fallback when no providers are configured)
   const { data: agentStatus } = useQuery({
     queryKey: ['agent-status'],
     queryFn: () => api.agent.status(),
     staleTime: 60_000,
   });
-  const isExternalProvider = agentStatus?.provider === 'external';
+
+  const hasProviders = availableProviders && availableProviders.length > 0;
+
+  // Parse selected provider
+  const selectedProviderObj = availableProviders?.find(
+    (p) => `${p.source}:${p.id}` === selectedProvider
+  );
+
+  // Discover models for selected provider
+  const { data: discoveredModels, isFetching: loadingModels } = useQuery({
+    queryKey: ['discovered-models', selectedProvider],
+    queryFn: () => {
+      if (!selectedProviderObj) return Promise.resolve([]);
+      if (selectedProviderObj.source === 'global') {
+        return api.llmProviders.discoverModels(selectedProviderObj.id);
+      }
+      if (selectedProviderObj.source === 'env') {
+        return api.llmProviders.discoverEnvModels(selectedProviderObj.id);
+      }
+      return api.providerKeys.discoverModels(projectId, selectedProviderObj.id);
+    },
+    enabled: !!selectedProviderObj,
+    staleTime: 5 * 60_000,
+  });
+
+  // Determine if the agent is ready (either via providers or legacy config)
+  const agentReady = hasProviders || agentStatus?.ready;
 
   const triggerMutation = useMutation({
-    mutationFn: () =>
-      api.analyses.create(projectId, {
+    mutationFn: () => {
+      const data: { package_ids: string[]; agent_model?: string; custom_prompt?: string; provider_id?: string; provider_source?: string } = {
         package_ids: selectedPkgs,
         agent_model: agentModel || undefined,
         custom_prompt: customPrompt || undefined,
-      }),
+      };
+      if (selectedProviderObj) {
+        data.provider_id = selectedProviderObj.id;
+        data.provider_source = selectedProviderObj.source;
+      }
+      return api.analyses.create(projectId, data);
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['analyses', projectId] });
       setSelectedPkgs([]);
@@ -462,15 +503,18 @@ function AnalysesTab({
     },
   });
 
+  // Legacy model selection (fallback when no providers available)
+  const isLegacyExternal = !hasProviders && agentStatus?.provider === 'external';
+
   return (
     <div>
       {/* Trigger new analysis */}
       {canEdit && packages && packages.length > 0 && (
         <div className="bg-gray-50 p-4 rounded border mb-6">
           <h3 className="text-sm font-medium mb-2">Run New Analysis</h3>
-          {agentStatus && !agentStatus.ready && (
+          {!agentReady && (
             <div className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded p-2 mb-3">
-              Analysis agent is not configured. Set <code className="bg-amber-100 px-1 rounded">AGENT_API_KEY</code> or <code className="bg-amber-100 px-1 rounded">AGENT_API_KEY_FILE</code> to enable.
+              No LLM providers are configured. Ask an admin to add a provider in Settings, or set <code className="bg-amber-100 px-1 rounded">AGENT_API_KEY</code>.
             </div>
           )}
           {triggerMutation.isError && (
@@ -499,37 +543,76 @@ function AnalysesTab({
               </label>
             ))}
           </div>
-          <div className="mb-3">
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Model
-            </label>
-            {isExternalProvider ? (
-              <>
-                <input
-                  type="text"
-                  value={agentModel}
-                  onChange={(e) => setAgentModel(e.target.value)}
-                  placeholder={agentStatus?.default_model || 'Default from settings'}
+
+          {/* Provider selection */}
+          {hasProviders ? (
+            <>
+              <div className="mb-3">
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Provider
+                </label>
+                <select
+                  value={selectedProvider}
+                  onChange={(e) => {
+                    setSelectedProvider(e.target.value);
+                    setAgentModel('');
+                  }}
                   className="w-full border rounded px-3 py-2 text-sm bg-white"
-                />
-                <p className="text-xs text-gray-500 mt-1">
-                  Leave empty to use the default model{agentStatus?.default_model ? ` (${agentStatus.default_model})` : ''}.
-                </p>
-              </>
-            ) : (
-              <select
-                value={agentModel}
-                onChange={(e) => setAgentModel(e.target.value)}
-                className="w-full border rounded px-3 py-2 text-sm bg-white"
-              >
-                {(agentStatus?.models || [{ id: '', name: 'Auto (server default)' }]).map((m) => (
-                  <option key={m.id} value={m.id}>
-                    {m.name}{agentStatus?.default_model && m.id === '' ? ` (${agentStatus.default_model || 'auto'})` : ''}
-                  </option>
-                ))}
-              </select>
-            )}
-          </div>
+                >
+                  <option value="">Server default</option>
+                  {availableProviders.map((p) => (
+                    <option key={`${p.source}:${p.id}`} value={`${p.source}:${p.id}`}>
+                      {p.label} ({p.api_schema}){p.source === 'project' ? ' — project' : p.source === 'env' ? ' — env' : ''}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="mb-3">
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Model
+                </label>
+                {loadingModels ? (
+                  <p className="text-xs text-gray-500 py-2">Discovering models...</p>
+                ) : discoveredModels && discoveredModels.length > 0 ? (
+                  <select
+                    value={agentModel}
+                    onChange={(e) => setAgentModel(e.target.value)}
+                    className="w-full border rounded px-3 py-2 text-sm bg-white"
+                  >
+                    <option value="">
+                      {selectedProviderObj?.default_model
+                        ? `Default (${selectedProviderObj.default_model})`
+                        : 'Auto (provider default)'}
+                    </option>
+                    {discoveredModels.map((m) => (
+                      <option key={m.id} value={m.id}>
+                        {m.display_name || m.id}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <>
+                    <input
+                      type="text"
+                      value={agentModel}
+                      onChange={(e) => setAgentModel(e.target.value)}
+                      placeholder={selectedProviderObj?.default_model || 'Auto (provider default)'}
+                      className="w-full border rounded px-3 py-2 text-sm bg-white"
+                    />
+                    <p className="text-xs text-gray-500 mt-1">
+                      {selectedProvider ? 'Could not discover models. Enter a model ID manually or leave blank.' : 'Select a provider to discover available models.'}
+                    </p>
+                  </>
+                )}
+              </div>
+            </>
+          ) : (
+            /* No providers available for this project */
+            <div className="mb-3 text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded p-3">
+              No LLM providers are available for this project. An admin must allow providers for this project in the <strong>Settings → Provider Access</strong> tab.
+            </div>
+          )}
+
           <div className="mb-3">
             <label className="block text-sm font-medium text-gray-700 mb-1">
               Additional Prompt
@@ -544,7 +627,7 @@ function AnalysesTab({
           </div>
           <button
             onClick={() => triggerMutation.mutate()}
-            disabled={!selectedPkgs.length || triggerMutation.isPending || !agentStatus?.ready}
+            disabled={!selectedPkgs.length || triggerMutation.isPending || !agentReady}
             className="bg-green-600 text-white px-3 py-1.5 text-sm rounded hover:bg-green-700 disabled:opacity-50"
           >
             {triggerMutation.isPending ? 'Starting...' : 'Start Analysis'}
@@ -631,18 +714,17 @@ function FindingsTab({
 function SettingsTab({
   project,
   groups,
-  canEditGlobalKey,
+  canManageProviders,
   onDelete,
 }: {
   project: Project;
   groups?: Group[];
-  canEditGlobalKey?: boolean;
+  canManageProviders?: boolean;
   onDelete: () => void;
 }) {
   const queryClient = useQueryClient();
   const [name, setName] = useState(project.name);
   const [description, setDescription] = useState(project.description);
-  const [usesGlobalKey, setUsesGlobalKey] = useState(project.uses_global_key);
   const [readGroupId, setReadGroupId] = useState(project.read_group_id ?? '');
   const [writeGroupId, setWriteGroupId] = useState(project.write_group_id ?? '');
   const [adminGroupId, setAdminGroupId] = useState(project.admin_group_id ?? '');
@@ -652,7 +734,6 @@ function SettingsTab({
       api.projects.update(project.id, {
         name,
         description,
-        uses_global_key: usesGlobalKey,
         read_group_id: readGroupId || null,
         write_group_id: writeGroupId || null,
         admin_group_id: adminGroupId || null,
@@ -662,6 +743,40 @@ function SettingsTab({
       queryClient.invalidateQueries({ queryKey: ['projects'] });
     },
   });
+
+  // All enabled global/env providers (unfiltered)
+  const { data: allProviders } = useQuery({
+    queryKey: ['all-providers', project.id],
+    queryFn: () => api.allProviders(project.id),
+    enabled: !!canManageProviders,
+  });
+
+  // Currently allowed providers for this project
+  const { data: allowedProviders } = useQuery({
+    queryKey: ['allowed-providers', project.id],
+    queryFn: () => api.allowedProviders.list(project.id),
+    enabled: !!canManageProviders,
+  });
+
+  const allowedSet = new Set(
+    (allowedProviders ?? []).map((a) => `${a.provider_source}:${a.provider_id}`)
+  );
+
+  const toggleProviderMut = useMutation({
+    mutationFn: ({ providerId, providerSource, allowed }: { providerId: string; providerSource: string; allowed: boolean }) => {
+      if (allowed) {
+        return api.allowedProviders.remove(project.id, providerId, providerSource);
+      }
+      return api.allowedProviders.add(project.id, providerId, providerSource);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['allowed-providers', project.id] });
+      queryClient.invalidateQueries({ queryKey: ['available-providers', project.id] });
+    },
+  });
+
+  // Filter to only env and global providers (not project keys)
+  const systemProviders = (allProviders ?? []).filter((p) => p.source === 'env' || p.source === 'global');
 
   return (
     <div className="max-w-xl space-y-6">
@@ -717,27 +832,6 @@ function SettingsTab({
           />
         </div>
 
-        {/* Global Key toggle - only shown to admins/project_creators */}
-        {canEditGlobalKey && (
-          <div className="border-t pt-4">
-            <label className="flex items-center gap-3">
-              <input
-                type="checkbox"
-                checked={usesGlobalKey}
-                onChange={(e) => setUsesGlobalKey(e.target.checked)}
-                className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-              />
-              <span className="text-sm font-medium text-gray-700">
-                Use global agent API key
-              </span>
-            </label>
-            <p className="text-xs text-gray-500 mt-1 ml-7">
-              When enabled, this project can use the system&apos;s shared Anthropic API key
-              instead of requiring a project-specific key.
-            </p>
-          </div>
-        )}
-
         <button
           type="submit"
           disabled={updateMutation.isPending}
@@ -749,6 +843,68 @@ function SettingsTab({
           <span className="text-green-600 text-sm ml-3">Saved!</span>
         )}
       </form>
+
+      {/* Provider Access — only visible to admins/project_creators */}
+      {canManageProviders && (
+        <div className="border-t pt-6">
+          <h3 className="text-lg font-semibold mb-2">Provider Access</h3>
+          <p className="text-sm text-gray-500 mb-3">
+            Control which global and environment providers this project can use for analyses.
+            Project-owned API keys are always available.
+          </p>
+          {systemProviders.length > 0 ? (
+            <div className="border rounded-md divide-y">
+              {systemProviders.map((p) => {
+                const key = `${p.source}:${p.id}`;
+                const isAllowed = allowedSet.has(key);
+                return (
+                  <div key={key} className="p-3 flex items-center justify-between">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="font-medium text-sm">{p.label}</span>
+                        <span className={`px-1.5 py-0.5 text-xs rounded ${
+                          p.api_schema === 'anthropic' ? 'bg-purple-100 text-purple-700' : 'bg-green-100 text-green-700'
+                        }`}>
+                          {p.api_schema}
+                        </span>
+                        <span className={`px-1.5 py-0.5 text-xs rounded ${
+                          p.source === 'env' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600'
+                        }`}>
+                          {p.source}
+                        </span>
+                      </div>
+                      {p.default_model && (
+                        <div className="text-xs text-gray-500 mt-0.5">Default model: {p.default_model}</div>
+                      )}
+                    </div>
+                    <button
+                      onClick={() => toggleProviderMut.mutate({
+                        providerId: p.id,
+                        providerSource: p.source,
+                        allowed: isAllowed,
+                      })}
+                      disabled={toggleProviderMut.isPending}
+                      className={`px-2 py-1 text-xs rounded ${
+                        isAllowed
+                          ? 'bg-green-100 text-green-700 hover:bg-green-200'
+                          : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
+                      }`}
+                    >
+                      {isAllowed ? 'Allowed' : 'Not Allowed'}
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="text-sm text-gray-400 text-center py-4 border rounded-md">
+              No global or environment providers configured. Add providers in{' '}
+              <a href="/admin/settings" className="text-blue-600 hover:underline">Admin Settings</a>{' '}
+              to control access here.
+            </div>
+          )}
+        </div>
+      )}
 
       <div className="border-t pt-6">
         <h3 className="text-lg font-semibold text-red-600 mb-2">

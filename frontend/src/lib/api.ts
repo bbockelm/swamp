@@ -179,10 +179,47 @@ export interface ProjectProviderKey {
   label: string;
   key_hint: string;
   endpoint_url?: string;
+  api_schema: string;
   is_active: boolean;
   created_by: string;
   created_at: string;
   revoked_at: string | null;
+}
+
+export interface LLMProvider {
+  id: string;
+  label: string;
+  api_schema: string;
+  base_url: string;
+  default_model: string;
+  key_hint: string;
+  enabled: boolean;
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AvailableProvider {
+  id: string;
+  source: "global" | "project" | "env";
+  label: string;
+  api_schema: string;
+  base_url: string;
+  default_model: string;
+}
+
+export interface ProjectAllowedProvider {
+  id: string;
+  project_id: string;
+  provider_id: string;
+  provider_source: "global" | "env";
+  created_at: string;
+  created_by: string;
+}
+
+export interface DiscoveredModel {
+  id: string;
+  display_name?: string;
 }
 
 export interface Backup {
@@ -459,7 +496,7 @@ export const api = {
       fetchJSON(`${BASE}/projects/${projectId}/analyses`),
     create: (
       projectId: string,
-      data: { package_ids: string[]; agent_model?: string; custom_prompt?: string },
+      data: { package_ids: string[]; agent_model?: string; custom_prompt?: string; provider_id?: string; provider_source?: string },
     ): Promise<Analysis> =>
       fetchJSON(`${BASE}/projects/${projectId}/analyses`, {
         method: "POST",
@@ -589,7 +626,7 @@ export const api = {
       fetchJSON(`${BASE}/projects/${projectId}/provider-keys`),
     create: (
       projectId: string,
-      data: { provider: string; label: string; api_key: string; endpoint_url?: string },
+      data: { provider: string; label: string; api_key: string; endpoint_url?: string; api_schema?: string },
     ): Promise<ProjectProviderKey> =>
       fetchJSON(`${BASE}/projects/${projectId}/provider-keys`, {
         method: "POST",
@@ -604,6 +641,60 @@ export const api = {
       fetchJSON(`${BASE}/projects/${projectId}/provider-keys/${keyId}`, {
         method: "DELETE",
       }),
+    discoverModels: (projectId: string, keyId: string): Promise<DiscoveredModel[]> =>
+      fetchJSON(`${BASE}/projects/${projectId}/provider-keys/${keyId}/models`),
+  },
+
+  availableProviders: (projectId: string): Promise<AvailableProvider[]> =>
+    fetchJSON(`${BASE}/projects/${projectId}/available-providers`),
+
+  allProviders: (projectId: string): Promise<AvailableProvider[]> =>
+    fetchJSON(`${BASE}/projects/${projectId}/available-providers?include_all=true`),
+
+  allowedProviders: {
+    list: (projectId: string): Promise<ProjectAllowedProvider[]> =>
+      fetchJSON(`${BASE}/projects/${projectId}/allowed-providers`),
+    add: (projectId: string, providerId: string, providerSource: string): Promise<void> =>
+      fetchJSON(`${BASE}/projects/${projectId}/allowed-providers`, {
+        method: "POST",
+        body: JSON.stringify({ provider_id: providerId, provider_source: providerSource }),
+      }),
+    remove: (projectId: string, providerId: string, providerSource: string): Promise<void> =>
+      fetchJSON(`${BASE}/projects/${projectId}/allowed-providers`, {
+        method: "DELETE",
+        body: JSON.stringify({ provider_id: providerId, provider_source: providerSource }),
+      }),
+  },
+
+  llmProviders: {
+    list: (): Promise<LLMProvider[]> =>
+      fetchJSON(`${BASE}/admin/llm-providers`),
+    create: (data: {
+      label: string;
+      api_schema: string;
+      base_url: string;
+      default_model?: string;
+      api_key: string;
+      enabled?: boolean;
+    }): Promise<LLMProvider> =>
+      fetchJSON(`${BASE}/admin/llm-providers`, {
+        method: "POST",
+        body: JSON.stringify(data),
+      }),
+    update: (
+      id: string,
+      data: { label: string; api_schema: string; base_url: string; default_model?: string; api_key?: string; enabled?: boolean },
+    ): Promise<LLMProvider> =>
+      fetchJSON(`${BASE}/admin/llm-providers/${id}`, {
+        method: "PUT",
+        body: JSON.stringify(data),
+      }),
+    delete: (id: string): Promise<void> =>
+      fetchJSON(`${BASE}/admin/llm-providers/${id}`, { method: "DELETE" }),
+    discoverModels: (id: string): Promise<DiscoveredModel[]> =>
+      fetchJSON(`${BASE}/admin/llm-providers/${id}/models`),
+    discoverEnvModels: (id: string): Promise<DiscoveredModel[]> =>
+      fetchJSON(`${BASE}/admin/env-providers/${id}/models`),
   },
 
   admin: {
@@ -644,6 +735,10 @@ export const api = {
       fetchJSON(`${BASE}/admin/users/${userId}/identities/${identityId}`, {
         method: "DELETE",
       }),
+    listUserGroups: (userId: string): Promise<Group[]> =>
+      fetchJSON(`${BASE}/admin/users/${userId}/groups`),
+    listUserProjects: (userId: string): Promise<Project[]> =>
+      fetchJSON(`${BASE}/admin/users/${userId}/projects`),
     createInvite: (
       userId: string,
     ): Promise<{ invite: UserInvite; invite_url: string }> =>

@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -217,4 +218,92 @@ func (h *Handler) DeleteProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	respondJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+}
+
+// --- Project Allowed Providers ---
+
+// ListProjectAllowedProviders returns all globally/env providers that this project is allowed to use.
+func (h *Handler) ListProjectAllowedProviders(w http.ResponseWriter, r *http.Request) {
+	projectID := chi.URLParam(r, "projectID")
+	allowed, err := h.queries.ListProjectAllowedProviders(r.Context(), projectID)
+	if err != nil {
+		log.Error().Err(err).Msg("Failed to list project allowed providers")
+		respondError(w, http.StatusInternalServerError, "Failed to list allowed providers")
+		return
+	}
+	if allowed == nil {
+		allowed = []models.ProjectAllowedProvider{}
+	}
+	respondJSON(w, http.StatusOK, allowed)
+}
+
+// AddProjectAllowedProvider grants a project access to a global or env provider.
+// Requires admin or project_creator role.
+func (h *Handler) AddProjectAllowedProvider(w http.ResponseWriter, r *http.Request) {
+	projectID := chi.URLParam(r, "projectID")
+
+	if !UserHasRole(r.Context(), RoleAdmin) && !UserHasRole(r.Context(), RoleProjectCreator) {
+		respondError(w, http.StatusForbidden, "Only admins or project creators can manage provider access")
+		return
+	}
+
+	var req struct {
+		ProviderID     string `json:"provider_id"`
+		ProviderSource string `json:"provider_source"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondError(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+	if req.ProviderID == "" || req.ProviderSource == "" {
+		respondError(w, http.StatusBadRequest, "provider_id and provider_source are required")
+		return
+	}
+	if req.ProviderSource != "global" && req.ProviderSource != "env" {
+		respondError(w, http.StatusBadRequest, "provider_source must be 'global' or 'env'")
+		return
+	}
+
+	user := GetUserFromContext(r.Context())
+	if user == nil {
+		respondError(w, http.StatusUnauthorized, "Not authenticated")
+		return
+	}
+	if err := h.queries.AddProjectAllowedProvider(r.Context(), projectID, req.ProviderID, req.ProviderSource, user.ID); err != nil {
+		log.Error().Err(err).Msg("Failed to add project allowed provider")
+		respondError(w, http.StatusInternalServerError, "Failed to add provider")
+		return
+	}
+	respondJSON(w, http.StatusOK, map[string]string{"status": "added"})
+}
+
+// RemoveProjectAllowedProvider revokes a project's access to a global or env provider.
+// Requires admin or project_creator role.
+func (h *Handler) RemoveProjectAllowedProvider(w http.ResponseWriter, r *http.Request) {
+	projectID := chi.URLParam(r, "projectID")
+
+	if !UserHasRole(r.Context(), RoleAdmin) && !UserHasRole(r.Context(), RoleProjectCreator) {
+		respondError(w, http.StatusForbidden, "Only admins or project creators can manage provider access")
+		return
+	}
+
+	var req struct {
+		ProviderID     string `json:"provider_id"`
+		ProviderSource string `json:"provider_source"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondError(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+	if req.ProviderID == "" || req.ProviderSource == "" {
+		respondError(w, http.StatusBadRequest, "provider_id and provider_source are required")
+		return
+	}
+
+	if err := h.queries.RemoveProjectAllowedProvider(r.Context(), projectID, req.ProviderID, req.ProviderSource); err != nil {
+		log.Error().Err(err).Msg("Failed to remove project allowed provider")
+		respondError(w, http.StatusInternalServerError, "Failed to remove provider")
+		return
+	}
+	respondJSON(w, http.StatusOK, map[string]string{"status": "removed"})
 }

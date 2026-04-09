@@ -102,6 +102,36 @@ func (h *Handler) GetUser(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusOK, user)
 }
 
+// GetUserGroups returns groups a user belongs to (admin view).
+func (h *Handler) GetUserGroups(w http.ResponseWriter, r *http.Request) {
+	userID := chi.URLParam(r, "userID")
+	groups, err := h.queries.ListUserGroups(r.Context(), userID)
+	if err != nil {
+		log.Error().Err(err).Str("user_id", userID).Msg("Failed to list user groups")
+		respondError(w, http.StatusInternalServerError, "Failed to list groups")
+		return
+	}
+	if groups == nil {
+		groups = []models.Group{}
+	}
+	respondJSON(w, http.StatusOK, groups)
+}
+
+// GetUserProjects returns projects accessible to a user (admin view).
+func (h *Handler) GetUserProjects(w http.ResponseWriter, r *http.Request) {
+	userID := chi.URLParam(r, "userID")
+	projects, err := h.queries.ListUserProjects(r.Context(), userID)
+	if err != nil {
+		log.Error().Err(err).Str("user_id", userID).Msg("Failed to list user projects")
+		respondError(w, http.StatusInternalServerError, "Failed to list projects")
+		return
+	}
+	if projects == nil {
+		projects = []models.Project{}
+	}
+	respondJSON(w, http.StatusOK, projects)
+}
+
 func (h *Handler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 	userID := chi.URLParam(r, "userID")
 	user, err := h.queries.GetUser(r.Context(), userID)
@@ -408,6 +438,8 @@ var executorConfigKeys = []struct {
 	{"external_llm_analysis_model", "external_llm_analysis_model"},
 	{"external_llm_poc_model", "external_llm_poc_model"},
 	{"max_concurrent_analyses", "max_concurrent_analyses"},
+	{"env_provider_anthropic_enabled", "env_provider_anthropic_enabled"},
+	{"env_provider_external_enabled", "env_provider_external_enabled"},
 }
 
 func (h *Handler) GetExecutorConfig(w http.ResponseWriter, r *http.Request) {

@@ -2043,16 +2043,16 @@ func (q *Queries) LoadAllWorkerTokens(ctx context.Context) (sessions map[string]
 
 func (q *Queries) CreateProjectProviderKey(ctx context.Context, k *models.ProjectProviderKey) error {
 	return q.pool.QueryRow(ctx,
-		`INSERT INTO project_provider_keys (project_id, provider, label, key_hint, encrypted_key, encrypted_dek, dek_nonce, created_by, endpoint_url)
-		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id, created_at`,
+		`INSERT INTO project_provider_keys (project_id, provider, label, key_hint, encrypted_key, encrypted_dek, dek_nonce, created_by, endpoint_url, api_schema)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id, created_at`,
 		k.ProjectID, k.Provider, k.Label, k.KeyHint,
-		k.EncryptedKey, k.EncryptedDEK, k.DEKNonce, k.CreatedBy, k.EndpointURL,
+		k.EncryptedKey, k.EncryptedDEK, k.DEKNonce, k.CreatedBy, k.EndpointURL, k.APISchema,
 	).Scan(&k.ID, &k.CreatedAt)
 }
 
 func (q *Queries) ListProjectProviderKeys(ctx context.Context, projectID string) ([]models.ProjectProviderKey, error) {
 	rows, err := q.pool.Query(ctx,
-		`SELECT id, project_id, provider, label, key_hint, is_active, created_by, created_at, revoked_at, endpoint_url
+		`SELECT id, project_id, provider, label, key_hint, is_active, created_by, created_at, revoked_at, endpoint_url, api_schema
 		 FROM project_provider_keys
 		 WHERE project_id = $1
 		 ORDER BY created_at DESC`, projectID)
@@ -2064,7 +2064,7 @@ func (q *Queries) ListProjectProviderKeys(ctx context.Context, projectID string)
 	for rows.Next() {
 		var k models.ProjectProviderKey
 		if err := rows.Scan(&k.ID, &k.ProjectID, &k.Provider, &k.Label, &k.KeyHint,
-			&k.IsActive, &k.CreatedBy, &k.CreatedAt, &k.RevokedAt, &k.EndpointURL); err != nil {
+			&k.IsActive, &k.CreatedBy, &k.CreatedAt, &k.RevokedAt, &k.EndpointURL, &k.APISchema); err != nil {
 			return nil, err
 		}
 		keys = append(keys, k)
@@ -2076,11 +2076,11 @@ func (q *Queries) GetProjectProviderKey(ctx context.Context, id string) (*models
 	var k models.ProjectProviderKey
 	err := q.pool.QueryRow(ctx,
 		`SELECT id, project_id, provider, label, key_hint, encrypted_key, encrypted_dek, dek_nonce,
-		        is_active, created_by, created_at, revoked_at, endpoint_url
+		        is_active, created_by, created_at, revoked_at, endpoint_url, api_schema
 		 FROM project_provider_keys WHERE id = $1`, id,
 	).Scan(&k.ID, &k.ProjectID, &k.Provider, &k.Label, &k.KeyHint,
 		&k.EncryptedKey, &k.EncryptedDEK, &k.DEKNonce,
-		&k.IsActive, &k.CreatedBy, &k.CreatedAt, &k.RevokedAt, &k.EndpointURL)
+		&k.IsActive, &k.CreatedBy, &k.CreatedAt, &k.RevokedAt, &k.EndpointURL, &k.APISchema)
 	if err != nil {
 		return nil, err
 	}
@@ -2104,15 +2104,148 @@ func (q *Queries) GetActiveProviderKey(ctx context.Context, projectID, provider 
 	var k models.ProjectProviderKey
 	err := q.pool.QueryRow(ctx,
 		`SELECT id, project_id, provider, label, key_hint, encrypted_key, encrypted_dek, dek_nonce,
-		        is_active, created_by, created_at, revoked_at, endpoint_url
+		        is_active, created_by, created_at, revoked_at, endpoint_url, api_schema
 		 FROM project_provider_keys
 		 WHERE project_id = $1 AND provider = $2 AND is_active AND revoked_at IS NULL
 		 ORDER BY created_at DESC LIMIT 1`, projectID, provider,
 	).Scan(&k.ID, &k.ProjectID, &k.Provider, &k.Label, &k.KeyHint,
 		&k.EncryptedKey, &k.EncryptedDEK, &k.DEKNonce,
-		&k.IsActive, &k.CreatedBy, &k.CreatedAt, &k.RevokedAt, &k.EndpointURL)
+		&k.IsActive, &k.CreatedBy, &k.CreatedAt, &k.RevokedAt, &k.EndpointURL, &k.APISchema)
 	if err != nil {
 		return nil, err
 	}
 	return &k, nil
+}
+
+// --- Global LLM Providers ---
+
+func (q *Queries) CreateLLMProvider(ctx context.Context, p *models.LLMProvider) error {
+	return q.pool.QueryRow(ctx,
+		`INSERT INTO llm_providers (label, api_schema, base_url, default_model, encrypted_key, encrypted_dek, dek_nonce, key_hint, enabled, created_by)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id, created_at, updated_at`,
+		p.Label, p.APISchema, p.BaseURL, p.DefaultModel,
+		p.EncryptedKey, p.EncryptedDEK, p.DEKNonce,
+		p.KeyHint, p.Enabled, p.CreatedBy,
+	).Scan(&p.ID, &p.CreatedAt, &p.UpdatedAt)
+}
+
+func (q *Queries) ListLLMProviders(ctx context.Context) ([]models.LLMProvider, error) {
+	rows, err := q.pool.Query(ctx,
+		`SELECT id, label, api_schema, base_url, default_model, key_hint, enabled, created_by, created_at, updated_at
+		 FROM llm_providers ORDER BY created_at`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var providers []models.LLMProvider
+	for rows.Next() {
+		var p models.LLMProvider
+		if err := rows.Scan(&p.ID, &p.Label, &p.APISchema, &p.BaseURL, &p.DefaultModel, &p.KeyHint,
+			&p.Enabled, &p.CreatedBy, &p.CreatedAt, &p.UpdatedAt); err != nil {
+			return nil, err
+		}
+		providers = append(providers, p)
+	}
+	return providers, rows.Err()
+}
+
+func (q *Queries) ListEnabledLLMProviders(ctx context.Context) ([]models.LLMProvider, error) {
+	rows, err := q.pool.Query(ctx,
+		`SELECT id, label, api_schema, base_url, default_model, key_hint, enabled, created_by, created_at, updated_at
+		 FROM llm_providers WHERE enabled ORDER BY created_at`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var providers []models.LLMProvider
+	for rows.Next() {
+		var p models.LLMProvider
+		if err := rows.Scan(&p.ID, &p.Label, &p.APISchema, &p.BaseURL, &p.DefaultModel, &p.KeyHint,
+			&p.Enabled, &p.CreatedBy, &p.CreatedAt, &p.UpdatedAt); err != nil {
+			return nil, err
+		}
+		providers = append(providers, p)
+	}
+	return providers, rows.Err()
+}
+
+func (q *Queries) GetLLMProvider(ctx context.Context, id string) (*models.LLMProvider, error) {
+	var p models.LLMProvider
+	err := q.pool.QueryRow(ctx,
+		`SELECT id, label, api_schema, base_url, default_model, key_hint, encrypted_key, encrypted_dek, dek_nonce,
+		        enabled, created_by, created_at, updated_at
+		 FROM llm_providers WHERE id = $1`, id,
+	).Scan(&p.ID, &p.Label, &p.APISchema, &p.BaseURL, &p.DefaultModel, &p.KeyHint,
+		&p.EncryptedKey, &p.EncryptedDEK, &p.DEKNonce,
+		&p.Enabled, &p.CreatedBy, &p.CreatedAt, &p.UpdatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return &p, nil
+}
+
+func (q *Queries) UpdateLLMProvider(ctx context.Context, id, label, apiSchema, baseURL, defaultModel string, enabled bool) error {
+	_, err := q.pool.Exec(ctx,
+		`UPDATE llm_providers SET label=$2, api_schema=$3, base_url=$4, default_model=$5, enabled=$6, updated_at=NOW()
+		 WHERE id=$1`, id, label, apiSchema, baseURL, defaultModel, enabled)
+	return err
+}
+
+func (q *Queries) UpdateLLMProviderKey(ctx context.Context, id string, encryptedKey, encryptedDEK, dekNonce []byte, keyHint string) error {
+	_, err := q.pool.Exec(ctx,
+		`UPDATE llm_providers SET encrypted_key=$2, encrypted_dek=$3, dek_nonce=$4, key_hint=$5, updated_at=NOW()
+		 WHERE id=$1`, id, encryptedKey, encryptedDEK, dekNonce, keyHint)
+	return err
+}
+
+func (q *Queries) DeleteLLMProvider(ctx context.Context, id string) error {
+	_, err := q.pool.Exec(ctx, `DELETE FROM llm_providers WHERE id = $1`, id)
+	return err
+}
+
+// --- Project Allowed Providers ---
+
+func (q *Queries) ListProjectAllowedProviders(ctx context.Context, projectID string) ([]models.ProjectAllowedProvider, error) {
+	rows, err := q.pool.Query(ctx,
+		`SELECT id, project_id, provider_id, provider_source, created_at, COALESCE(created_by::text, '')
+		 FROM project_allowed_providers WHERE project_id = $1 ORDER BY created_at`, projectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var result []models.ProjectAllowedProvider
+	for rows.Next() {
+		var p models.ProjectAllowedProvider
+		if err := rows.Scan(&p.ID, &p.ProjectID, &p.ProviderID, &p.ProviderSource, &p.CreatedAt, &p.CreatedBy); err != nil {
+			return nil, err
+		}
+		result = append(result, p)
+	}
+	return result, rows.Err()
+}
+
+func (q *Queries) AddProjectAllowedProvider(ctx context.Context, projectID, providerID, providerSource, createdBy string) error {
+	_, err := q.pool.Exec(ctx,
+		`INSERT INTO project_allowed_providers (project_id, provider_id, provider_source, created_by)
+		 VALUES ($1, $2, $3, $4)
+		 ON CONFLICT (project_id, provider_id, provider_source) DO NOTHING`,
+		projectID, providerID, providerSource, createdBy)
+	return err
+}
+
+func (q *Queries) RemoveProjectAllowedProvider(ctx context.Context, projectID, providerID, providerSource string) error {
+	_, err := q.pool.Exec(ctx,
+		`DELETE FROM project_allowed_providers
+		 WHERE project_id = $1 AND provider_id = $2 AND provider_source = $3`,
+		projectID, providerID, providerSource)
+	return err
+}
+
+func (q *Queries) IsProviderAllowedForProject(ctx context.Context, projectID, providerID, providerSource string) (bool, error) {
+	var exists bool
+	err := q.pool.QueryRow(ctx,
+		`SELECT EXISTS(SELECT 1 FROM project_allowed_providers
+		 WHERE project_id = $1 AND provider_id = $2 AND provider_source = $3)`,
+		projectID, providerID, providerSource).Scan(&exists)
+	return exists, err
 }

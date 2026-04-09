@@ -3,6 +3,7 @@ package handlers
 import (
 	"encoding/json"
 	"net/http"
+	"os"
 	"strings"
 
 	"github.com/bbockelm/swamp/internal/agent"
@@ -76,11 +77,88 @@ func (h *Handler) AgentStatus(w http.ResponseWriter, r *http.Request) {
 		}
 		models = []map[string]string{{"id": "", "name": label}}
 	}
+
+	// Include enabled global LLM providers.
+	var globalProviders []map[string]string
+	if h.queries != nil {
+		if providers, err := h.queries.ListEnabledLLMProviders(r.Context()); err == nil {
+			for _, p := range providers {
+				globalProviders = append(globalProviders, map[string]string{
+					"id":         p.ID,
+					"label":      p.Label,
+					"api_schema": p.APISchema,
+					"base_url":   p.BaseURL,
+				})
+			}
+		}
+	}
+	if globalProviders == nil {
+		globalProviders = []map[string]string{}
+	}
+
+	// Describe environment-configured providers so the admin UI can show them.
+	var envProviders []map[string]any
+	if h.cfg != nil {
+		// Check for Anthropic env key.
+		anthropicKeySet := strings.TrimSpace(h.cfg.AgentAPIKey) != ""
+		if !anthropicKeySet && h.cfg.AgentAPIKeyFile != "" {
+			if _, err := os.Stat(h.cfg.AgentAPIKeyFile); err == nil {
+				anthropicKeySet = true
+			}
+		}
+		if anthropicKeySet {
+			enabled := true
+			if h.queries != nil {
+				if val, _ := h.queries.GetAppConfig(r.Context(), "env_provider_anthropic_enabled"); val == "false" {
+					enabled = false
+				}
+			}
+			ep := map[string]any{
+				"provider":       "anthropic",
+				"api_schema":     "anthropic",
+				"key_configured": true,
+				"default_model":  h.cfg.AgentModel,
+				"enabled":        enabled,
+			}
+			envProviders = append(envProviders, ep)
+		}
+
+		// Check for external LLM env key.
+		externalKeySet := strings.TrimSpace(h.cfg.ExternalLLMAPIKey) != ""
+		if !externalKeySet && h.cfg.ExternalLLMAPIKeyFile != "" {
+			if _, err := os.Stat(h.cfg.ExternalLLMAPIKeyFile); err == nil {
+				externalKeySet = true
+			}
+		}
+		if externalKeySet || h.cfg.ExternalLLMEndpoint != "" {
+			enabled := true
+			if h.queries != nil {
+				if val, _ := h.queries.GetAppConfig(r.Context(), "env_provider_external_enabled"); val == "false" {
+					enabled = false
+				}
+			}
+			ep := map[string]any{
+				"provider":       "external",
+				"api_schema":     "openai",
+				"key_configured": externalKeySet,
+				"base_url":       h.cfg.ExternalLLMEndpoint,
+				"default_model":  h.cfg.ExternalLLMAnalysisModel,
+				"enabled":        enabled,
+			}
+			envProviders = append(envProviders, ep)
+		}
+	}
+	if envProviders == nil {
+		envProviders = []map[string]any{}
+	}
+
 	respondJSON(w, http.StatusOK, map[string]any{
-		"ready":         ready,
-		"provider":      provider,
-		"default_model": defaultModel,
-		"models":        models,
+		"ready":            ready,
+		"provider":         provider,
+		"default_model":    defaultModel,
+		"models":           models,
+		"global_providers": globalProviders,
+		"env_providers":    envProviders,
 	})
 }
 

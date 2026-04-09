@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -181,4 +182,143 @@ func resolveAnthropicAPIKey(ctx context.Context, queries *db.Queries, enc *crypt
 	}
 
 	return "", fmt.Errorf("no Anthropic API key configured")
+}
+
+// ResolvedProvider holds fully-resolved provider credentials for running an analysis.
+type ResolvedProvider struct {
+	APISchema string // "anthropic" or "openai"
+	BaseURL   string // provider's base URL
+	APIKey    string // decrypted API key
+	Model     string // model to use (may be empty for auto)
+}
+
+// ResolveAnalysisProvider resolves the provider for an analysis from its agent_config.
+// If agent_config contains llm_provider_id + provider_source, looks up the provider from DB.
+// Returns nil if no explicit provider is configured (caller should fall back to legacy flow).
+func ResolveAnalysisProvider(ctx context.Context, queries *db.Queries, enc *crypto.Encryptor, cfg *config.Config, analysis *models.Analysis) (*ResolvedProvider, error) {
+	if queries == nil || enc == nil || analysis == nil {
+		return nil, nil
+	}
+
+	var agentConfig map[string]interface{}
+	if len(analysis.AgentConfig) > 0 {
+		if err := json.Unmarshal(analysis.AgentConfig, &agentConfig); err != nil {
+			return nil, nil
+		}
+	}
+	providerID, _ := agentConfig["llm_provider_id"].(string)
+	providerSource, _ := agentConfig["provider_source"].(string)
+	if providerID == "" {
+		return nil, nil
+	}
+
+	switch providerSource {
+	case "env":
+		// Resolve from environment-configured provider.
+		return resolveEnvProvider(providerID, cfg, analysis)
+
+	case "global":
+		p, err := queries.GetLLMProvider(ctx, providerID)
+		if err != nil {
+			return nil, fmt.Errorf("lookup global provider %s: %w", providerID, err)
+		}
+		if len(p.EncryptedKey) == 0 {
+			return nil, fmt.Errorf("global provider %s has no API key configured", providerID)
+		}
+		dek, err := enc.UnwrapDEK(p.EncryptedDEK, p.DEKNonce)
+		if err != nil {
+			return nil, fmt.Errorf("unwrap global provider DEK: %w", err)
+		}
+		pt, err := crypto.Decrypt(dek, p.EncryptedKey)
+		if err != nil {
+			return nil, fmt.Errorf("decrypt global provider key: %w", err)
+		}
+		return &ResolvedProvider{
+			APISchema: p.APISchema,
+			BaseURL:   p.BaseURL,
+			APIKey:    strings.TrimSpace(string(pt)),
+			Model:     firstNonEmpty(analysis.AgentModel, p.DefaultModel),
+		}, nil
+
+	case "project":
+		k, err := queries.GetProjectProviderKey(ctx, providerID)
+		if err != nil {
+			return nil, fmt.Errorf("lookup project provider key %s: %w", providerID, err)
+		}
+		dek, err := enc.UnwrapDEK(k.EncryptedDEK, k.DEKNonce)
+		if err != nil {
+			return nil, fmt.Errorf("unwrap project provider key DEK: %w", err)
+		}
+		pt, err := crypto.Decrypt(dek, k.EncryptedKey)
+		if err != nil {
+			return nil, fmt.Errorf("decrypt project provider key: %w", err)
+		}
+		return &ResolvedProvider{
+			APISchema: k.APISchema,
+			BaseURL:   k.EndpointURL,
+			APIKey:    strings.TrimSpace(string(pt)),
+			Model:     analysis.AgentModel,
+		}, nil
+
+	default:
+		return nil, fmt.Errorf("unknown provider_source: %s", providerSource)
+	}
+}
+
+// firstNonEmpty returns the first non-empty string argument.
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+// resolveEnvProvider resolves env-configured provider credentials.
+func resolveEnvProvider(providerID string, cfg *config.Config, analysis *models.Analysis) (*ResolvedProvider, error) {
+	if cfg == nil {
+		return nil, fmt.Errorf("no config available for env provider")
+	}
+
+	switch providerID {
+	case "env-anthropic":
+		// Resolve Anthropic API key from env.
+		apiKey := strings.TrimSpace(cfg.AgentAPIKey)
+		if apiKey == "" && cfg.AgentAPIKeyFile != "" {
+			data, err := os.ReadFile(cfg.AgentAPIKeyFile)
+			if err != nil {
+				return nil, fmt.Errorf("read agent API key file: %w", err)
+			}
+			apiKey = strings.TrimSpace(string(data))
+		}
+		if apiKey == "" {
+			return nil, fmt.Errorf("no Anthropic API key configured in environment")
+		}
+		return &ResolvedProvider{
+			APISchema: "anthropic",
+			APIKey:    apiKey,
+			Model:     firstNonEmpty(analysis.AgentModel, cfg.AgentModel),
+		}, nil
+
+	case "env-external":
+		// Resolve external LLM API key from env.
+		apiKey := strings.TrimSpace(cfg.ExternalLLMAPIKey)
+		if apiKey == "" && cfg.ExternalLLMAPIKeyFile != "" {
+			data, err := os.ReadFile(cfg.ExternalLLMAPIKeyFile)
+			if err != nil {
+				return nil, fmt.Errorf("read external LLM API key file: %w", err)
+			}
+			apiKey = strings.TrimSpace(string(data))
+		}
+		return &ResolvedProvider{
+			APISchema: "openai",
+			BaseURL:   cfg.ExternalLLMEndpoint,
+			APIKey:    apiKey,
+			Model:     firstNonEmpty(analysis.AgentModel, cfg.ExternalLLMAnalysisModel),
+		}, nil
+
+	default:
+		return nil, fmt.Errorf("unknown env provider: %s", providerID)
+	}
 }

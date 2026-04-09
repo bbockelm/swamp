@@ -47,6 +47,7 @@ func (h *Handler) CreateProjectProviderKey(w http.ResponseWriter, r *http.Reques
 		Label       string `json:"label"`
 		APIKey      string `json:"api_key"`
 		EndpointURL string `json:"endpoint_url"`
+		APISchema   string `json:"api_schema"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		respondError(w, http.StatusBadRequest, "Invalid JSON")
@@ -79,6 +80,19 @@ func (h *Handler) CreateProjectProviderKey(w http.ResponseWriter, r *http.Reques
 			respondError(w, http.StatusBadRequest, "endpoint_url must use https")
 			return
 		}
+	}
+	// Derive api_schema from provider if not explicitly set.
+	if req.APISchema == "" {
+		if req.Provider == "anthropic" {
+			req.APISchema = "anthropic"
+		} else {
+			req.APISchema = "openai"
+		}
+	}
+	req.APISchema = strings.ToLower(strings.TrimSpace(req.APISchema))
+	if req.APISchema != "anthropic" && req.APISchema != "openai" {
+		respondError(w, http.StatusBadRequest, "api_schema must be 'anthropic' or 'openai'")
+		return
 	}
 
 	// Generate a per-key DEK and encrypt the API key.
@@ -113,6 +127,7 @@ func (h *Handler) CreateProjectProviderKey(w http.ResponseWriter, r *http.Reques
 		Label:        req.Label,
 		KeyHint:      hint,
 		EndpointURL:  req.EndpointURL,
+		APISchema:    req.APISchema,
 		EncryptedKey: encryptedKey,
 		EncryptedDEK: encryptedDEK,
 		DEKNonce:     dekNonce,

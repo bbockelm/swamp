@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { api, User } from "@/lib/api";
+import { api, User, Group, Project } from "@/lib/api";
 
 function UserCard({ user }: { user: User }) {
   const [expanded, setExpanded] = useState(false);
@@ -26,6 +26,18 @@ function UserCard({ user }: { user: User }) {
   const { data: identities } = useQuery({
     queryKey: ["admin", "user-identities", user.id],
     queryFn: () => api.admin.listUserIdentities(user.id),
+    enabled: expanded,
+  });
+
+  const { data: userGroups } = useQuery({
+    queryKey: ["admin", "user-groups", user.id],
+    queryFn: () => api.admin.listUserGroups(user.id),
+    enabled: expanded,
+  });
+
+  const { data: userProjects } = useQuery({
+    queryKey: ["admin", "user-projects", user.id],
+    queryFn: () => api.admin.listUserProjects(user.id),
     enabled: expanded,
   });
 
@@ -296,6 +308,70 @@ function UserCard({ user }: { user: User }) {
                       </button>
                     )}
                   </div>
+                ))
+              )}
+            </div>
+          </div>
+
+          {/* Groups */}
+          <div>
+            <label className="text-xs font-medium text-gray-500 uppercase tracking-wide">
+              Groups
+            </label>
+            <div className="mt-1 space-y-1">
+              {!userGroups?.length ? (
+                <span className="text-sm text-gray-400 italic">No groups</span>
+              ) : (
+                userGroups.map((g) => (
+                  <a
+                    key={g.id}
+                    href={`/groups/${g.id}`}
+                    className="text-sm bg-white border rounded px-3 py-2 flex items-center gap-3 hover:bg-blue-50 transition-colors"
+                  >
+                    <div className="flex-1 min-w-0">
+                      <div className="font-medium truncate">{g.name}</div>
+                      {g.description && (
+                        <div className="text-xs text-gray-500 truncate">{g.description}</div>
+                      )}
+                    </div>
+                    {g.owner_id === user.id && (
+                      <span className="text-xs bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full">
+                        owner
+                      </span>
+                    )}
+                  </a>
+                ))
+              )}
+            </div>
+          </div>
+
+          {/* Projects */}
+          <div>
+            <label className="text-xs font-medium text-gray-500 uppercase tracking-wide">
+              Projects
+            </label>
+            <div className="mt-1 space-y-1">
+              {!userProjects?.length ? (
+                <span className="text-sm text-gray-400 italic">No projects</span>
+              ) : (
+                userProjects.map((p) => (
+                  <a
+                    key={p.id}
+                    href={`/projects/${p.id}`}
+                    className="text-sm bg-white border rounded px-3 py-2 flex items-center gap-3 hover:bg-blue-50 transition-colors"
+                  >
+                    <div className="flex-1 min-w-0">
+                      <div className="font-medium truncate">{p.name}</div>
+                      {p.description && (
+                        <div className="text-xs text-gray-500 truncate">{p.description}</div>
+                      )}
+                    </div>
+                    {p.owner_id === user.id && (
+                      <span className="text-xs bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full">
+                        owner
+                      </span>
+                    )}
+                  </a>
                 ))
               )}
             </div>

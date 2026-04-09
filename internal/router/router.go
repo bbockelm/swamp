@@ -352,8 +352,19 @@ func New(cfg *config.Config, pool *pgxpool.Pool, store *storage.Store) (*chi.Mux
 							r.Post("/", h.CreateProjectProviderKey)
 							r.Delete("/{keyID}", h.DeleteProjectProviderKey)
 							r.Post("/{keyID}/revoke", h.RevokeProjectProviderKey)
+							r.Get("/{keyID}/models", h.DiscoverProjectProviderModels)
+						})
+
+						// Project allowed providers (which global/env providers this project can use)
+						r.Route("/allowed-providers", func(r chi.Router) {
+							r.Get("/", h.ListProjectAllowedProviders)
+							r.Post("/", h.AddProjectAllowedProvider)
+							r.Delete("/", h.RemoveProjectAllowedProvider)
 						})
 					})
+
+					// Available providers (readable by anyone with project access)
+					r.Get("/available-providers", h.ListAvailableProviders)
 				})
 			})
 
@@ -387,6 +398,8 @@ func New(cfg *config.Config, pool *pgxpool.Pool, store *storage.Store) (*chi.Mux
 						r.Delete("/roles/{role}", h.RemoveUserRole)
 						r.Get("/identities", h.ListUserIdentitiesAdmin)
 						r.Delete("/identities/{identityID}", h.DeleteUserIdentityAdmin)
+						r.Get("/groups", h.GetUserGroups)
+						r.Get("/projects", h.GetUserProjects)
 						r.Post("/invites", h.CreateUserInviteHandler)
 						r.Get("/invites", h.ListUserInvitesHandler)
 						r.Delete("/invites/{inviteID}", h.DeleteUserInviteHandler)
@@ -404,6 +417,22 @@ func New(cfg *config.Config, pool *pgxpool.Pool, store *storage.Store) (*chi.Mux
 				// Executor configuration
 				r.Get("/executor-config", h.GetExecutorConfig)
 				r.Put("/executor-config", h.UpdateExecutorConfig)
+
+				// Global LLM Providers
+				r.Route("/llm-providers", func(r chi.Router) {
+					r.Get("/", h.ListLLMProviders)
+					r.Post("/", h.CreateLLMProvider)
+					r.Route("/{providerID}", func(r chi.Router) {
+						r.Put("/", h.UpdateLLMProvider)
+						r.Delete("/", h.DeleteLLMProvider)
+						r.Get("/models", h.DiscoverLLMProviderModels)
+					})
+				})
+
+				// Env-configured provider model discovery
+				r.Route("/env-providers/{providerID}", func(r chi.Router) {
+					r.Get("/models", h.DiscoverEnvProviderModels)
+				})
 
 				// Backups
 				r.Route("/backups", func(r chi.Router) {
