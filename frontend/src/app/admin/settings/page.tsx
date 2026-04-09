@@ -176,6 +176,7 @@ const K8S_FIELDS = [
   { key: 'k8s_worker_node_selector', label: 'Node Selector', placeholder: 'key=value,key2=value2' },
   { key: 'k8s_worker_tolerations', label: 'Tolerations', placeholder: 'key=value:effect,...' },
   { key: 'k8s_worker_labels', label: 'Pod Labels', placeholder: 'key=value,key2=value2' },
+  { key: 'k8s_worker_annotations', label: 'Pod Annotations', placeholder: 'key=value,key2=value2' },
   { key: 'k8s_pod_ttl_seconds', label: 'Job TTL (seconds)', placeholder: '3600' },
 ];
 

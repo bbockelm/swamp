@@ -89,6 +89,8 @@ func New(cfg *config.Config, pool *pgxpool.Pool, store *storage.Store) (*chi.Mux
 	applyDBConfig("k8s_worker_node_selector", &cfg.K8sWorkerNodeSelector)
 	applyDBConfig("k8s_worker_tolerations", &cfg.K8sWorkerTolerations)
 	applyDBConfig("k8s_worker_labels", &cfg.K8sWorkerLabels)
+	applyDBConfig("k8s_worker_annotations", &cfg.K8sWorkerAnnotations)
+	applyDBConfig("k8s_image_pull_secret", &cfg.K8sImagePullSecret)
 	applyDBConfig("k8s_kubeconfig", &cfg.Kubeconfig)
 	applyDBConfig("agent_provider", &cfg.AgentProvider)
 	applyDBConfig("agent_model", &cfg.AgentModel)

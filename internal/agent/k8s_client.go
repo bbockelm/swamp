@@ -19,6 +19,7 @@ import (
 	"sigs.k8s.io/yaml"
 
 	"github.com/bbockelm/swamp/internal/config"
+	"github.com/rs/zerolog/log"
 )
 
 // K8sClient is a lightweight Kubernetes API client for the subset of batch/v1
@@ -251,6 +252,18 @@ func NewK8sClientFromKubeconfig(path string) (K8sClient, error) {
 		return nil, fmt.Errorf("kubeconfig basic auth is not supported by the lightweight client")
 	}
 
+	authMethod := "none"
+	if client.staticToken != "" {
+		authMethod = "static-token"
+	} else if client.tokenPath != "" {
+		authMethod = "token-file:" + client.tokenPath
+	} else if userEntry.User.ClientCertificateData != "" || userEntry.User.ClientCertificate != "" {
+		authMethod = "client-certificate"
+	}
+	log.Info().Str("host", client.host).Str("auth", authMethod).Str("context", cfg.CurrentContext).
+		Str("cluster", clusterEntry.Name).Str("user", userEntry.Name).
+		Msg("K8s client initialized from kubeconfig")
+
 	return client, nil
 }
 
@@ -275,6 +288,18 @@ func (c *k8sClient) doRequest(ctx context.Context, method, path string, body any
 	tok, err := c.token()
 	if err != nil {
 		return nil, 0, err
+	}
+	if tok == "" {
+		log.Warn().Str("method", method).Str("path", path).Msg("K8s API request has no auth token — will likely get 401")
+	} else {
+		// Log just enough to identify the token type without leaking it.
+		prefix := tok
+		if len(prefix) > 16 {
+			prefix = prefix[:16]
+		}
+		log.Debug().Str("method", method).Str("path", path).Str("host", c.host).
+			Str("token_prefix", prefix+"...").Int("token_len", len(tok)).
+			Msg("K8s API request")
 	}
 
 	var bodyReader io.Reader

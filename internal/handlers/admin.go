@@ -400,6 +400,7 @@ var executorConfigKeys = []struct {
 	{"k8s_worker_node_selector", "k8s_worker_node_selector"},
 	{"k8s_worker_tolerations", "k8s_worker_tolerations"},
 	{"k8s_worker_labels", "k8s_worker_labels"},
+	{"k8s_worker_annotations", "k8s_worker_annotations"},
 	{"k8s_image_pull_secret", "k8s_image_pull_secret"},
 	{"k8s_kubeconfig", "k8s_kubeconfig"},
 	{"k8s_pod_ttl_seconds", "k8s_pod_ttl_seconds"},
