@@ -16,16 +16,30 @@ COPY internal/ internal/
 COPY --from=node-builder /build/out internal/frontend/dist/
 RUN CGO_ENABLED=0 GOOS=linux go build -tags embed_frontend -o /swamp-server ./cmd/server
 
-# --- Production image ---
+# --- Production image (serves as both server and worker) ---
 FROM alpine:3.21
-RUN apk add --no-cache ca-certificates postgresql17-client nodejs npm python3 \
-    && npm install -g @anthropic-ai/claude-code \
+RUN apk add --no-cache \
+    bash \
+    ca-certificates \
+    curl \
+    git \
+    jq \
+    make \
+    nodejs \
+    npm \
+    openssh-client \
+    postgresql17-client \
+    py3-pip \
+    python3 \
+    && npm install -g @anthropic-ai/claude-code opencode-ai \
     && npm cache clean --force
+
+COPY --from=go-builder /swamp-server /usr/local/bin/swamp-server
+
 WORKDIR /app
-COPY --from=go-builder /swamp-server .
 
 ENV APP_ENV=production
 
 EXPOSE 8080
 
-CMD ["./swamp-server"]
+ENTRYPOINT ["/usr/local/bin/swamp-server"]

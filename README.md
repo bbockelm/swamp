@@ -209,16 +209,14 @@ The image referenced by `K8S_WORKER_IMAGE` must contain:
 	- `opencode` (from `opencode-ai`) for external LLM mode
 - `python3` and CA certificates
 
-This repository includes a dedicated runner image definition:
-
-- `Dockerfile.worker`
+This repository uses a single unified image for both the server and workers:
 
 Build and push example:
 
 ```bash
-docker build -f Dockerfile.worker -t ghcr.io/<org>/swamp-worker:<tag> .
-docker push ghcr.io/<org>/swamp-worker:<tag>
-export K8S_WORKER_IMAGE=ghcr.io/<org>/swamp-worker:<tag>
+docker build -t ghcr.io/<org>/swamp:<tag> .
+docker push ghcr.io/<org>/swamp:<tag>
+export K8S_WORKER_IMAGE=ghcr.io/<org>/swamp:<tag>
 ```
 
 Do not bake provider API keys into this image; keys are injected at runtime by SWAMP (token exchange / proxy flow).

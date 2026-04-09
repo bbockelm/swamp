@@ -326,6 +326,7 @@ func (e *K8sExecutor) buildJobSpec(jobName, analysisID, workerToken string) map[
 		"name":            "worker",
 		"image":           e.cfg.K8sWorkerImage,
 		"imagePullPolicy": "Always",
+		"workingDir":      "/work",
 		"env":             env,
 		"resources": map[string]any{
 			"requests": map[string]string{
