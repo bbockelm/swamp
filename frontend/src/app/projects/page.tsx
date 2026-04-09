@@ -839,6 +839,14 @@ function AnalysesTab({ projectId }: { projectId: string }) {
     staleTime: 60_000,
   });
 
+  // Auto-select the first available provider (no "server default" allowed).
+  useEffect(() => {
+    if (availableProviders && availableProviders.length > 0 && !selectedProvider) {
+      const first = availableProviders[0];
+      setSelectedProvider(`${first.source}:${first.id}`);
+    }
+  }, [availableProviders, selectedProvider]);
+
   const { data: agentStatus } = useQuery({
     queryKey: ['agent-status'],
     queryFn: () => api.agent.status(),
@@ -965,7 +973,6 @@ function AnalysesTab({ projectId }: { projectId: string }) {
                   }}
                   className="w-full border rounded px-3 py-2 text-sm bg-white"
                 >
-                  <option value="">Server default</option>
                   {availableProviders.map((p) => (
                     <option key={`${p.source}:${p.id}`} value={`${p.source}:${p.id}`}>
                       {p.label} ({p.api_schema}){p.source === 'project' ? ' — project' : p.source === 'env' ? ' — env' : ''}
@@ -1033,7 +1040,7 @@ function AnalysesTab({ projectId }: { projectId: string }) {
           </div>
           <button
             onClick={() => triggerMutation.mutate()}
-            disabled={!selectedPkgs.length || triggerMutation.isPending || !agentReady}
+            disabled={!selectedPkgs.length || triggerMutation.isPending || !agentReady || (hasProviders && !selectedProviderObj)}
             className="bg-green-600 text-white px-3 py-1.5 text-sm rounded hover:bg-green-700 disabled:opacity-50"
           >
             {triggerMutation.isPending ? "Starting..." : "Start Analysis"}

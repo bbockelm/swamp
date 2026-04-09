@@ -796,10 +796,7 @@ function LogContent({
     return <p className="text-sm text-gray-500 px-3 pb-2">Loading...</p>;
 
   const rawLines = content.split("\n");
-  const formattedLines = rawLines
-    .map(extractStreamMessage)
-    .filter((l) => l !== "")
-    .flatMap((l) => l.split("\n"));
+  const formattedLines = processLogLines(rawLines);
 
   return (
     <div>
@@ -849,8 +846,9 @@ function LogContent({
   );
 }
 
-/** Parse a stream-json line from Claude CLI into a human-readable string.
- * Mirrors the Go extractStreamMessage logic. Returns "" for skipped events. */
+/** Parse a stream-json line from Claude CLI or OpenCode into a human-readable
+ * string. Mirrors the Go extractStreamMessage / extractOpenCodeMessage logic.
+ * Returns "" for skipped events. */
 function extractStreamMessage(line: string): string {
   line = line.trim();
   if (!line || line[0] !== "{") return "";
@@ -864,6 +862,7 @@ function extractStreamMessage(line: string): string {
   if (!eventType) return "";
 
   switch (eventType) {
+    // --- Claude format ---
     case "assistant":
       return parseAssistantEvent(raw);
     case "user":
@@ -876,9 +875,91 @@ function extractStreamMessage(line: string): string {
       const msg = (raw as { message?: string }).message;
       return msg ? "[system] " + msg : "";
     }
+    // --- OpenCode format ---
+    case "text":
+      return parseOpenCodeTextEvent(raw);
+    case "tool_use":
+      return parseOpenCodeToolUseEvent(raw);
+    case "error": {
+      // error can be a string or an object {name, data:{message}}
+      const errField = raw.error;
+      if (typeof errField === "string" && errField) {
+        return "[error] " + errField;
+      }
+      if (errField && typeof errField === "object") {
+        const errObj = errField as Record<string, unknown>;
+        const data = errObj.data as Record<string, unknown> | undefined;
+        const msg = data?.message as string;
+        const name = (errObj.name as string) || "error";
+        if (msg) return "[error] " + name + ": " + msg;
+        if (errObj.name) return "[error] " + errObj.name;
+      }
+      // Fallback: part.error as string
+      const part = raw.part as Record<string, unknown> | undefined;
+      const errMsg = part?.error as string;
+      return errMsg ? "[error] " + errMsg : "";
+    }
+    case "step_start":
+    case "step_finish":
+      return "";
     default:
       return "";
   }
+}
+
+/** Parse an OpenCode "text" event: {"type":"text","part":{"type":"text","text":"..."}} */
+function parseOpenCodeTextEvent(raw: Record<string, unknown>): string {
+  const part = raw.part as Record<string, unknown> | undefined;
+  if (!part) return "";
+  const text = part.text as string;
+  return text || "";
+}
+
+/** Parse an OpenCode "tool_use" event with nested state containing input/output. */
+function parseOpenCodeToolUseEvent(raw: Record<string, unknown>): string {
+  const part = raw.part as Record<string, unknown> | undefined;
+  if (!part) return "";
+  const toolName = (part.tool as string) || "unknown";
+  const state = part.state as Record<string, unknown> | undefined;
+  if (!state) return `[tool] ${toolName}`;
+
+  // Prefer title, then extract detail from input args.
+  let detail = (state.title as string) || "";
+  if (!detail) {
+    const input = state.input as Record<string, unknown> | undefined;
+    if (input) {
+      const lname = toolName.toLowerCase();
+      if (lname === "bash") {
+        detail = (input.description as string) || truncateStr((input.command as string) || "", 120);
+      } else if (["read", "write", "edit", "view", "glob", "grep", "patch"].includes(lname)) {
+        detail = (input.file_path as string) || "";
+      } else {
+        for (const key of ["description", "file_path", "command", "query", "url"]) {
+          if (input[key]) { detail = truncateStr(String(input[key]), 120); break; }
+        }
+      }
+    }
+  }
+
+  let msg = detail ? `[tool] ${toolName}: ${detail}` : `[tool] ${toolName}`;
+
+  // Append tool output if present.
+  const output = ((state.output as string) || "").trim();
+  if (output) {
+    msg += "\n[result] " + truncateStr(output, 200);
+  }
+  return msg;
+}
+
+/** Process raw log lines into display lines. */
+function processLogLines(rawLines: string[]): string[] {
+  const out: string[] = [];
+  for (const line of rawLines) {
+    const parsed = extractStreamMessage(line);
+    if (parsed === "") continue;
+    out.push(...parsed.split("\n"));
+  }
+  return out;
 }
 
 function parseAssistantEvent(raw: Record<string, unknown>): string {

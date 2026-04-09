@@ -209,13 +209,12 @@ func runOpenCodeProcess(ctx context.Context, binary, workDir, prompt, analysisID
 // output and returns a human-readable string for the WebSocket feed.
 // Returns "" for events that should be silently skipped.
 //
-// opencode emits AI-SDK streaming events. Common shapes:
+// opencode emits session-level events. Common shapes:
 //
-//	{"type":"text-delta","textDelta":"..."}
-//	{"type":"tool-call","toolName":"...","args":{...}}
-//	{"type":"tool-result","toolName":"...","result":"..."}
-//	{"type":"finish","finishReason":"stop","usage":{...}}
-//	{"type":"error","error":"..."}
+//	{"type":"text","part":{"type":"text","text":"..."}}
+//	{"type":"tool_use","part":{"type":"tool","tool":"bash","state":{"input":{...},"output":"...","title":"..."}}}
+//	{"type":"step_start","part":{"type":"step-start"}}
+//	{"type":"step_finish","part":{"type":"step-finish","tokens":{...},"cost":0}}
 func extractOpenCodeMessage(line []byte) string {
 	if len(line) == 0 || line[0] != '{' {
 		// Non-JSON line — pass through as-is (trimmed).
@@ -229,8 +228,7 @@ func extractOpenCodeMessage(line []byte) string {
 	var raw map[string]json.RawMessage
 	if err := json.Unmarshal(line, &raw); err != nil {
 		// Not valid JSON — pass through.
-		s := strings.TrimSpace(string(line))
-		return s
+		return strings.TrimSpace(string(line))
 	}
 
 	var eventType string
@@ -239,46 +237,85 @@ func extractOpenCodeMessage(line []byte) string {
 	}
 
 	switch eventType {
-	case "text-delta":
-		var s string
-		if err := json.Unmarshal(raw["textDelta"], &s); err == nil && s != "" {
-			return s
+	case "text":
+		var part struct {
+			Text string `json:"text"`
 		}
-	case "tool-call":
-		var name string
-		_ = json.Unmarshal(raw["toolName"], &name)
-		var args map[string]json.RawMessage
-		if json.Unmarshal(raw["args"], &args) == nil {
-			detail := openCodeToolDetail(name, args)
-			if detail != "" {
-				return fmt.Sprintf("[tool] %s: %s", name, detail)
+		if json.Unmarshal(raw["part"], &part) == nil && part.Text != "" {
+			return part.Text
+		}
+
+	case "tool_use":
+		var part struct {
+			Tool  string `json:"tool"`
+			State struct {
+				Title  string                     `json:"title"`
+				Input  map[string]json.RawMessage `json:"input"`
+				Output string                     `json:"output"`
+			} `json:"state"`
+		}
+		if json.Unmarshal(raw["part"], &part) != nil {
+			return ""
+		}
+		toolName := part.Tool
+		if toolName == "" {
+			return ""
+		}
+		// Build tool description: prefer title, then extract from input.
+		detail := part.State.Title
+		if detail == "" {
+			detail = openCodeToolDetail(toolName, part.State.Input)
+		}
+		msg := ""
+		if detail != "" {
+			msg = fmt.Sprintf("[tool] %s: %s", toolName, detail)
+		} else {
+			msg = "[tool] " + toolName
+		}
+		// Append tool output if present.
+		output := strings.TrimSpace(part.State.Output)
+		if output != "" {
+			msg += "\n[result] " + truncate(output, 200)
+		}
+		return msg
+
+	case "error":
+		// Try top-level "error" field first — can be a string or an object.
+		if errRaw, ok := raw["error"]; ok {
+			// Try as plain string.
+			var errStr string
+			if json.Unmarshal(errRaw, &errStr) == nil && errStr != "" {
+				return "[error] " + errStr
+			}
+			// Try as object: {"name":"...","data":{"message":"..."}}
+			var errObj struct {
+				Name string `json:"name"`
+				Data struct {
+					Message string `json:"message"`
+				} `json:"data"`
+			}
+			if json.Unmarshal(errRaw, &errObj) == nil {
+				if errObj.Data.Message != "" {
+					prefix := errObj.Name
+					if prefix == "" {
+						prefix = "error"
+					}
+					return "[error] " + prefix + ": " + errObj.Data.Message
+				}
+				if errObj.Name != "" {
+					return "[error] " + errObj.Name
+				}
 			}
 		}
-		if name != "" {
-			return "[tool] " + name
+		// Fallback: try part.error as string.
+		var part struct {
+			Error string `json:"error"`
 		}
-	case "tool-result":
-		var name, result string
-		_ = json.Unmarshal(raw["toolName"], &name)
-		_ = json.Unmarshal(raw["result"], &result)
-		if result != "" {
-			return "[result] " + truncate(result, 200)
+		if json.Unmarshal(raw["part"], &part) == nil && part.Error != "" {
+			return "[error] " + part.Error
 		}
-		return "[result] (ok)"
-	case "finish":
-		var reason string
-		_ = json.Unmarshal(raw["finishReason"], &reason)
-		if reason != "" && reason != "stop" {
-			return "[finish] " + reason
-		}
-		return ""
-	case "error":
-		var errMsg string
-		_ = json.Unmarshal(raw["error"], &errMsg)
-		if errMsg != "" {
-			return "[error] " + errMsg
-		}
-	case "step-finish", "step-start", "usage":
+
+	case "step_start", "step_finish":
 		return ""
 	}
 	return ""

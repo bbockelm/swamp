@@ -100,6 +100,13 @@ func (h *Handler) CreateAnalysis(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// A provider must always be specified — "server default" is not allowed
+	// because it bypasses the per-project provider ACL.
+	if req.ProviderID == "" {
+		respondError(w, http.StatusBadRequest, "A provider must be selected")
+		return
+	}
+
 	// Verify all packages belong to the project
 	for _, pkgID := range req.PackageIDs {
 		pkg, err := h.queries.GetPackage(r.Context(), pkgID)
@@ -251,6 +258,7 @@ func (h *Handler) ResubmitAnalysis(w http.ResponseWriter, r *http.Request) {
 		ProjectID:    projectID,
 		Status:       "pending",
 		TriggeredBy:  user.ID,
+		AgentModel:   orig.AgentModel,
 		AgentConfig:  agentConfig,
 		CustomPrompt: orig.CustomPrompt,
 	}

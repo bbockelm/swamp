@@ -3,7 +3,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api, type SoftwarePackage, type Analysis, type Group, type Project, type AvailableProvider, type DiscoveredModel, type ProjectAllowedProvider } from '@/lib/api';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { AnalysisStatus } from '@/components/AnalysisStatus';
 import { Pagination, paginate } from '@/components/Pagination';
@@ -448,6 +448,14 @@ function AnalysesTab({
     staleTime: 60_000,
   });
 
+  // Auto-select the first available provider (no "server default" allowed).
+  useEffect(() => {
+    if (availableProviders && availableProviders.length > 0 && !selectedProvider) {
+      const first = availableProviders[0];
+      setSelectedProvider(`${first.source}:${first.id}`);
+    }
+  }, [availableProviders, selectedProvider]);
+
   // Legacy agent status (fallback when no providers are configured)
   const { data: agentStatus } = useQuery({
     queryKey: ['agent-status'],
@@ -561,7 +569,6 @@ function AnalysesTab({
                   }}
                   className="w-full border rounded px-3 py-2 text-sm bg-white"
                 >
-                  <option value="">Server default</option>
                   {availableProviders.map((p) => (
                     <option key={`${p.source}:${p.id}`} value={`${p.source}:${p.id}`}>
                       {p.label} ({p.api_schema}){p.source === 'project' ? ' — project' : p.source === 'env' ? ' — env' : ''}
@@ -629,7 +636,7 @@ function AnalysesTab({
           </div>
           <button
             onClick={() => triggerMutation.mutate()}
-            disabled={!selectedPkgs.length || triggerMutation.isPending || !agentReady}
+            disabled={!selectedPkgs.length || triggerMutation.isPending || !agentReady || (hasProviders && !selectedProviderObj)}
             className="bg-green-600 text-white px-3 py-1.5 text-sm rounded hover:bg-green-700 disabled:opacity-50"
           >
             {triggerMutation.isPending ? 'Starting...' : 'Start Analysis'}
