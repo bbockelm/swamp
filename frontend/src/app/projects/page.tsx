@@ -397,7 +397,9 @@ function ProjectCard({
 
   const canEdit = isSystemAdmin || project.my_role === "write" || project.my_role === "admin";
   const isProjectAdmin = isSystemAdmin || project.my_role === "admin";
-  const canManageProviders = session?.roles?.includes("admin") || session?.roles?.includes("project_creator");
+  const isOwner = session?.user?.id === project.owner_id;
+  const canManageProviders = isSystemAdmin || (isOwner && (session?.roles?.includes("project_creator") ?? false));
+  const canDelete = isSystemAdmin || isOwner;
 
   const groupName = (id: string | null) => {
     if (!id) return null;
@@ -523,6 +525,7 @@ function ProjectCard({
                 project={project}
                 groups={groups}
                 canManageProviders={canManageProviders}
+                canDelete={canDelete}
               />
             )}
           </div>
@@ -1796,10 +1799,12 @@ function SettingsTab({
   project,
   groups,
   canManageProviders,
+  canDelete,
 }: {
   project: Project;
   groups?: Group[];
   canManageProviders?: boolean;
+  canDelete?: boolean;
 }) {
   const queryClient = useQueryClient();
   const [name, setName] = useState(project.name);
@@ -1994,6 +1999,7 @@ function SettingsTab({
       )}
 
       {/* Danger zone */}
+      {canDelete && (
       <div className="border-t pt-4">
         <h4 className="text-sm font-semibold text-red-600 mb-2">Danger Zone</h4>
         <p className="text-xs text-gray-500 mb-3">
@@ -2024,6 +2030,7 @@ function SettingsTab({
           </button>
         )}
       </div>
+      )}
     </div>
   );
 }

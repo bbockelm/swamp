@@ -64,7 +64,10 @@ export default function ProjectDetailClient() {
 
   const canEdit = project.my_role === 'write' || project.my_role === 'admin';
   const isAdmin = project.my_role === 'admin';
-  const canManageProviders = session?.roles?.includes('admin') || session?.roles?.includes('project_creator');
+  const isOwner = session?.user?.id === project.owner_id;
+  const isSiteAdmin = session?.roles?.includes('admin') ?? false;
+  const canManageProviders = isSiteAdmin || (isOwner && (session?.roles?.includes('project_creator') ?? false));
+  const canDelete = isSiteAdmin || isOwner;
 
 
   const tabs: { key: Tab; label: string }[] = [
@@ -129,6 +132,7 @@ export default function ProjectDetailClient() {
           project={project}
           groups={groups}
           canManageProviders={canManageProviders}
+          canDelete={canDelete}
           onDelete={() => {
             if (confirm('Delete this project? This cannot be undone.')) {
               deleteMutation.mutate();
@@ -724,11 +728,13 @@ function SettingsTab({
   project,
   groups,
   canManageProviders,
+  canDelete,
   onDelete,
 }: {
   project: Project;
   groups?: Group[];
   canManageProviders?: boolean;
+  canDelete?: boolean;
   onDelete: () => void;
 }) {
   const queryClient = useQueryClient();
@@ -915,6 +921,7 @@ function SettingsTab({
         </div>
       )}
 
+      {canDelete && (
       <div className="border-t pt-6">
         <h3 className="text-lg font-semibold text-red-600 mb-2">
           Danger Zone
@@ -929,6 +936,7 @@ function SettingsTab({
           Delete Project
         </button>
       </div>
+      )}
     </div>
   );
 }

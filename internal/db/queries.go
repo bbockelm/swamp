@@ -639,7 +639,13 @@ func (q *Queries) ListUserProjects(ctx context.Context, userID string) ([]models
 		SELECT DISTINCT p.id, p.name, p.description, p.owner_id,
 		       p.read_group_id, p.write_group_id, p.admin_group_id,
 		       p.uses_global_key, p.status, p.created_at, p.updated_at,
-		       p.agent_provider, p.ext_llm_analysis_model, p.ext_llm_poc_model, p.ext_llm_fallback
+		       p.agent_provider, p.ext_llm_analysis_model, p.ext_llm_poc_model, p.ext_llm_fallback,
+		       CASE
+		         WHEN p.owner_id = $1 THEN 'admin'
+		         WHEN gm_a.user_id IS NOT NULL THEN 'admin'
+		         WHEN gm_w.user_id IS NOT NULL THEN 'write'
+		         ELSE 'read'
+		       END AS my_role
 		FROM projects p
 		LEFT JOIN group_members gm_r ON gm_r.group_id = p.read_group_id AND gm_r.user_id = $1
 		LEFT JOIN group_members gm_w ON gm_w.group_id = p.write_group_id AND gm_w.user_id = $1
@@ -659,7 +665,8 @@ func (q *Queries) ListUserProjects(ctx context.Context, userID string) ([]models
 		if err := rows.Scan(&p.ID, &p.Name, &p.Description, &p.OwnerID,
 			&p.ReadGroupID, &p.WriteGroupID, &p.AdminGroupID,
 			&p.UsesGlobalKey, &p.Status, &p.CreatedAt, &p.UpdatedAt,
-			&p.AgentProvider, &p.ExternalLLMAnalysisModel, &p.ExternalLLMPoCModel, &p.ExternalLLMFallback); err != nil {
+			&p.AgentProvider, &p.ExternalLLMAnalysisModel, &p.ExternalLLMPoCModel, &p.ExternalLLMFallback,
+			&p.MyRole); err != nil {
 			return nil, err
 		}
 		projects = append(projects, p)
@@ -667,7 +674,7 @@ func (q *Queries) ListUserProjects(ctx context.Context, userID string) ([]models
 	return projects, nil
 }
 
-// ListAllProjects returns all projects (admin only).
+// ListAllProjects returns all projects (admin only). All projects get my_role="admin".
 func (q *Queries) ListAllProjects(ctx context.Context) ([]models.Project, error) {
 	rows, err := q.pool.Query(ctx, `
 		SELECT DISTINCT p.id, p.name, p.description, p.owner_id,
@@ -689,6 +696,7 @@ func (q *Queries) ListAllProjects(ctx context.Context) ([]models.Project, error)
 			&p.AgentProvider, &p.ExternalLLMAnalysisModel, &p.ExternalLLMPoCModel, &p.ExternalLLMFallback); err != nil {
 			return nil, err
 		}
+		p.MyRole = "admin" // site admins have admin role on all projects
 		projects = append(projects, p)
 	}
 	return projects, nil

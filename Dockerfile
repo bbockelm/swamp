@@ -32,6 +32,13 @@ RUN apk add --no-cache \
     py3-pip \
     python3 \
     && npm install -g @anthropic-ai/claude-code opencode-ai \
+    && rm -f "$(npm root -g)/opencode-ai/bin/.opencode" \
+    && ARCH=$(uname -m) \
+    && if [ "$ARCH" = "x86_64" ]; then \
+         npm install -g opencode-linux-x64-baseline-musl; \
+       elif [ "$ARCH" = "aarch64" ]; then \
+         npm install -g opencode-linux-arm64-musl; \
+       fi \
     && npm cache clean --force
 
 COPY --from=go-builder /swamp-server /usr/local/bin/swamp-server

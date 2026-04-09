@@ -130,6 +130,9 @@ type Project struct {
 	// ExternalLLMFallback overrides EXTERNAL_LLM_FALLBACK.
 	// "anthropic" = retry Phase with Anthropic on failure. "" = no fallback.
 	ExternalLLMFallback *string `json:"ext_llm_fallback,omitempty"`
+
+	// MyRole is the caller's effective role for this project (set by handlers, not stored).
+	MyRole string `json:"my_role,omitempty"`
 }
 
 // SoftwarePackage is a Git repository registered for analysis.

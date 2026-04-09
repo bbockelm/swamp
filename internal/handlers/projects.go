@@ -51,6 +51,19 @@ func GetProjectFromContext(ctx context.Context) *models.Project {
 	return p
 }
 
+// canManageGlobalProviders returns true if the caller is a site admin or
+// if they are the project owner AND hold the project_creator role.
+func canManageGlobalProviders(ctx context.Context, projectOwnerID string) bool {
+	if UserHasRole(ctx, RoleAdmin) {
+		return true
+	}
+	user := GetUserFromContext(ctx)
+	if user == nil {
+		return false
+	}
+	return user.ID == projectOwnerID && UserHasRole(ctx, RoleProjectCreator)
+}
+
 // --- Projects CRUD ---
 
 func (h *Handler) ListProjects(w http.ResponseWriter, r *http.Request) {
@@ -119,29 +132,25 @@ func (h *Handler) GetProject(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Compute the caller's effective role for this project.
-	myRole := "read"
+	project.MyRole = "read"
 	if UserHasRole(r.Context(), RoleAdmin) {
-		myRole = "admin"
+		project.MyRole = "admin"
 	} else if user := GetUserFromContext(r.Context()); user != nil {
 		if project.OwnerID == user.ID {
-			myRole = "admin"
+			project.MyRole = "admin"
 		} else if project.AdminGroupID != nil {
 			if ok, _ := h.queries.IsGroupMember(r.Context(), *project.AdminGroupID, user.ID); ok {
-				myRole = "admin"
+				project.MyRole = "admin"
 			}
 		}
-		if myRole != "admin" && project.WriteGroupID != nil {
+		if project.MyRole != "admin" && project.WriteGroupID != nil {
 			if ok, _ := h.queries.IsGroupMember(r.Context(), *project.WriteGroupID, user.ID); ok {
-				myRole = "write"
+				project.MyRole = "write"
 			}
 		}
 	}
 
-	type projectWithRole struct {
-		models.Project
-		MyRole string `json:"my_role"`
-	}
-	respondJSON(w, http.StatusOK, projectWithRole{Project: *project, MyRole: myRole})
+	respondJSON(w, http.StatusOK, project)
 }
 
 func (h *Handler) UpdateProject(w http.ResponseWriter, r *http.Request) {
@@ -194,8 +203,8 @@ func (h *Handler) UpdateProject(w http.ResponseWriter, r *http.Request) {
 	// Only system admins or project_creators can enable uses_global_key.
 	if _, hasKey := rawUpdate["uses_global_key"]; hasKey {
 		if wantGlobal, ok := rawUpdate["uses_global_key"].(bool); ok {
-			if wantGlobal && !UserHasRole(r.Context(), RoleAdmin) && !UserHasRole(r.Context(), RoleProjectCreator) {
-				respondError(w, http.StatusForbidden, "Only admins or project creators can enable global key usage")
+			if wantGlobal && !canManageGlobalProviders(r.Context(), project.OwnerID) {
+				respondError(w, http.StatusForbidden, "Only admins or project owners with the project_creator role can enable global key usage")
 				return
 			}
 			project.UsesGlobalKey = wantGlobal
@@ -212,6 +221,21 @@ func (h *Handler) UpdateProject(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) DeleteProject(w http.ResponseWriter, r *http.Request) {
 	projectID := chi.URLParam(r, "projectID")
+
+	// Only the project owner (or a system admin) may delete.
+	if !UserHasRole(r.Context(), RoleAdmin) {
+		user := GetUserFromContext(r.Context())
+		project, err := h.queries.GetProject(r.Context(), projectID)
+		if err != nil {
+			respondError(w, http.StatusNotFound, "Project not found")
+			return
+		}
+		if user == nil || project.OwnerID != user.ID {
+			respondError(w, http.StatusForbidden, "Only the project owner can delete the project")
+			return
+		}
+	}
+
 	if err := h.queries.DeleteProject(r.Context(), projectID); err != nil {
 		log.Error().Err(err).Msg("Failed to delete project")
 		respondError(w, http.StatusInternalServerError, "Failed to delete project")
@@ -238,12 +262,17 @@ func (h *Handler) ListProjectAllowedProviders(w http.ResponseWriter, r *http.Req
 }
 
 // AddProjectAllowedProvider grants a project access to a global or env provider.
-// Requires admin or project_creator role.
+// Requires site admin, or the project owner must hold the project_creator role.
 func (h *Handler) AddProjectAllowedProvider(w http.ResponseWriter, r *http.Request) {
 	projectID := chi.URLParam(r, "projectID")
 
-	if !UserHasRole(r.Context(), RoleAdmin) && !UserHasRole(r.Context(), RoleProjectCreator) {
-		respondError(w, http.StatusForbidden, "Only admins or project creators can manage provider access")
+	project, err := h.queries.GetProject(r.Context(), projectID)
+	if err != nil {
+		respondError(w, http.StatusNotFound, "Project not found")
+		return
+	}
+	if !canManageGlobalProviders(r.Context(), project.OwnerID) {
+		respondError(w, http.StatusForbidden, "Only admins or the project owner with project_creator role can manage provider access")
 		return
 	}
 
@@ -278,12 +307,17 @@ func (h *Handler) AddProjectAllowedProvider(w http.ResponseWriter, r *http.Reque
 }
 
 // RemoveProjectAllowedProvider revokes a project's access to a global or env provider.
-// Requires admin or project_creator role.
+// Requires site admin, or the project owner must hold the project_creator role.
 func (h *Handler) RemoveProjectAllowedProvider(w http.ResponseWriter, r *http.Request) {
 	projectID := chi.URLParam(r, "projectID")
 
-	if !UserHasRole(r.Context(), RoleAdmin) && !UserHasRole(r.Context(), RoleProjectCreator) {
-		respondError(w, http.StatusForbidden, "Only admins or project creators can manage provider access")
+	project, err := h.queries.GetProject(r.Context(), projectID)
+	if err != nil {
+		respondError(w, http.StatusNotFound, "Project not found")
+		return
+	}
+	if !canManageGlobalProviders(r.Context(), project.OwnerID) {
+		respondError(w, http.StatusForbidden, "Only admins or the project owner with project_creator role can manage provider access")
 		return
 	}
 
