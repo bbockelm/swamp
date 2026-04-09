@@ -42,16 +42,22 @@ func writeOpenCodeConfig(workDir, baseURL, apiKey, model string) error {
 			"apiKey":  apiKey,
 		},
 	}
-	if model != "" {
-		providerCfg["models"] = map[string]any{
-			model: map[string]any{
-				"name": model,
-				"limit": map[string]any{
-					"context": maxContext,
-					"output":  maxOutput,
-				},
+
+	// opencode requires at least one model in the provider config or it
+	// fails with "no providers found".  Use the real model name when
+	// available; otherwise fall back to a placeholder.
+	cfgModel := model
+	if cfgModel == "" {
+		cfgModel = "auto"
+	}
+	providerCfg["models"] = map[string]any{
+		cfgModel: map[string]any{
+			"name": cfgModel,
+			"limit": map[string]any{
+				"context": maxContext,
+				"output":  maxOutput,
 			},
-		}
+		},
 	}
 
 	cfg := map[string]any{
@@ -59,11 +65,9 @@ func writeOpenCodeConfig(workDir, baseURL, apiKey, model string) error {
 		"provider": map[string]any{
 			providerName: providerCfg,
 		},
-		"permission": "allow",
-	}
-	if model != "" {
-		cfg["model"] = providerName + "/" + model
-		cfg["small_model"] = providerName + "/" + model
+		"model":       providerName + "/" + cfgModel,
+		"small_model": providerName + "/" + cfgModel,
+		"permission":  "allow",
 	}
 
 	data, err := json.MarshalIndent(cfg, "", "  ")
@@ -71,16 +75,17 @@ func writeOpenCodeConfig(workDir, baseURL, apiKey, model string) error {
 		return fmt.Errorf("marshal opencode config: %w", err)
 	}
 
-	// opencode resolves config from XDG config paths (typically
-	// $XDG_CONFIG_HOME/opencode/config.json); write both modern and legacy names.
-	configDir := filepath.Join(workDir, "opencode")
+	// Write config to the XDG_CONFIG_HOME path. We use a dedicated "config"
+	// subdirectory as XDG_CONFIG_HOME so that opencode's data directory
+	// (XDG_DATA_HOME) doesn't collide and overwrite the config files.
+	configDir := filepath.Join(workDir, "config", "opencode")
 	if err := os.MkdirAll(configDir, 0750); err != nil {
 		return fmt.Errorf("create opencode config dir: %w", err)
 	}
 	for _, p := range []string{
 		filepath.Join(configDir, "config.json"),
 		filepath.Join(configDir, "opencode.json"),
-		filepath.Join(workDir, "opencode.json"), // legacy/debug visibility
+		filepath.Join(workDir, "opencode.json"), // project root fallback + debug visibility
 	} {
 		if err := os.WriteFile(p, data, 0640); err != nil {
 			return fmt.Errorf("write opencode config %s: %w", p, err)
@@ -107,22 +112,30 @@ func runOpenCodeProcess(ctx context.Context, binary, workDir, prompt, analysisID
 		return fmt.Errorf("write opencode config: %w", err)
 	}
 
-	// opencode run [--model custom/<model>] --format json "<prompt>"
+	// Write prompt to file (for audit) and feed via stdin so it never
+	// appears in /proc/*/cmdline.
+	promptFile := filepath.Join(workDir, "prompt.txt")
+	if err := os.WriteFile(promptFile, []byte(prompt), 0640); err != nil {
+		return fmt.Errorf("write prompt file: %w", err)
+	}
+
 	args := []string{"run", "--format", "json"}
 	if model != "" {
 		args = append(args, "--model", "custom/"+model)
 	}
-	args = append(args, prompt)
 
 	cmd := exec.CommandContext(ctx, binary, args...)
 	cmd.Dir = workDir
+	cmd.Stdin = strings.NewReader(prompt)
+	// Use separate subdirectories for XDG paths to prevent opencode's
+	// data initialization from overwriting config files.
 	cmd.Env = append(os.Environ(),
 		fmt.Sprintf("HOME=%s", workDir),
 		"SHELL=/bin/bash",
-		fmt.Sprintf("XDG_CONFIG_HOME=%s", workDir),
-		fmt.Sprintf("XDG_DATA_HOME=%s", workDir),
-		fmt.Sprintf("XDG_CACHE_HOME=%s", workDir),
-		fmt.Sprintf("XDG_STATE_HOME=%s", workDir),
+		fmt.Sprintf("XDG_CONFIG_HOME=%s", filepath.Join(workDir, "config")),
+		fmt.Sprintf("XDG_DATA_HOME=%s", filepath.Join(workDir, "data")),
+		fmt.Sprintf("XDG_CACHE_HOME=%s", filepath.Join(workDir, "cache")),
+		fmt.Sprintf("XDG_STATE_HOME=%s", filepath.Join(workDir, "state")),
 	)
 
 	stdoutFile, err := os.Create(filepath.Join(workDir, "output", "agent_stdout.log"))

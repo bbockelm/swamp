@@ -23,8 +23,8 @@ type Buffer struct {
 	mu      sync.RWMutex
 	entries []Entry
 	size    int
-	pos     int    // next write position
-	count   int    // total entries written (for computing actual length)
+	pos     int // next write position
+	count   int // total entries written (for computing actual length)
 }
 
 // New creates a ring buffer that holds up to size entries.

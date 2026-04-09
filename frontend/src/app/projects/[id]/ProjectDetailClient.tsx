@@ -484,9 +484,11 @@ function AnalysesTab({
 
   const triggerMutation = useMutation({
     mutationFn: () => {
+      // Resolve concrete model: user selection → provider default → first discovered model.
+      const effectiveModel = agentModel || selectedProviderObj?.default_model || discoveredModels?.[0]?.id || undefined;
       const data: { package_ids: string[]; agent_model?: string; custom_prompt?: string; provider_id?: string; provider_source?: string } = {
         package_ids: selectedPkgs,
-        agent_model: agentModel || undefined,
+        agent_model: effectiveModel,
         custom_prompt: customPrompt || undefined,
       };
       if (selectedProviderObj) {

@@ -83,12 +83,12 @@ func isLoopback(hostname string) bool {
 // allowedCustomSchemes lists URI schemes used by well-known MCP client
 // applications for OAuth2 redirect callbacks.
 var allowedCustomSchemes = map[string]bool{
-	"vscode":              true, // VS Code
-	"vscode-insiders":     true, // VS Code Insiders
-	"cursor":              true, // Cursor IDE
-	"windsurf":            true, // Windsurf (Codeium)
-	"zed":                 true, // Zed editor
-	"jetbrains":           true, // JetBrains IDEs
+	"vscode":          true, // VS Code
+	"vscode-insiders": true, // VS Code Insiders
+	"cursor":          true, // Cursor IDE
+	"windsurf":        true, // Windsurf (Codeium)
+	"zed":             true, // Zed editor
+	"jetbrains":       true, // JetBrains IDEs
 }
 
 func isAllowedCustomScheme(scheme string) bool {

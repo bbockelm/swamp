@@ -111,50 +111,63 @@ func (wh *WorkerHandler) ProxyAnthropic(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	apiKey := ""
-	usesGlobalKey := false
-	if wh.h.encryptor != nil {
-		analysis, err := wh.h.queries.GetAnalysis(r.Context(), analysisID)
-		if err != nil {
-			log.Error().Err(err).Str("analysis_id", analysisID).Msg("Anthropic proxy: failed to load analysis")
-			http.Error(w, "Proxy not configured", http.StatusServiceUnavailable)
-			return
-		}
-
-		// Try to get a project-specific provider key.
-		if k, err := wh.h.queries.GetActiveProviderKey(r.Context(), analysis.ProjectID, "anthropic"); err == nil {
-			dek, err := wh.h.encryptor.UnwrapDEK(k.EncryptedDEK, k.DEKNonce)
-			if err == nil {
-				if pt, err := crypto.Decrypt(dek, k.EncryptedKey); err == nil {
-					apiKey = strings.TrimSpace(string(pt))
-				}
-			}
-		}
-
-		// If no project key, check if the project is allowed to use the global key.
-		if apiKey == "" {
-			project, err := wh.h.queries.GetProject(r.Context(), analysis.ProjectID)
-			if err != nil {
-				log.Error().Err(err).Str("project_id", analysis.ProjectID).Msg("Anthropic proxy: failed to load project")
-				http.Error(w, "Proxy not configured", http.StatusServiceUnavailable)
-				return
-			}
-			usesGlobalKey = project.UsesGlobalKey
-		}
-	} else {
-		// No encryptor means no project keys; allow global key fallback.
-		usesGlobalKey = true
+	analysis, err := wh.h.queries.GetAnalysis(r.Context(), analysisID)
+	if err != nil {
+		log.Error().Err(err).Str("analysis_id", analysisID).Msg("Anthropic proxy: failed to load analysis")
+		http.Error(w, "Proxy not configured", http.StatusServiceUnavailable)
+		return
 	}
 
-	// Only fall back to global key if the project allows it.
-	if apiKey == "" && usesGlobalKey {
-		if wh.h.cfg.AgentAPIKeyFile != "" {
-			if keyData, err := os.ReadFile(wh.h.cfg.AgentAPIKeyFile); err == nil {
-				apiKey = strings.TrimSpace(string(keyData))
+	// Try new provider resolution from analysis agent_config first.
+	resolvedProvider, resolveErr := agent.ResolveAnalysisProvider(r.Context(), wh.h.queries, wh.h.encryptor, wh.h.cfg, analysis)
+	if resolveErr != nil {
+		log.Warn().Err(resolveErr).Str("analysis_id", analysisID).Msg("Anthropic proxy: failed to resolve analysis provider")
+	}
+
+	apiKey := ""
+	if resolvedProvider != nil {
+		apiKey = resolvedProvider.APIKey
+	}
+
+	if apiKey == "" {
+		// Legacy fallback: project-level provider keys, then global key.
+		usesGlobalKey := false
+		if wh.h.encryptor != nil {
+			// Try to get a project-specific provider key.
+			if k, err := wh.h.queries.GetActiveProviderKey(r.Context(), analysis.ProjectID, "anthropic"); err == nil {
+				dek, err := wh.h.encryptor.UnwrapDEK(k.EncryptedDEK, k.DEKNonce)
+				if err == nil {
+					if pt, err := crypto.Decrypt(dek, k.EncryptedKey); err == nil {
+						apiKey = strings.TrimSpace(string(pt))
+					}
+				}
 			}
+
+			// If no project key, check if the project is allowed to use the global key.
+			if apiKey == "" {
+				project, err := wh.h.queries.GetProject(r.Context(), analysis.ProjectID)
+				if err != nil {
+					log.Error().Err(err).Str("project_id", analysis.ProjectID).Msg("Anthropic proxy: failed to load project")
+					http.Error(w, "Proxy not configured", http.StatusServiceUnavailable)
+					return
+				}
+				usesGlobalKey = project.UsesGlobalKey
+			}
+		} else {
+			// No encryptor means no project keys; allow global key fallback.
+			usesGlobalKey = true
 		}
-		if apiKey == "" {
-			apiKey = strings.TrimSpace(wh.h.cfg.AgentAPIKey)
+
+		// Only fall back to global key if the project allows it.
+		if apiKey == "" && usesGlobalKey {
+			if wh.h.cfg.AgentAPIKeyFile != "" {
+				if keyData, err := os.ReadFile(wh.h.cfg.AgentAPIKeyFile); err == nil {
+					apiKey = strings.TrimSpace(string(keyData))
+				}
+			}
+			if apiKey == "" {
+				apiKey = strings.TrimSpace(wh.h.cfg.AgentAPIKey)
+			}
 		}
 	}
 
@@ -273,15 +286,25 @@ func (wh *WorkerHandler) ProxyLLM(w http.ResponseWriter, r *http.Request) {
 	proxy.ServeHTTP(w, r)
 }
 
-// resolveLLMCredentials resolves the API key and endpoint URL for an analysis
-// based on its project's provider key configuration. Tries project-level keys
-// first (nrp, custom, external_llm), then falls back to global config.
+// resolveLLMCredentials resolves the API key and endpoint URL for an analysis.
+// First tries the new provider resolution from the analysis's agent_config,
+// then falls back to legacy project-level and global key lookup.
 func (wh *WorkerHandler) resolveLLMCredentials(r *http.Request, analysis *models.Analysis) (apiKey, endpointURL string, err error) {
+	ctx := r.Context()
+
+	// Try new provider resolution from analysis agent_config first.
+	resolvedProvider, resolveErr := agent.ResolveAnalysisProvider(ctx, wh.h.queries, wh.h.encryptor, wh.h.cfg, analysis)
+	if resolveErr != nil {
+		log.Warn().Err(resolveErr).Str("analysis_id", analysis.ID).Msg("LLM proxy: failed to resolve analysis provider")
+	}
+	if resolvedProvider != nil && resolvedProvider.APIKey != "" && resolvedProvider.BaseURL != "" {
+		return resolvedProvider.APIKey, resolvedProvider.BaseURL, nil
+	}
+
+	// Legacy fallback: project-level provider keys, then global config.
 	if wh.h.encryptor == nil {
 		return "", "", fmt.Errorf("encryption not configured")
 	}
-
-	ctx := r.Context()
 
 	// Try provider keys in order: nrp, custom, external_llm
 	for _, provider := range []string{"nrp", "custom", "external_llm"} {

@@ -352,9 +352,9 @@ type LLMProvider struct {
 // It can come from either a global LLM provider or a project provider key.
 type AvailableProvider struct {
 	ID           string `json:"id"`
-	Source       string `json:"source"`        // "global", "project", or "env"
+	Source       string `json:"source"` // "global", "project", or "env"
 	Label        string `json:"label"`
-	APISchema    string `json:"api_schema"`    // "anthropic" or "openai"
+	APISchema    string `json:"api_schema"` // "anthropic" or "openai"
 	BaseURL      string `json:"base_url"`
 	DefaultModel string `json:"default_model"`
 }

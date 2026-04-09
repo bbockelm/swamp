@@ -207,11 +207,11 @@ func (h *Handlers) Discovery(w http.ResponseWriter, r *http.Request) {
 		"introspection_endpoint": fmt.Sprintf("%s/oauth/introspect", base),
 		"jwks_uri":               fmt.Sprintf("%s/.well-known/jwks.json", base),
 
-		"response_types_supported":            []string{"code"},
-		"grant_types_supported":               []string{"authorization_code", "refresh_token"},
+		"response_types_supported":              []string{"code"},
+		"grant_types_supported":                 []string{"authorization_code", "refresh_token"},
 		"token_endpoint_auth_methods_supported": []string{"client_secret_basic", "client_secret_post", "none"},
-		"scopes_supported":                    []string{"openid", "profile", "mcp", "offline_access"},
-		"code_challenge_methods_supported":    []string{"S256"},
+		"scopes_supported":                      []string{"openid", "profile", "mcp", "offline_access"},
+		"code_challenge_methods_supported":      []string{"S256"},
 
 		"id_token_signing_alg_values_supported": []string{"RS256"},
 		"subject_types_supported":               []string{"public"},
@@ -247,11 +247,11 @@ func (h *Handlers) ClientRegistration(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		RedirectURIs []string `json:"redirect_uris"`
-		GrantTypes   []string `json:"grant_types"`
-		ClientName   string   `json:"client_name"`
-		Scope        string   `json:"scope"`
-		TokenEndpointAuthMethod string `json:"token_endpoint_auth_method"`
+		RedirectURIs            []string `json:"redirect_uris"`
+		GrantTypes              []string `json:"grant_types"`
+		ClientName              string   `json:"client_name"`
+		Scope                   string   `json:"scope"`
+		TokenEndpointAuthMethod string   `json:"token_endpoint_auth_method"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "invalid request body", http.StatusBadRequest)
@@ -342,10 +342,10 @@ func (h *Handlers) ClientRegistration(w http.ResponseWriter, r *http.Request) {
 
 	resp := map[string]any{
 		"client_id":                  clientID,
-		"redirect_uris":             req.RedirectURIs,
-		"grant_types":               req.GrantTypes,
-		"response_types":            []string{"code"},
-		"client_name":               req.ClientName,
+		"redirect_uris":              req.RedirectURIs,
+		"grant_types":                req.GrantTypes,
+		"response_types":             []string{"code"},
+		"client_name":                req.ClientName,
 		"token_endpoint_auth_method": "none",
 		"scope":                      req.Scope,
 	}

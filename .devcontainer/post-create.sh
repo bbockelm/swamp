@@ -14,6 +14,7 @@ fi
 echo "==> Installing development tools..."
 go install github.com/air-verse/air@latest
 go install github.com/pressly/goose/v3/cmd/goose@latest
+npm install -g opencode-ai
 
 echo "==> Running database migrations..."
 cd /workspace

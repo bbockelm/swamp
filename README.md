@@ -205,8 +205,8 @@ The image referenced by `K8S_WORKER_IMAGE` must contain:
 - `git` (the analysis workflow and prompts expect repository operations)
 - Node + npm runtime
 - Agent CLIs used by workers:
-	- `claude` (from `@anthropic-ai/claude-code`)
-	- `opencode` (from `opencode-ai`) for external LLM mode
+  - `claude` (from `@anthropic-ai/claude-code`)
+  - `opencode` (from `opencode-ai`) for external LLM mode
 - `python3` and CA certificates
 
 This repository uses a single unified image for both the server and workers:

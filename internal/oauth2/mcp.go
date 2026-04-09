@@ -12,12 +12,12 @@ func (h *Handlers) MCPResourceMetadata(w http.ResponseWriter, r *http.Request) {
 	base := h.issuerURL
 
 	doc := map[string]any{
-		"resource":                base,
-		"authorization_servers":   []string{base},
-		"scopes_supported":       []string{"mcp", "openid", "profile", "offline_access"},
+		"resource":                 base,
+		"authorization_servers":    []string{base},
+		"scopes_supported":         []string{"mcp", "openid", "profile", "offline_access"},
 		"bearer_methods_supported": []string{"header"},
-		"resource_documentation":  base + "/api/v1/docs",
-		"mcp_endpoint":            base + "/mcp",
+		"resource_documentation":   base + "/api/v1/docs",
+		"mcp_endpoint":             base + "/mcp",
 	}
 
 	w.Header().Set("Content-Type", "application/json")

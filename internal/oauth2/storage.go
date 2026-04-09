@@ -29,9 +29,9 @@ type Storage struct {
 
 // Compile-time interface checks.
 var (
-	_ fosite.Storage                      = (*Storage)(nil)
-	_ fosite.ClientManager                = (*Storage)(nil)
-	_ openid.OpenIDConnectRequestStorage  = (*Storage)(nil)
+	_ fosite.Storage                     = (*Storage)(nil)
+	_ fosite.ClientManager               = (*Storage)(nil)
+	_ openid.OpenIDConnectRequestStorage = (*Storage)(nil)
 	_ pkce.PKCERequestStorage            = (*Storage)(nil)
 )
 
@@ -55,22 +55,22 @@ type pgClient struct {
 	ClientName    string   `json:"client_name"`
 }
 
-func (c *pgClient) GetID() string                          { return c.ID }
-func (c *pgClient) GetHashedSecret() []byte                { return []byte(c.Secret) }
-func (c *pgClient) GetRedirectURIs() []string              { return c.RedirectURIs }
-func (c *pgClient) GetGrantTypes() fosite.Arguments        { return c.GrantTypes }
-func (c *pgClient) GetResponseTypes() fosite.Arguments     { return c.ResponseTypes }
-func (c *pgClient) GetScopes() fosite.Arguments            { return c.Scopes }
-func (c *pgClient) IsPublic() bool                         { return c.Public }
-func (c *pgClient) GetAudience() fosite.Arguments          { return nil }
+func (c *pgClient) GetID() string                      { return c.ID }
+func (c *pgClient) GetHashedSecret() []byte            { return []byte(c.Secret) }
+func (c *pgClient) GetRedirectURIs() []string          { return c.RedirectURIs }
+func (c *pgClient) GetGrantTypes() fosite.Arguments    { return c.GrantTypes }
+func (c *pgClient) GetResponseTypes() fosite.Arguments { return c.ResponseTypes }
+func (c *pgClient) GetScopes() fosite.Arguments        { return c.Scopes }
+func (c *pgClient) IsPublic() bool                     { return c.Public }
+func (c *pgClient) GetAudience() fosite.Arguments      { return nil }
 
 func (s *Storage) GetClient(ctx context.Context, id string) (fosite.Client, error) {
 	var (
-		c              pgClient
-		redirectJSON   []byte
-		grantJSON      []byte
-		responseJSON   []byte
-		scopeJSON      []byte
+		c            pgClient
+		redirectJSON []byte
+		grantJSON    []byte
+		responseJSON []byte
+		scopeJSON    []byte
 	)
 	err := s.pool.QueryRow(ctx, `
 		SELECT id, client_secret, redirect_uris, grant_types, response_types, scopes, public, client_name
@@ -153,15 +153,15 @@ func (s *Storage) DeleteUnusedDynamicClients(ctx context.Context, maxAge time.Du
 // ============================================================
 
 type serializedRequest struct {
-	RequestID      string                 `json:"request_id"`
-	RequestedAt    time.Time              `json:"requested_at"`
-	ClientID       string                 `json:"client_id"`
-	Scopes         []string               `json:"scopes"`
-	GrantedScopes  []string               `json:"granted_scopes"`
-	GrantedAudience []string              `json:"granted_audience"`
-	Form           map[string][]string    `json:"form"`
-	Session        json.RawMessage        `json:"session"`
-	Subject        string                 `json:"subject"`
+	RequestID       string              `json:"request_id"`
+	RequestedAt     time.Time           `json:"requested_at"`
+	ClientID        string              `json:"client_id"`
+	Scopes          []string            `json:"scopes"`
+	GrantedScopes   []string            `json:"granted_scopes"`
+	GrantedAudience []string            `json:"granted_audience"`
+	Form            map[string][]string `json:"form"`
+	Session         json.RawMessage     `json:"session"`
+	Subject         string              `json:"subject"`
 }
 
 func serializeRequest(req fosite.Requester) (*serializedRequest, error) {
@@ -241,12 +241,12 @@ func (s *Storage) createTokenSession(ctx context.Context, table, signature strin
 
 func (s *Storage) getTokenSession(ctx context.Context, table, signature string, session fosite.Session) (fosite.Requester, error) {
 	var (
-		sr              serializedRequest
-		scopeJSON       []byte
-		grantedJSON     []byte
-		audienceJSON    []byte
-		formJSON        []byte
-		active          bool
+		sr           serializedRequest
+		scopeJSON    []byte
+		grantedJSON  []byte
+		audienceJSON []byte
+		formJSON     []byte
+		active       bool
 	)
 	err := s.pool.QueryRow(ctx, fmt.Sprintf(`
 		SELECT request_id, requested_at, client_id, scopes, granted_scopes, granted_audience, form_data, session_data, subject, active

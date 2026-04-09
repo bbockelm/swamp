@@ -23,12 +23,12 @@ import (
 // hashes — cleartext tokens never reach the DB) so they survive server
 // restarts regardless of executor mode.
 type WorkerTokenStore struct {
-	mu             sync.Mutex
-	tokens         map[string]*workerTokenEntry  // keyed by token hash (in-memory only)
-	sessions       map[string]*WorkerSession     // keyed by session token hash (cached from DB)
-	proxyTokens    map[string]string             // keyed by proxy token hash → analysisID (cached from DB)
-	lastUsed       map[string]time.Time          // keyed by token hash → last DB touch time (debounce)
-	queries        *db.Queries                   // nil = no persistence (tests / local executor)
+	mu          sync.Mutex
+	tokens      map[string]*workerTokenEntry // keyed by token hash (in-memory only)
+	sessions    map[string]*WorkerSession    // keyed by session token hash (cached from DB)
+	proxyTokens map[string]string            // keyed by proxy token hash → analysisID (cached from DB)
+	lastUsed    map[string]time.Time         // keyed by token hash → last DB touch time (debounce)
+	queries     *db.Queries                  // nil = no persistence (tests / local executor)
 }
 
 const (
@@ -99,10 +99,10 @@ type workerPackageInfo struct {
 // NewWorkerTokenStore creates a new token store without DB persistence.
 func NewWorkerTokenStore() *WorkerTokenStore {
 	return &WorkerTokenStore{
-		tokens:        make(map[string]*workerTokenEntry),
-		sessions:      make(map[string]*WorkerSession),
-		proxyTokens:   make(map[string]string),
-		lastUsed:      make(map[string]time.Time),
+		tokens:      make(map[string]*workerTokenEntry),
+		sessions:    make(map[string]*WorkerSession),
+		proxyTokens: make(map[string]string),
+		lastUsed:    make(map[string]time.Time),
 	}
 }
 
@@ -110,11 +110,11 @@ func NewWorkerTokenStore() *WorkerTokenStore {
 // Existing sessions and proxy tokens are loaded from the DB on creation.
 func NewWorkerTokenStoreWithDB(queries *db.Queries) *WorkerTokenStore {
 	s := &WorkerTokenStore{
-		tokens:        make(map[string]*workerTokenEntry),
-		sessions:      make(map[string]*WorkerSession),
-		proxyTokens:   make(map[string]string),
-		lastUsed:      make(map[string]time.Time),
-		queries:       queries,
+		tokens:      make(map[string]*workerTokenEntry),
+		sessions:    make(map[string]*WorkerSession),
+		proxyTokens: make(map[string]string),
+		lastUsed:    make(map[string]time.Time),
+		queries:     queries,
 	}
 	s.loadFromDB()
 	return s

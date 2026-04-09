@@ -586,18 +586,18 @@ func (s *Server) listFindings(ctx context.Context, req mcp.CallToolRequest) (*mc
 
 	// Build a more compact representation for MCP consumers.
 	type compactFinding struct {
-		ID           string `json:"id"`
-		RuleID       string `json:"rule_id"`
-		Level        string `json:"level"`
-		Message      string `json:"message"`
-		FilePath     string `json:"file_path"`
-		StartLine    int    `json:"start_line"`
-		EndLine      int    `json:"end_line"`
-		Snippet      string `json:"snippet,omitempty"`
-		Status       string `json:"status"`
-		GitURL       string `json:"git_url,omitempty"`
-		AnalysisID   string `json:"analysis_id"`
-		GitCommit    string `json:"git_commit,omitempty"`
+		ID         string `json:"id"`
+		RuleID     string `json:"rule_id"`
+		Level      string `json:"level"`
+		Message    string `json:"message"`
+		FilePath   string `json:"file_path"`
+		StartLine  int    `json:"start_line"`
+		EndLine    int    `json:"end_line"`
+		Snippet    string `json:"snippet,omitempty"`
+		Status     string `json:"status"`
+		GitURL     string `json:"git_url,omitempty"`
+		AnalysisID string `json:"analysis_id"`
+		GitCommit  string `json:"git_commit,omitempty"`
 	}
 
 	compact := make([]compactFinding, len(findings))
@@ -712,7 +712,7 @@ func (s *Server) getFindingsSummary(ctx context.Context, req mcp.CallToolRequest
 
 	// Group by file for a cleaner view.
 	type fileSummary struct {
-		FilePath string              `json:"file_path"`
+		FilePath string                  `json:"file_path"`
 		Findings []models.FindingSummary `json:"findings"`
 	}
 	byFile := make(map[string]*fileSummary)

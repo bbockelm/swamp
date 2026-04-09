@@ -205,18 +205,44 @@ func (e *ProcessExecutor) launchProcess(analysis *models.Analysis, packages []mo
 		effectiveModel = e.cfg.AgentModel
 	}
 
-	// Resolve effective LLM config (global + per-project overrides).
-	var project *models.Project
-	if e.queries != nil && analysis.ProjectID != "" {
-		project, _ = e.queries.GetProject(ctx, analysis.ProjectID)
+	// Try new provider-based resolution first (from analysis agent_config).
+	resolvedProvider, resolveErr := ResolveAnalysisProvider(ctx, e.queries, e.encryptor, e.cfg, analysis)
+	if resolveErr != nil {
+		log.Warn().Err(resolveErr).Str("analysis_id", analysis.ID).Msg("Failed to resolve analysis provider, falling back to legacy")
 	}
-	llmConfig := ResolveEffectiveLLMConfig(e.cfg, project)
 
-	// For external/nrp/custom providers, the worker routes through the SWAMP
-	// proxy. The proxy resolves the real API key and endpoint server-side.
-	extLLMProxyURL := ""
-	if llmConfig.Provider == "external" {
-		extLLMProxyURL = llmProxyURL
+	var agentProvider string
+	var extLLMProxyURL string
+	var extLLMAnalysisModel string
+	var extLLMPoCModel string
+
+	if resolvedProvider != nil {
+		// New provider-based path: use the resolved provider info.
+		if resolvedProvider.Model != "" {
+			effectiveModel = resolvedProvider.Model
+		}
+		if resolvedProvider.APISchema == "openai" {
+			agentProvider = "external"
+			extLLMProxyURL = llmProxyURL
+			extLLMAnalysisModel = resolvedProvider.Model
+			extLLMPoCModel = resolvedProvider.Model
+		} else {
+			// Anthropic schema — use the anthropic proxy.
+			agentProvider = "anthropic"
+		}
+	} else {
+		// Legacy: resolve from global + per-project overrides.
+		var project *models.Project
+		if e.queries != nil && analysis.ProjectID != "" {
+			project, _ = e.queries.GetProject(ctx, analysis.ProjectID)
+		}
+		llmConfig := ResolveEffectiveLLMConfig(e.cfg, project)
+		agentProvider = llmConfig.Provider
+		extLLMAnalysisModel = llmConfig.AnalysisModel
+		extLLMPoCModel = llmConfig.PoCModel
+		if llmConfig.Provider == "external" {
+			extLLMProxyURL = llmProxyURL
+		}
 	}
 
 	// Issue one-time token.
@@ -228,11 +254,11 @@ func (e *ProcessExecutor) launchProcess(analysis *models.Analysis, packages []mo
 		analysis.CustomPrompt,
 		analysisCtx,
 		10*time.Minute,
-		llmConfig.Provider,
+		agentProvider,
 		extLLMProxyURL,
 		"", // no direct key in process mode — worker reaches SWAMP proxy on localhost
-		llmConfig.AnalysisModel,
-		llmConfig.PoCModel,
+		extLLMAnalysisModel,
+		extLLMPoCModel,
 	)
 	if err != nil {
 		e.failAnalysis(analysis.ID, "Failed to issue worker token", err)

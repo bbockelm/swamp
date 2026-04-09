@@ -8,10 +8,10 @@ import (
 )
 
 // StartCleanupLoop starts a background goroutine that periodically:
-// 1. Deletes dynamically registered clients that are older than unusedMaxAge
-//    and have never been used to authenticate (last_used_at IS NULL).
-// 2. Removes expired tokens from all token tables.
-// 3. Cleans up stale rate limiter buckets.
+//  1. Deletes dynamically registered clients that are older than unusedMaxAge
+//     and have never been used to authenticate (last_used_at IS NULL).
+//  2. Removes expired tokens from all token tables.
+//  3. Cleans up stale rate limiter buckets.
 func (h *Handlers) StartCleanupLoop(ctx context.Context, unusedMaxAge time.Duration) {
 	go func() {
 		ticker := time.NewTicker(10 * time.Minute)

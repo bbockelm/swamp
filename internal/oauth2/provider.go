@@ -61,16 +61,16 @@ func NewProvider(ctx context.Context, pool *pgxpool.Pool, issuerURL string, mast
 	}
 
 	fositeConfig := &fosite.Config{
-		GlobalSecret:           hmacSecret,
-		AccessTokenLifespan:    1 * time.Hour,
-		RefreshTokenLifespan:   7 * 24 * time.Hour,
-		AuthorizeCodeLifespan:  10 * time.Minute,
-		IDTokenLifespan:        1 * time.Hour,
-		AccessTokenIssuer:      issuerURL,
-		IDTokenIssuer:          issuerURL,
-		ScopeStrategy:          fosite.WildcardScopeStrategy,
-		AudienceMatchingStrategy: fosite.DefaultAudienceMatchingStrategy,
-		EnforcePKCE:            true,
+		GlobalSecret:                hmacSecret,
+		AccessTokenLifespan:         1 * time.Hour,
+		RefreshTokenLifespan:        7 * 24 * time.Hour,
+		AuthorizeCodeLifespan:       10 * time.Minute,
+		IDTokenLifespan:             1 * time.Hour,
+		AccessTokenIssuer:           issuerURL,
+		IDTokenIssuer:               issuerURL,
+		ScopeStrategy:               fosite.WildcardScopeStrategy,
+		AudienceMatchingStrategy:    fosite.DefaultAudienceMatchingStrategy,
+		EnforcePKCE:                 true,
 		EnforcePKCEForPublicClients: true,
 	}
 
@@ -112,7 +112,7 @@ func NewProvider(ctx context.Context, pool *pgxpool.Pool, issuerURL string, mast
 // The private key is encrypted at rest using envelope encryption.
 func getOrCreateSigningKey(ctx context.Context, pool *pgxpool.Pool, enc *crypto.Encryptor) (*rsa.PrivateKey, string, error) {
 	var kid string
-	var privPEM string          // plaintext PEM (legacy rows)
+	var privPEM string                      // plaintext PEM (legacy rows)
 	var encPrivKey, encDEK, dekNonce []byte // encrypted columns (new rows)
 
 	err := pool.QueryRow(ctx, `
