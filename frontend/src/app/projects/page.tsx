@@ -22,6 +22,7 @@ import { SARIFViewer } from "@/components/SARIFViewer";
 import { MarkdownReport } from "@/components/MarkdownReport";
 import { GitBranchInput } from "@/components/GitBranchInput";
 import { FindingsTable } from "@/components/FindingsTable";
+import { StreamLine, extractStreamMessage, processLogLines } from "@/lib/stream-utils";
 
 const ANALYSES_PAGE_SIZE = 10;
 
@@ -1534,8 +1535,8 @@ function LogContent({
   );
 }
 
-/** Parse a stream-json line from Claude CLI into a human-readable string.
- * Mirrors the Go extractStreamMessage logic. Returns "" for skipped events. */
+/** Parse a stream-json line into a human-readable string.
+ * Handles both Claude CLI and OpenCode formats. Returns "" for skipped events. */
 function extractStreamMessage(line: string): string {
   line = line.trim();
   if (!line || line[0] !== "{") return "";
@@ -1549,6 +1550,7 @@ function extractStreamMessage(line: string): string {
   if (!eventType) return "";
 
   switch (eventType) {
+    // --- Claude format ---
     case "assistant":
       return parseAssistantEvent(raw);
     case "user":
@@ -1561,9 +1563,73 @@ function extractStreamMessage(line: string): string {
       const msg = (raw as { message?: string }).message;
       return msg ? "[system] " + msg : "";
     }
+    // --- OpenCode format ---
+    case "text":
+      return parseOpenCodeTextEvent(raw);
+    case "tool_use":
+      return parseOpenCodeToolUseEvent(raw);
+    case "error": {
+      const errField = raw.error;
+      if (typeof errField === "string" && errField) {
+        return "[error] " + errField;
+      }
+      if (errField && typeof errField === "object") {
+        const errObj = errField as Record<string, unknown>;
+        const data = errObj.data as Record<string, unknown> | undefined;
+        const msg = data?.message as string;
+        const name = (errObj.name as string) || "error";
+        if (msg) return "[error] " + name + ": " + msg;
+        if (errObj.name) return "[error] " + errObj.name;
+      }
+      const part = raw.part as Record<string, unknown> | undefined;
+      const errMsg = part?.error as string;
+      return errMsg ? "[error] " + errMsg : "";
+    }
+    case "step_start":
+    case "step_finish":
+      return "";
     default:
       return "";
   }
+}
+
+function parseOpenCodeTextEvent(raw: Record<string, unknown>): string {
+  const part = raw.part as Record<string, unknown> | undefined;
+  if (!part) return "";
+  const text = part.text as string;
+  return text || "";
+}
+
+function parseOpenCodeToolUseEvent(raw: Record<string, unknown>): string {
+  const part = raw.part as Record<string, unknown> | undefined;
+  if (!part) return "";
+  const toolName = (part.tool as string) || "unknown";
+  const state = part.state as Record<string, unknown> | undefined;
+  if (!state) return `[tool] ${toolName}`;
+
+  let detail = (state.title as string) || "";
+  if (!detail) {
+    const input = state.input as Record<string, unknown> | undefined;
+    if (input) {
+      const lname = toolName.toLowerCase();
+      if (lname === "bash") {
+        detail = (input.description as string) || truncateStr((input.command as string) || "", 120);
+      } else if (["read", "write", "edit", "view", "glob", "grep", "patch"].includes(lname)) {
+        detail = (input.file_path as string) || "";
+      } else {
+        for (const key of ["description", "file_path", "command", "query", "url"]) {
+          if (input[key]) { detail = truncateStr(String(input[key]), 120); break; }
+        }
+      }
+    }
+  }
+
+  let msg = detail ? `[tool] ${toolName}: ${detail}` : `[tool] ${toolName}`;
+  const output = ((state.output as string) || "").trim();
+  if (output) {
+    msg += "\n[result] " + truncateStr(output, 200);
+  }
+  return msg;
 }
 
 function parseAssistantEvent(raw: Record<string, unknown>): string {
