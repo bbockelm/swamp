@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { api, User, Group, Project } from "@/lib/api";
+import { api, User } from "@/lib/api";
 
 function UserCard({ user }: { user: User }) {
   const [expanded, setExpanded] = useState(false);

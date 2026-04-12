@@ -1,9 +1,9 @@
 'use client';
 
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { api, type SoftwarePackage, type Analysis, type Group, type Project, type AvailableProvider, type DiscoveredModel, type ProjectAllowedProvider } from '@/lib/api';
+import { api, type SoftwarePackage, type Analysis, type Group, type Project } from '@/lib/api';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import Link from 'next/link';
 import { AnalysisStatus } from '@/components/AnalysisStatus';
 import { Pagination, paginate } from '@/components/Pagination';
@@ -452,13 +452,9 @@ function AnalysesTab({
     staleTime: 60_000,
   });
 
-  // Auto-select the first available provider (no "server default" allowed).
-  useEffect(() => {
-    if (availableProviders && availableProviders.length > 0 && !selectedProvider) {
-      const first = availableProviders[0];
-      setSelectedProvider(`${first.source}:${first.id}`);
-    }
-  }, [availableProviders, selectedProvider]);
+  // Auto-select the first available provider when none is explicitly chosen.
+  const effectiveProvider = selectedProvider
+    || (availableProviders?.length ? `${availableProviders[0].source}:${availableProviders[0].id}` : '');
 
   // Legacy agent status (fallback when no providers are configured)
   const { data: agentStatus } = useQuery({
@@ -471,12 +467,12 @@ function AnalysesTab({
 
   // Parse selected provider
   const selectedProviderObj = availableProviders?.find(
-    (p) => `${p.source}:${p.id}` === selectedProvider
+    (p) => `${p.source}:${p.id}` === effectiveProvider
   );
 
   // Discover models for selected provider
   const { data: discoveredModels, isFetching: loadingModels } = useQuery({
-    queryKey: ['discovered-models', selectedProvider],
+    queryKey: ['discovered-models', effectiveProvider],
     queryFn: () => {
       if (!selectedProviderObj) return Promise.resolve([]);
       if (selectedProviderObj.source === 'global') {
@@ -516,9 +512,6 @@ function AnalysesTab({
       setAgentModel('');
     },
   });
-
-  // Legacy model selection (fallback when no providers available)
-  const isLegacyExternal = !hasProviders && agentStatus?.provider === 'external';
 
   return (
     <div>
@@ -566,7 +559,7 @@ function AnalysesTab({
                   Provider
                 </label>
                 <select
-                  value={selectedProvider}
+                  value={effectiveProvider}
                   onChange={(e) => {
                     setSelectedProvider(e.target.value);
                     setAgentModel('');
@@ -613,7 +606,7 @@ function AnalysesTab({
                       className="w-full border rounded px-3 py-2 text-sm bg-white"
                     />
                     <p className="text-xs text-gray-500 mt-1">
-                      {selectedProvider ? 'Could not discover models. Enter a model ID manually or leave blank.' : 'Select a provider to discover available models.'}
+                      {effectiveProvider ? 'Could not discover models. Enter a model ID manually or leave blank.' : 'Select a provider to discover available models.'}
                     </p>
                   </>
                 )}
