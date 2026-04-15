@@ -865,11 +865,8 @@ function AnalysesTab({ projectId }: { projectId: string }) {
     queryKey: ['discovered-models', effectiveProvider],
     queryFn: () => {
       if (!selectedProviderObj) return Promise.resolve([]);
-      if (selectedProviderObj.source === 'global') {
-        return api.llmProviders.discoverModels(selectedProviderObj.id);
-      }
-      if (selectedProviderObj.source === 'env') {
-        return api.llmProviders.discoverEnvModels(selectedProviderObj.id);
+      if (selectedProviderObj.source === 'global' || selectedProviderObj.source === 'env') {
+        return api.discoverAvailableProviderModels(projectId, selectedProviderObj.source, selectedProviderObj.id);
       }
       return api.providerKeys.discoverModels(projectId, selectedProviderObj.id);
     },

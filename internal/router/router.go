@@ -365,6 +365,7 @@ func New(cfg *config.Config, pool *pgxpool.Pool, store *storage.Store) (*chi.Mux
 
 					// Available providers (readable by anyone with project access)
 					r.Get("/available-providers", h.ListAvailableProviders)
+					r.Get("/available-providers/{providerSource}/{providerID}/models", h.DiscoverAvailableProviderModels)
 				})
 			})
 

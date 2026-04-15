@@ -648,6 +648,9 @@ export const api = {
   availableProviders: (projectId: string): Promise<AvailableProvider[]> =>
     fetchJSON(`${BASE}/projects/${projectId}/available-providers`),
 
+  discoverAvailableProviderModels: (projectId: string, providerSource: string, providerId: string): Promise<DiscoveredModel[]> =>
+    fetchJSON(`${BASE}/projects/${projectId}/available-providers/${providerSource}/${providerId}/models`),
+
   allProviders: (projectId: string): Promise<AvailableProvider[]> =>
     fetchJSON(`${BASE}/projects/${projectId}/available-providers?include_all=true`),
 

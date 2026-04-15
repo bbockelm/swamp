@@ -447,3 +447,98 @@ func (h *Handler) DiscoverEnvProviderModels(w http.ResponseWriter, r *http.Reque
 
 	respondJSON(w, http.StatusOK, models)
 }
+
+// DiscoverAvailableProviderModels fetches models for a provider that is
+// available to the given project. This endpoint is accessible to any user
+// with read access to the project, unlike the admin-only endpoints.
+func (h *Handler) DiscoverAvailableProviderModels(w http.ResponseWriter, r *http.Request) {
+	projectID := chi.URLParam(r, "projectID")
+	providerSource := chi.URLParam(r, "providerSource")
+	providerID := chi.URLParam(r, "providerID")
+
+	// Verify the provider is actually available to this project.
+	allowed, err := h.queries.ListProjectAllowedProviders(r.Context(), projectID)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "Failed to check provider access")
+		return
+	}
+	isAllowed := false
+	for _, a := range allowed {
+		if a.ProviderSource == providerSource && a.ProviderID == providerID {
+			isAllowed = true
+			break
+		}
+	}
+	if !isAllowed {
+		respondError(w, http.StatusForbidden, "Provider not available to this project")
+		return
+	}
+
+	switch providerSource {
+	case "global":
+		p, err := h.queries.GetLLMProvider(r.Context(), providerID)
+		if err != nil {
+			respondError(w, http.StatusNotFound, "Provider not found")
+			return
+		}
+		apiKey, err := h.decryptLLMProviderKey(p)
+		if err != nil {
+			respondError(w, http.StatusInternalServerError, "Failed to decrypt provider key")
+			return
+		}
+		discovered, err := agent.DiscoverModels(r.Context(), p.APISchema, p.BaseURL, apiKey)
+		if err != nil {
+			log.Warn().Err(err).Str("provider_id", providerID).Msg("Model discovery failed")
+			respondError(w, http.StatusBadGateway, "Failed to discover models: "+err.Error())
+			return
+		}
+		respondJSON(w, http.StatusOK, discovered)
+
+	case "env":
+		// Delegate to the same logic as DiscoverEnvProviderModels.
+		var apiSchema, baseURL, apiKey string
+		switch providerID {
+		case "env-anthropic":
+			apiSchema = "anthropic"
+			baseURL = "https://api.anthropic.com"
+			apiKey = strings.TrimSpace(h.cfg.AgentAPIKey)
+			if apiKey == "" && h.cfg.AgentAPIKeyFile != "" {
+				data, err := os.ReadFile(h.cfg.AgentAPIKeyFile)
+				if err != nil {
+					respondError(w, http.StatusInternalServerError, "Failed to read API key file")
+					return
+				}
+				apiKey = strings.TrimSpace(string(data))
+			}
+		case "env-external":
+			apiSchema = "openai"
+			baseURL = h.cfg.ExternalLLMEndpoint
+			apiKey = strings.TrimSpace(h.cfg.ExternalLLMAPIKey)
+			if apiKey == "" && h.cfg.ExternalLLMAPIKeyFile != "" {
+				data, err := os.ReadFile(h.cfg.ExternalLLMAPIKeyFile)
+				if err != nil {
+					respondError(w, http.StatusInternalServerError, "Failed to read API key file")
+					return
+				}
+				apiKey = strings.TrimSpace(string(data))
+			}
+		default:
+			respondError(w, http.StatusNotFound, "Unknown env provider")
+			return
+		}
+		if apiKey == "" {
+			respondError(w, http.StatusBadRequest, "No API key configured for this env provider")
+			return
+		}
+		discovered, err := agent.DiscoverModels(r.Context(), apiSchema, baseURL, apiKey)
+		if err != nil {
+			log.Warn().Err(err).Str("provider", providerID).Msg("Env provider model discovery failed")
+			respondError(w, http.StatusBadGateway, "Failed to discover models: "+err.Error())
+			return
+		}
+		respondJSON(w, http.StatusOK, discovered)
+
+	default:
+		respondError(w, http.StatusBadRequest, "Invalid provider source")
+	}
+}
