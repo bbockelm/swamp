@@ -8,13 +8,17 @@ RUN npm run build
 
 # --- Build backend with embedded frontend ---
 FROM golang:1.26-alpine AS go-builder
+ARG VERSION=dev
+ARG COMMIT=unknown
 WORKDIR /build
 COPY go.mod go.sum ./
 RUN go mod download
 COPY cmd/ cmd/
 COPY internal/ internal/
 COPY --from=node-builder /build/out internal/frontend/dist/
-RUN CGO_ENABLED=0 GOOS=linux go build -tags embed_frontend -o /swamp-server ./cmd/server
+RUN CGO_ENABLED=0 GOOS=linux go build -tags embed_frontend \
+    -ldflags "-X github.com/bbockelm/swamp/internal/version.Version=${VERSION} -X github.com/bbockelm/swamp/internal/version.Commit=${COMMIT}" \
+    -o /swamp-server ./cmd/server
 
 # --- Production image (serves as both server and worker) ---
 FROM alpine:3.21

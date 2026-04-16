@@ -3,6 +3,8 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { api } from "@/lib/api";
 
 const navItems = [
   { label: "Dashboard", href: "/" },
@@ -31,6 +33,13 @@ export function Sidebar({ roles = [], userName }: SidebarProps) {
   const pathname = usePathname();
   const [mobileOpen, setMobileOpen] = useState(false);
   const isAdmin = roles.includes("admin");
+
+  const { data: versionInfo } = useQuery({
+    queryKey: ["version"],
+    queryFn: api.version,
+    staleTime: Infinity,
+    enabled: isAdmin,
+  });
 
   return (
     <>
@@ -133,6 +142,11 @@ export function Sidebar({ roles = [], userName }: SidebarProps) {
           >
             Sign Out
           </button>
+          {isAdmin && versionInfo && (
+            <p className="px-3 pt-1 text-[10px] text-gray-500 truncate" title={`${versionInfo.version} (${versionInfo.commit})`}>
+              {versionInfo.version}
+            </p>
+          )}
         </div>
       </aside>
     </>

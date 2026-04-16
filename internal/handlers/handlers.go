@@ -13,6 +13,7 @@ import (
 	"github.com/bbockelm/swamp/internal/db"
 	"github.com/bbockelm/swamp/internal/logbuffer"
 	"github.com/bbockelm/swamp/internal/storage"
+	"github.com/bbockelm/swamp/internal/version"
 )
 
 // Handler holds dependencies for HTTP handlers.
@@ -49,6 +50,14 @@ func (h *Handler) SetLogBuffer(buf *logbuffer.Buffer) {
 // HealthCheck returns a simple health status.
 func (h *Handler) HealthCheck(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// GetVersion returns the build version and commit.
+func (h *Handler) GetVersion(w http.ResponseWriter, r *http.Request) {
+	respondJSON(w, http.StatusOK, map[string]string{
+		"version": version.Version,
+		"commit":  version.Commit,
+	})
 }
 
 // AgentStatus returns whether the analysis agent is configured and ready.

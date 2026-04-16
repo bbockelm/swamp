@@ -365,6 +365,9 @@ export const api = {
     }> => fetchJSON(`${BASE}/agent/status`),
   },
 
+  version: (): Promise<{ version: string; commit: string }> =>
+    fetchJSON(`${BASE}/version`),
+
   users: {
     search: (q: string): Promise<User[]> =>
       fetchJSON(`${BASE}/users/search?q=${encodeURIComponent(q)}`),

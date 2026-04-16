@@ -135,6 +135,9 @@ func New(cfg *config.Config, pool *pgxpool.Pool, store *storage.Store) (*chi.Mux
 	// Health check
 	r.Get("/healthz", h.HealthCheck)
 
+	// Version info (public)
+	r.Get("/api/v1/version", h.GetVersion)
+
 	// ---- OAuth2/OIDC Provider (for MCP authentication) ----
 	// Configure extra redirect URI domains from config.
 	if cfg.OAuthExtraRedirectDomains != "" {

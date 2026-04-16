@@ -27,8 +27,12 @@ dev-frontend: ## Run Next.js dev server
 
 build: build-backend build-frontend ## Build everything
 
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+COMMIT  ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
+LDFLAGS := -X github.com/bbockelm/swamp/internal/version.Version=$(VERSION) -X github.com/bbockelm/swamp/internal/version.Commit=$(COMMIT)
+
 build-backend: ## Build Go binary (dev — no embedded frontend)
-	CGO_ENABLED=0 go build -o bin/swamp-server ./cmd/server
+	CGO_ENABLED=0 go build -ldflags "$(LDFLAGS)" -o bin/swamp-server ./cmd/server
 
 build-frontend: ## Build Next.js frontend (static export)
 	cd frontend && npm run build
@@ -36,7 +40,7 @@ build-frontend: ## Build Next.js frontend (static export)
 build-prod: build-frontend ## Build single production binary with embedded frontend
 	rm -rf internal/frontend/dist
 	cp -r frontend/out internal/frontend/dist
-	CGO_ENABLED=0 go build -tags embed_frontend -o bin/swamp-server ./cmd/server
+	CGO_ENABLED=0 go build -tags embed_frontend -ldflags "$(LDFLAGS)" -o bin/swamp-server ./cmd/server
 	rm -rf internal/frontend/dist
 
 prod: build-prod ## Build and run production binary locally (uses current env)

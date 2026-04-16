@@ -31,13 +31,18 @@ jobs:
           username: ${{ secrets.REGISTRY_USERNAME }}
           password: ${{ secrets.REGISTRY_PASSWORD }}
 
-      - name: Generate image tag
+      - name: Generate image tag and version
         id: tag
         run: |
           TIMESTAMP=$(date +%s)
           TAG="dev-${TIMESTAMP}"
           echo "tag=${TAG}" >> $GITHUB_OUTPUT
           echo "Image will be tagged as: ${TAG}"
+          # Use git tag if on an exact tag, otherwise use the tag name
+          GIT_VERSION=$(git describe --tags --always --dirty 2>/dev/null || echo "dev")
+          GIT_COMMIT=$(git rev-parse --short HEAD)
+          echo "version=${GIT_VERSION}" >> $GITHUB_OUTPUT
+          echo "commit=${GIT_COMMIT}" >> $GITHUB_OUTPUT
 
       - name: Build and push image
         uses: docker/build-push-action@v5
@@ -46,5 +51,8 @@ jobs:
           file: ./Dockerfile
           push: true
           tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.tag.outputs.tag }}
+          build-args: |
+            VERSION=${{ steps.tag.outputs.version }}
+            COMMIT=${{ steps.tag.outputs.commit }}
           cache-from: type=gha
           cache-to: type=gha,mode=max

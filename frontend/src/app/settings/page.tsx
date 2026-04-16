@@ -15,6 +15,12 @@ export default function AdminSettingsPage() {
     enabled: !!session?.user,
   });
 
+  const { data: versionInfo } = useQuery({
+    queryKey: ['version'],
+    queryFn: api.version,
+    staleTime: Infinity,
+  });
+
   return (
     <div>
       <h1 className="text-2xl font-bold mb-6">Info</h1>
@@ -111,6 +117,21 @@ export default function AdminSettingsPage() {
               >
                 Manage API Keys →
               </a>
+            </div>
+          </div>
+        )}
+
+        {/* Version */}
+        {versionInfo && (
+          <div>
+            <h2 className="text-lg font-semibold mb-3">Version</h2>
+            <div className="bg-gray-50 p-4 rounded border text-sm">
+              <div className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1">
+                <span className="text-gray-500">Version:</span>
+                <span className="font-mono">{versionInfo.version}</span>
+                <span className="text-gray-500">Commit:</span>
+                <span className="font-mono">{versionInfo.commit}</span>
+              </div>
             </div>
           </div>
         )}
