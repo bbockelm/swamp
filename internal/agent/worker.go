@@ -189,6 +189,14 @@ func RunWorker(cfg *config.Config) error {
 		return fmt.Errorf("agent produced no output")
 	}
 
+	// Detect if the agent exited 0 but only emitted error events (e.g. API
+	// routing error, invalid model). This means no useful work was done.
+	if fatalErr := checkOpenCodeFatalError(stdoutLog); fatalErr != "" {
+		reportStatus(serverURL, sessionToken, analysisID, "failed", "Agent failed: "+fatalErr)
+		_ = uploadResults(serverURL, sessionToken, analysisID, outputDir)
+		return fmt.Errorf("agent fatal error: %s", fatalErr)
+	}
+
 	// Check for shutdown before starting Phase 2.
 	if isShuttingDown() {
 		streamer.send("[system] Shutdown signal received — skipping Phase 2, uploading results...")

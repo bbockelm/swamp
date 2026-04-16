@@ -321,6 +321,55 @@ func extractOpenCodeMessage(line []byte) string {
 	return ""
 }
 
+// checkOpenCodeFatalError scans an opencode agent_stdout.log and returns an
+// error message if the output contains only error events and no real work (no
+// text or tool_use events). This detects cases where opencode exits 0 but
+// emitted only a connection or API error.
+func checkOpenCodeFatalError(stdoutLogPath string) string {
+	f, err := os.Open(stdoutLogPath)
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+
+	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 0, 256*1024), 256*1024)
+
+	var lastError string
+	hasWork := false
+	hasError := false
+
+	for scanner.Scan() {
+		line := scanner.Bytes()
+		if len(line) == 0 || line[0] != '{' {
+			continue
+		}
+		var raw map[string]json.RawMessage
+		if json.Unmarshal(line, &raw) != nil {
+			continue
+		}
+		var eventType string
+		if json.Unmarshal(raw["type"], &eventType) != nil {
+			continue
+		}
+		switch eventType {
+		case "text", "tool_use":
+			hasWork = true
+		case "error":
+			hasError = true
+			lastError = extractOpenCodeMessage(line)
+		}
+	}
+
+	if hasError && !hasWork {
+		if lastError != "" {
+			return lastError
+		}
+		return "Agent emitted only error events with no analysis output"
+	}
+	return ""
+}
+
 // openCodeToolDetail extracts a concise description from a tool-call's args.
 func openCodeToolDetail(toolName string, args map[string]json.RawMessage) string {
 	switch toolName {

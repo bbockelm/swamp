@@ -46,7 +46,7 @@ export function StreamLine({ line }: { line: string }) {
   }
   if (line.startsWith("[error]")) {
     return (
-      <div className="flex items-start gap-2 py-1.5 px-2 rounded bg-red-950/30 text-red-300 text-xs">
+      <div className="flex items-start gap-2 py-1.5 px-2 rounded bg-red-900/50 text-red-200 text-xs border-l-2 border-red-500">
         <span className="shrink-0">✕</span>
         <span className="break-words whitespace-pre-wrap font-mono">{line.slice(8)}</span>
       </div>

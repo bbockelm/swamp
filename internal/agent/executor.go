@@ -284,6 +284,12 @@ func (e *Executor) run(analysis *models.Analysis, packages []models.SoftwarePack
 				e.failAnalysis(ctx, analysis.ID, "Agent execution failed (Phase 1)", phase1Err)
 				return
 			}
+			// Detect error-only output (e.g. API routing error, invalid model).
+			stdoutLog := filepath.Join(workDir, "output", "agent_stdout.log")
+			if fatalErr := checkOpenCodeFatalError(stdoutLog); fatalErr != "" {
+				e.failAnalysis(ctx, analysis.ID, "Agent failed: "+fatalErr, nil)
+				return
+			}
 			if _, statErr := os.Stat(sarifPath); statErr == nil {
 				if err := e.updateStatus(ctx, analysis.ID, "running", "Phase 2: Exploit validation"); err != nil {
 					return
@@ -297,8 +303,16 @@ func (e *Executor) run(analysis *models.Analysis, packages []models.SoftwarePack
 		default: // "anthropic"
 			if err := e.runAnthropicPhasesWithKey(ctx, workDir, prompt, sarifPath, packages, analysis, resolvedProvider.APIKey, resolvedProvider.Model); err != nil {
 				e.failAnalysis(ctx, analysis.ID, "Agent execution failed", err)
+				return
 			}
 		}
+		// Mark completed for new provider-based path.
+		completeCtx, completeCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer completeCancel()
+		if err := e.queries.SetAnalysisCompleted(completeCtx, analysis.ID, "completed", ""); err != nil {
+			log.Error().Err(err).Str("analysis_id", analysis.ID).Msg("Failed to mark analysis completed")
+		}
+		e.hub.Broadcast(analysis.ID, []byte("[system] Analysis complete"))
 		return
 	}
 
@@ -333,6 +347,19 @@ func (e *Executor) run(analysis *models.Analysis, packages []models.SoftwarePack
 				return
 			}
 			e.failAnalysis(ctx, analysis.ID, "Agent execution failed (Phase 1)", phase1Err)
+			return
+		}
+		// Detect error-only output (e.g. API routing error, invalid model).
+		legacyStdoutLog := filepath.Join(workDir, "output", "agent_stdout.log")
+		if fatalErr := checkOpenCodeFatalError(legacyStdoutLog); fatalErr != "" {
+			if llmConfig.Fallback == "anthropic" {
+				log.Warn().Str("analysis_id", analysis.ID).Str("error", fatalErr).Msg("External LLM emitted only errors, falling back to Anthropic")
+				if err := e.runAnthropicPhases(ctx, workDir, prompt, sarifPath, packages, analysis); err != nil {
+					e.failAnalysis(ctx, analysis.ID, "Agent execution failed (Anthropic fallback)", err)
+				}
+				return
+			}
+			e.failAnalysis(ctx, analysis.ID, "Agent failed: "+fatalErr, nil)
 			return
 		}
 
