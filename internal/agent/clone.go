@@ -6,9 +6,13 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"time"
 
 	"github.com/bbockelm/swamp/internal/models"
 )
+
+// cloneTimeout is the maximum time allowed for a git clone operation.
+const cloneTimeout = 5 * time.Minute
 
 // SecureGitClone clones a private repository using the provided credential.
 //
@@ -28,6 +32,10 @@ import (
 //     The helper inherits fd 3 from git and reads the token from the pipe.
 //  5. The pipe is consumed (single-read), the helper script is deleted.
 func SecureGitClone(ctx context.Context, cred *models.GitCloneCredential, workDir string) (string, error) {
+	// Apply a timeout so a hanging clone doesn't block the worker forever.
+	ctx, cancel := context.WithTimeout(ctx, cloneTimeout)
+	defer cancel()
+
 	repoDir := filepath.Join(workDir, "repo")
 
 	// Create a credential helper script. It contains no secrets; it reads

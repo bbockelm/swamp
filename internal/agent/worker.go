@@ -99,7 +99,7 @@ func RunWorker(cfg *config.Config) error {
 	var preClonedPath string
 	if session.GitCloneCred != nil {
 		log.Info().Str("url", session.GitCloneCred.CloneURL).Msg("Pre-cloning private repository")
-		localPath, err := SecureGitClone(ctx, session.GitCloneCred, workDir)
+		localPath, err := SecureGitClone(context.Background(), session.GitCloneCred, workDir)
 		// Zero the token in memory immediately after use.
 		session.GitCloneCred.Token = ""
 		session.GitCloneCred = nil
