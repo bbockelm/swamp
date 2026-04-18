@@ -178,63 +178,66 @@ func New(cfg *config.Config, pool *pgxpool.Pool, store *storage.Store) (*chi.Mux
 			context.Background(), pool, cfg.BaseURL, cfg.InstanceKey,
 		)
 		if err != nil {
-			log.Fatal().Err(err).Msg("Failed to initialize OAuth2 provider")
-		}
-
-		getUserFromReq := func(r *http.Request) (string, string, bool) {
-			cookie, err := r.Cookie("swamp_session")
-			if err != nil || cookie.Value == "" {
-				return "", "", false
+			log.Error().Err(err).Msg("Failed to initialize OAuth2 provider — OAuth2/OIDC endpoints will be unavailable. " +
+				"This can happen after restoring from an incompatible backup. " +
+				"To fix: restore using the application's backup restore API (which re-encrypts keys), " +
+				"or delete the oauth2_signing_keys row and restart to generate a fresh key.")
+		} else {
+			getUserFromReq := func(r *http.Request) (string, string, bool) {
+				cookie, err := r.Cookie("swamp_session")
+				if err != nil || cookie.Value == "" {
+					return "", "", false
+				}
+				session, err := queries.GetSession(r.Context(), handlers.HashToken(cookie.Value))
+				if err != nil {
+					return "", "", false
+				}
+				user, err := queries.GetUser(r.Context(), session.UserID)
+				if err != nil || user.Status != "active" {
+					return "", "", false
+				}
+				return user.ID, user.DisplayName, true
 			}
-			session, err := queries.GetSession(r.Context(), handlers.HashToken(cookie.Value))
-			if err != nil {
-				return "", "", false
+
+			sessionFactory := func() fosite.Session {
+				return openid.NewDefaultSession()
 			}
-			user, err := queries.GetUser(r.Context(), session.UserID)
-			if err != nil || user.Status != "active" {
-				return "", "", false
-			}
-			return user.ID, user.DisplayName, true
+
+			oauthHandlers = swampoauth2.NewHandlers(oauthProvider, cfg.BaseURL, sessionFactory, nil)
+			consent := swampoauth2.NewConsentHandler(oauthHandlers, cfg.BaseURL, getUserFromReq)
+
+			// Set the consent handler on the OAuth2 handlers.
+			oauthHandlers.SetConsentHandler(consent.HandleConsent)
+
+			// Well-known discovery endpoints (no auth required).
+			r.Get("/.well-known/openid-configuration", oauthHandlers.Discovery)
+			r.Get("/.well-known/oauth-authorization-server", oauthHandlers.MCPAuthMetadata)
+			r.Get("/.well-known/oauth-protected-resource", oauthHandlers.MCPResourceMetadata)
+			r.Get("/.well-known/jwks.json", oauthHandlers.JWKS)
+
+			// OAuth2 endpoints (no auth middleware — fosite handles client auth).
+			r.Get("/oauth/authorize", oauthHandlers.Authorize)
+			r.Post("/oauth/authorize", oauthHandlers.Authorize)
+			r.Post("/oauth/token", oauthHandlers.Token)
+			r.Post("/oauth/revoke", oauthHandlers.Revoke)
+			r.Post("/oauth/introspect", oauthHandlers.Introspect)
+
+			// Dynamic client registration (RFC 7591, for MCP clients).
+			r.Post("/oauth/register", oauthHandlers.ClientRegistration)
+
+			// Start background cleanup: delete unused DCR clients after 6 hours,
+			// purge expired tokens, and clean up rate limiter buckets.
+			oauthHandlers.StartCleanupLoop(context.Background(), 6*time.Hour)
+
+			log.Info().Str("issuer", cfg.BaseURL).Msg("OAuth2/OIDC provider enabled")
+
+			// ---- MCP (Model Context Protocol) endpoint ----
+			// Authenticated via OAuth2 bearer tokens; provides tool-based access
+			// to SWAMP projects, analyses, findings, and results.
+			mcpSrv := swampmcp.New(queries, store, enc, oauthProvider, exec, cfg.BaseURL)
+			r.Mount("/mcp", mcpSrv.Handler())
+			log.Info().Msg("MCP endpoint enabled at /mcp")
 		}
-
-		sessionFactory := func() fosite.Session {
-			return openid.NewDefaultSession()
-		}
-
-		oauthHandlers = swampoauth2.NewHandlers(oauthProvider, cfg.BaseURL, sessionFactory, nil)
-		consent := swampoauth2.NewConsentHandler(oauthHandlers, cfg.BaseURL, getUserFromReq)
-
-		// Set the consent handler on the OAuth2 handlers.
-		oauthHandlers.SetConsentHandler(consent.HandleConsent)
-
-		// Well-known discovery endpoints (no auth required).
-		r.Get("/.well-known/openid-configuration", oauthHandlers.Discovery)
-		r.Get("/.well-known/oauth-authorization-server", oauthHandlers.MCPAuthMetadata)
-		r.Get("/.well-known/oauth-protected-resource", oauthHandlers.MCPResourceMetadata)
-		r.Get("/.well-known/jwks.json", oauthHandlers.JWKS)
-
-		// OAuth2 endpoints (no auth middleware — fosite handles client auth).
-		r.Get("/oauth/authorize", oauthHandlers.Authorize)
-		r.Post("/oauth/authorize", oauthHandlers.Authorize)
-		r.Post("/oauth/token", oauthHandlers.Token)
-		r.Post("/oauth/revoke", oauthHandlers.Revoke)
-		r.Post("/oauth/introspect", oauthHandlers.Introspect)
-
-		// Dynamic client registration (RFC 7591, for MCP clients).
-		r.Post("/oauth/register", oauthHandlers.ClientRegistration)
-
-		// Start background cleanup: delete unused DCR clients after 6 hours,
-		// purge expired tokens, and clean up rate limiter buckets.
-		oauthHandlers.StartCleanupLoop(context.Background(), 6*time.Hour)
-
-		log.Info().Str("issuer", cfg.BaseURL).Msg("OAuth2/OIDC provider enabled")
-
-		// ---- MCP (Model Context Protocol) endpoint ----
-		// Authenticated via OAuth2 bearer tokens; provides tool-based access
-		// to SWAMP projects, analyses, findings, and results.
-		mcpSrv := swampmcp.New(queries, store, enc, oauthProvider, exec, cfg.BaseURL)
-		r.Mount("/mcp", mcpSrv.Handler())
-		log.Info().Msg("MCP endpoint enabled at /mcp")
 	}
 
 	// WebSocket endpoint for live analysis output (unauthenticated WS upgrade,

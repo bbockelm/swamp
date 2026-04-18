@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/bbockelm/swamp/internal/models"
@@ -38,13 +39,20 @@ func SecureGitClone(ctx context.Context, cred *models.GitCloneCredential, workDi
 
 	repoDir := filepath.Join(workDir, "repo")
 
+	// The git credential-helper protocol uses newlines as field delimiters
+	// and has no escaping mechanism. Reject tokens that contain characters
+	// which would break the protocol.
+	if strings.ContainsAny(cred.Token, "\n\r\x00") {
+		return "", fmt.Errorf("credential token contains invalid characters (newline or null)")
+	}
+
 	// Create a credential helper script. It contains no secrets; it reads
 	// the credential response from fd 3 (an inherited pipe).
 	helperPath := filepath.Join(workDir, ".git-credential-helper")
 	if err := os.WriteFile(helperPath, []byte("#!/bin/sh\ncat <&3\n"), 0700); err != nil {
 		return "", fmt.Errorf("write credential helper: %w", err)
 	}
-	defer os.Remove(helperPath)
+	defer func() { _ = os.Remove(helperPath) }()
 
 	// Create a pipe. The write end carries the credential; the read end
 	// will be inherited as fd 3 by git (and its credential-helper child).
@@ -56,8 +64,8 @@ func SecureGitClone(ctx context.Context, cred *models.GitCloneCredential, workDi
 	// Write the git credential-helper protocol response to the pipe.
 	// Done in a goroutine because pipe writes can block if the buffer is full.
 	go func() {
-		defer pw.Close()
-		fmt.Fprintf(pw, "username=x-access-token\npassword=%s\n", cred.Token)
+		defer func() { _ = pw.Close() }()
+		_, _ = fmt.Fprintf(pw, "username=x-access-token\npassword=%s\n", cred.Token)
 	}()
 
 	// Build git clone command. The -c flag sets the credential helper to
@@ -82,7 +90,7 @@ func SecureGitClone(ctx context.Context, cred *models.GitCloneCredential, workDi
 	cmd.ExtraFiles = []*os.File{pr}
 
 	output, err := cmd.CombinedOutput()
-	pr.Close()
+	_ = pr.Close()
 	if err != nil {
 		return "", fmt.Errorf("git clone failed: %w: %s", err, string(output))
 	}

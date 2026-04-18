@@ -150,7 +150,7 @@ func (c *Client) GetInstallationToken(ctx context.Context, installationID int64)
 	if err != nil {
 		return "", fmt.Errorf("requesting installation token: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != 201 {
@@ -236,7 +236,7 @@ func (c *Client) UploadSARIF(ctx context.Context, installationID int64, owner, r
 	if err != nil {
 		return "", fmt.Errorf("SARIF upload request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	body, _ := io.ReadAll(resp.Body)
 
 	if resp.StatusCode != 202 {
@@ -298,7 +298,7 @@ func (c *Client) SyncInstallations(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("listing installations: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != 200 {
 		return fmt.Errorf("listing installations returned %d: %s", resp.StatusCode, string(body))
@@ -347,7 +347,7 @@ func (c *Client) GetRepositoryDefaultBranch(ctx context.Context, installationID 
 	if err != nil {
 		return "", err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != 200 {
 		return "", fmt.Errorf("get repo returned %d: %s", resp.StatusCode, string(body))

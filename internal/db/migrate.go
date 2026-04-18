@@ -3,6 +3,10 @@ package db
 import (
 	"database/sql"
 	"fmt"
+	"io/fs"
+	"path/filepath"
+	"strconv"
+	"strings"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/pressly/goose/v3"
@@ -29,4 +33,36 @@ func RunMigrations(databaseURL string) error {
 
 	log.Info().Msg("Database migrations applied")
 	return nil
+}
+
+// MaxEmbeddedMigrationVersion returns the highest migration version number
+// from the embedded migration files. Migration files are expected to be named
+// like "001_name.sql", "002_name.sql", etc.
+func MaxEmbeddedMigrationVersion() (int64, error) {
+	entries, err := fs.ReadDir(MigrationsFS, "migrations")
+	if err != nil {
+		return 0, fmt.Errorf("reading embedded migrations: %w", err)
+	}
+	var maxVersion int64
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		name := filepath.Base(e.Name())
+		parts := strings.SplitN(name, "_", 2)
+		if len(parts) < 2 {
+			continue
+		}
+		v, err := strconv.ParseInt(parts[0], 10, 64)
+		if err != nil {
+			continue
+		}
+		if v > maxVersion {
+			maxVersion = v
+		}
+	}
+	if maxVersion == 0 {
+		return 0, fmt.Errorf("no migrations found")
+	}
+	return maxVersion, nil
 }

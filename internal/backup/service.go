@@ -12,6 +12,8 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
+	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -1142,6 +1144,23 @@ func (s *Service) restoreFromData(ctx context.Context, data []byte, encrypted bo
 		}
 	}
 
+	// Pre-flight: verify S3 connectivity before wiping the database.
+	// A failed S3 after a DB restore leaves the system in an unrecoverable state.
+	if len(s3Objects) > 0 {
+		if err := s.preflight3Check(ctx); err != nil {
+			return fmt.Errorf("S3 pre-flight check failed — aborting restore to protect existing data: %w", err)
+		}
+	}
+
+	// Pre-flight: check that the backup's schema version is not newer than
+	// the running server's migration version. Restoring a newer schema onto
+	// an older server would leave the DB in an incompatible state.
+	if sqlData != nil {
+		if err := s.checkBackupSchemaVersion(ctx, sqlData); err != nil {
+			return err
+		}
+	}
+
 	// 1. Restore the database first (DEK columns are NULLed by backup).
 	if sqlData != nil {
 		if err := s.restoreDatabase(sqlData); err != nil {
@@ -1172,7 +1191,14 @@ func (s *Service) restoreFromData(ctx context.Context, data []byte, encrypted bo
 		}
 	}
 
-	// 4. Reconcile any stale "running" backups from the restored database.
+	// 4. Run migrations to bring the schema up to the server's version.
+	//    This handles restoring from an older backup where the schema may
+	//    be behind the running server.
+	if err := db.RunMigrations(s.cfg.DatabaseURL); err != nil {
+		log.Error().Err(err).Msg("Failed to run migrations after restore — server may need a restart")
+	}
+
+	// 5. Reconcile any stale "running" backups from the restored database.
 	if err := s.ReconcileStaleBackups(ctx); err != nil {
 		log.Warn().Err(err).Msg("Failed to reconcile stale backups after restore")
 	}
@@ -1188,6 +1214,85 @@ func (s *Service) restoreDatabase(sqlData []byte) error {
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("psql: %s: %w", stderr.String(), err)
 	}
+	return nil
+}
+
+// preflight3Check verifies that S3 is reachable before starting a destructive
+// database restore. This prevents wiping the DB only to discover S3 is down.
+func (s *Service) preflight3Check(ctx context.Context) error {
+	// A lightweight ListObjectsV2 with MaxKeys=1 verifies bucket access.
+	_, err := s.store.Client().ListObjectsV2(ctx, &s3.ListObjectsV2Input{
+		Bucket:  aws.String(s.store.Bucket()),
+		MaxKeys: aws.Int32(1),
+	})
+	if err != nil {
+		return fmt.Errorf("cannot reach S3 bucket %q: %w", s.store.Bucket(), err)
+	}
+	return nil
+}
+
+// gooseVersionRegexp matches COPY lines and data rows from the goose_db_version
+// table in a pg_dump. The dump format is:
+//
+//	COPY public.goose_db_version (id, version_id, ...) FROM stdin;
+//	1	0	...
+//	2	1	...
+//	...
+//	\.
+var gooseVersionRegexp = regexp.MustCompile(`(?m)^(\d+)\t(\d+)\t`)
+
+// checkBackupSchemaVersion extracts the max goose migration version from the
+// SQL dump and compares it to the server's embedded migrations. If the backup
+// is from a newer schema, the restore is refused.
+func (s *Service) checkBackupSchemaVersion(_ context.Context, sqlData []byte) error {
+	serverMax, err := db.MaxEmbeddedMigrationVersion()
+	if err != nil {
+		log.Warn().Err(err).Msg("Cannot determine server migration version — skipping schema version check")
+		return nil
+	}
+
+	// Find the goose_db_version COPY block and extract the max version_id.
+	dump := string(sqlData)
+	copyIdx := strings.Index(dump, "COPY public.goose_db_version ")
+	if copyIdx < 0 {
+		// Older dumps might not have the public. prefix.
+		copyIdx = strings.Index(dump, "COPY goose_db_version ")
+	}
+	if copyIdx < 0 {
+		log.Warn().Msg("No goose_db_version table found in backup — skipping schema version check")
+		return nil
+	}
+
+	// Find the end of the COPY block (\.\n).
+	block := dump[copyIdx:]
+	endIdx := strings.Index(block, "\n\\.\n")
+	if endIdx < 0 {
+		return nil
+	}
+	block = block[:endIdx]
+
+	var backupMax int64
+	for _, match := range gooseVersionRegexp.FindAllStringSubmatch(block, -1) {
+		if len(match) >= 3 {
+			v, err := strconv.ParseInt(match[2], 10, 64)
+			if err == nil && v > backupMax {
+				backupMax = v
+			}
+		}
+	}
+
+	if backupMax > serverMax {
+		return fmt.Errorf(
+			"backup schema version (%d) is newer than this server's latest migration (%d) — "+
+				"refusing to restore to avoid data loss. Upgrade the server first, then retry the restore",
+			backupMax, serverMax,
+		)
+	}
+
+	log.Info().
+		Int64("backup_version", backupMax).
+		Int64("server_version", serverMax).
+		Msg("Backup schema version is compatible")
 	return nil
 }
 
