@@ -38,6 +38,7 @@ type Executor struct {
 	wg       sync.WaitGroup                // tracks in-flight run() goroutines
 
 	stopSync context.CancelFunc // stops the periodic sync loop
+	ghInteg  GitHubIntegration  // optional GitHub App integration
 }
 
 // NewExecutor creates a new Executor.
@@ -58,6 +59,11 @@ func NewExecutor(cfg *config.Config, queries *db.Queries, store *storage.Store, 
 // executors may return true.
 func (e *Executor) CanPersist() bool {
 	return false
+}
+
+// SetGitHubIntegration sets the optional GitHub App integration.
+func (e *Executor) SetGitHubIntegration(gh GitHubIntegration) {
+	e.ghInteg = gh
 }
 
 // Start performs startup reconciliation and begins periodic sync.
@@ -247,10 +253,30 @@ func (e *Executor) run(analysis *models.Analysis, packages []models.SoftwarePack
 	}
 	llmConfig := ResolveEffectiveLLMConfig(e.cfg, project)
 
+	// If GitHub integration is configured, pre-clone the repo so that
+	// credentials are never exposed in the agent prompt.
+	var preClonedPath string
+	if e.ghInteg != nil && analysis.ProjectID != "" && len(packages) > 0 {
+		cred, err := e.ghInteg.CloneCredential(ctx, analysis.ProjectID)
+		if err != nil {
+			log.Warn().Err(err).Str("analysis_id", analysis.ID).Msg("GitHub clone credential failed, falling back to agent clone")
+		} else if cred != nil {
+			localPath, cloneErr := SecureGitClone(ctx, cred, workDir)
+			// Zero the token in memory immediately after use.
+			cred.Token = ""
+			if cloneErr != nil {
+				log.Warn().Err(cloneErr).Str("analysis_id", analysis.ID).Msg("GitHub pre-clone failed, falling back to agent clone")
+			} else {
+				log.Info().Str("analysis_id", analysis.ID).Str("path", localPath).Msg("Pre-cloned repo for private access")
+				preClonedPath = localPath
+			}
+		}
+	}
+
 	// Build prompt.
 	var prompt string
 	if len(packages) == 1 {
-		prompt = BuildPrompt(&packages[0], "phase1", analysis.CustomPrompt, analysisCtx)
+		prompt = BuildPrompt(&packages[0], "phase1", analysis.CustomPrompt, analysisCtx, preClonedPath)
 	} else {
 		prompt = BuildMultiPackagePrompt(packages, analysis.CustomPrompt, analysisCtx)
 	}
@@ -295,7 +321,7 @@ func (e *Executor) run(analysis *models.Analysis, packages []models.SoftwarePack
 					return
 				}
 				e.hub.Broadcast(analysis.ID, []byte("[system] Starting Phase 2: Exploit validation"))
-				phase2Prompt := BuildPrompt(&packages[0], "phase2", "", nil)
+				phase2Prompt := BuildPrompt(&packages[0], "phase2", "", nil, "")
 				if err := e.runOpenCodeAgent(ctx, workDir, phase2Prompt, analysis.ID, resolvedProvider.BaseURL, resolvedProvider.APIKey, resolvedProvider.Model); err != nil {
 					log.Warn().Err(err).Str("analysis_id", analysis.ID).Msg("Phase 2 (exploit validation) failed")
 				}
@@ -309,6 +335,7 @@ func (e *Executor) run(analysis *models.Analysis, packages []models.SoftwarePack
 		// Mark completed for new provider-based path.
 		completeCtx, completeCancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer completeCancel()
+		e.tryUploadSARIFToGitHub(completeCtx, analysis, sarifPath)
 		if err := e.queries.SetAnalysisCompleted(completeCtx, analysis.ID, "completed", ""); err != nil {
 			log.Error().Err(err).Str("analysis_id", analysis.ID).Msg("Failed to mark analysis completed")
 		}
@@ -369,7 +396,7 @@ func (e *Executor) run(analysis *models.Analysis, packages []models.SoftwarePack
 				return
 			}
 			e.hub.Broadcast(analysis.ID, []byte("[system] Starting Phase 2: Exploit validation (external LLM)"))
-			phase2Prompt := BuildPrompt(&packages[0], "phase2", "", nil)
+			phase2Prompt := BuildPrompt(&packages[0], "phase2", "", nil, "")
 			if err := e.runOpenCodeAgent(ctx, workDir, phase2Prompt, analysis.ID, extCreds.EndpointURL, extCreds.APIKey, llmConfig.PoCModel); err != nil {
 				log.Warn().Err(err).Str("analysis_id", analysis.ID).Msg("Phase 2 (exploit validation) failed")
 			}
@@ -385,11 +412,36 @@ func (e *Executor) run(analysis *models.Analysis, packages []models.SoftwarePack
 	// Mark completed (use a fresh context in case the original expired during Phase 2).
 	completeCtx, completeCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer completeCancel()
+	e.tryUploadSARIFToGitHub(completeCtx, analysis, sarifPath)
 	if err := e.queries.SetAnalysisCompleted(completeCtx, analysis.ID, "completed", ""); err != nil {
 		log.Error().Err(err).Str("analysis_id", analysis.ID).Msg("Failed to mark analysis completed")
 	}
 	e.hub.Broadcast(analysis.ID, []byte("[system] Analysis complete"))
 	// Log upload and room cleanup handled by deferred uploadOutputDir + CloseRoom.
+}
+
+// tryUploadSARIFToGitHub uploads SARIF results to GitHub if the project has
+// SARIF upload enabled via the GitHub App integration.
+func (e *Executor) tryUploadSARIFToGitHub(ctx context.Context, analysis *models.Analysis, sarifPath string) {
+	if e.ghInteg == nil || analysis.ProjectID == "" {
+		return
+	}
+	sarifData, err := os.ReadFile(sarifPath)
+	if err != nil {
+		return // No SARIF file — nothing to upload.
+	}
+	alertsURL, uploadErr := e.ghInteg.UploadSARIFForProject(ctx, analysis.ProjectID, sarifData)
+	if uploadErr != nil {
+		log.Warn().Err(uploadErr).Str("analysis_id", analysis.ID).Msg("Failed to upload SARIF to GitHub")
+	} else {
+		log.Info().Str("analysis_id", analysis.ID).Msg("SARIF uploaded to GitHub Code Scanning")
+		e.hub.Broadcast(analysis.ID, []byte("[system] SARIF results uploaded to GitHub"))
+		if alertsURL != "" {
+			if setErr := e.queries.SetAnalysisSARIFUploadURL(ctx, analysis.ID, alertsURL); setErr != nil {
+				log.Warn().Err(setErr).Str("analysis_id", analysis.ID).Msg("Failed to record SARIF upload URL")
+			}
+		}
+	}
 }
 
 // runAnthropicPhases runs both analysis phases using the Anthropic/Claude backend.
@@ -408,7 +460,7 @@ func (e *Executor) runAnthropicPhases(ctx context.Context, workDir, prompt, sari
 	if _, statErr := os.Stat(sarifPath); statErr == nil {
 		_ = e.updateStatus(ctx, analysis.ID, "running", "Phase 2: Exploit validation (Anthropic)")
 		e.hub.Broadcast(analysis.ID, []byte("[system] Starting Phase 2: Exploit validation (Anthropic)"))
-		phase2Prompt := BuildPrompt(&packages[0], "phase2", "", nil)
+		phase2Prompt := BuildPrompt(&packages[0], "phase2", "", nil, "")
 		if err := e.runAgent(ctx, workDir, phase2Prompt, analysis.ID, anthropicKey, analysis.AgentModel); err != nil {
 			log.Warn().Err(err).Str("analysis_id", analysis.ID).Msg("Phase 2 (exploit validation) failed")
 		}
@@ -430,7 +482,7 @@ func (e *Executor) runAnthropicPhasesWithKey(ctx context.Context, workDir, promp
 	if _, statErr := os.Stat(sarifPath); statErr == nil {
 		_ = e.updateStatus(ctx, analysis.ID, "running", "Phase 2: Exploit validation (Anthropic)")
 		e.hub.Broadcast(analysis.ID, []byte("[system] Starting Phase 2: Exploit validation (Anthropic)"))
-		phase2Prompt := BuildPrompt(&packages[0], "phase2", "", nil)
+		phase2Prompt := BuildPrompt(&packages[0], "phase2", "", nil, "")
 		if err := e.runAgent(ctx, workDir, phase2Prompt, analysis.ID, apiKey, model); err != nil {
 			log.Warn().Err(err).Str("analysis_id", analysis.ID).Msg("Phase 2 (exploit validation) failed")
 		}

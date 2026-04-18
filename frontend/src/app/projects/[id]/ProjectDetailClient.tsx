@@ -1,7 +1,7 @@
 'use client';
 
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { api, type SoftwarePackage, type Analysis, type Group, type Project } from '@/lib/api';
+import { api, type SoftwarePackage, type Analysis, type Group, type Project, type ProjectGitHubConfig, type GitHubWebhookDelivery, type GitHubAppInstallation } from '@/lib/api';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useState } from 'react';
 import Link from 'next/link';
@@ -13,7 +13,7 @@ import { useResolvedParams } from '@/lib/useResolvedParams';
 
 const ANALYSES_PAGE_SIZE = 10;
 
-type Tab = 'packages' | 'analyses' | 'findings' | 'api-keys' | 'settings';
+type Tab = 'packages' | 'analyses' | 'findings' | 'api-keys' | 'github' | 'settings';
 
 export default function ProjectDetailClient() {
   const { id } = useResolvedParams<{ id: string }>('/projects/[id]');
@@ -75,6 +75,7 @@ export default function ProjectDetailClient() {
     { key: 'analyses', label: 'Analyses' },
     { key: 'findings', label: 'Findings' },
     ...(isAdmin ? [{ key: 'api-keys' as Tab, label: 'API Keys' }] : []),
+    ...(canEdit ? [{ key: 'github' as Tab, label: 'GitHub' }] : []),
     ...(canEdit ? [{ key: 'settings' as Tab, label: 'Settings' }] : []),
   ];
 
@@ -124,6 +125,11 @@ export default function ProjectDetailClient() {
       {/* API Keys tab */}
       {tab === 'api-keys' && isAdmin && (
         <ProviderKeysTab projectId={id} />
+      )}
+
+      {/* GitHub tab */}
+      {tab === 'github' && canEdit && (
+        <GitHubTab projectId={id} />
       )}
 
       {/* Settings tab */}
@@ -710,6 +716,315 @@ function FindingsTab({
         initialFindingId={initialFindingId}
         canEdit={canEdit}
       />
+    </div>
+  );
+}
+
+function GitHubTab({ projectId }: { projectId: string }) {
+  const queryClient = useQueryClient();
+
+  const { data: ghConfig, isLoading: configLoading } = useQuery<ProjectGitHubConfig>({
+    queryKey: ['project', projectId, 'github'],
+    queryFn: () => api.github.getConfig(projectId),
+  });
+
+  const { data: installations } = useQuery<GitHubAppInstallation[]>({
+    queryKey: ['admin', 'github-status'],
+    queryFn: async () => {
+      const status = await api.admin.getGitHubStatus();
+      return status.installations ?? [];
+    },
+  });
+
+  const { data: webhooks } = useQuery<GitHubWebhookDelivery[]>({
+    queryKey: ['project', projectId, 'github-webhooks'],
+    queryFn: () => api.github.listWebhooks(projectId),
+  });
+
+  const { data: availableProviders } = useQuery({
+    queryKey: ['available-providers', projectId],
+    queryFn: () => api.availableProviders(projectId),
+    staleTime: 60_000,
+  });
+
+  const [owner, setOwner] = useState('');
+  const [repo, setRepo] = useState('');
+  const [branch, setBranch] = useState('main');
+  const [installationId, setInstallationId] = useState<number>(0);
+  const [sarifUpload, setSarifUpload] = useState(false);
+  const [webhookEnabled, setWebhookEnabled] = useState(false);
+  const [webhookEvents, setWebhookEvents] = useState<string[]>(['push']);
+  const [webhookAgentModel, setWebhookAgentModel] = useState('');
+  const [webhookProviderId, setWebhookProviderId] = useState<string>('');
+  const [formInit, setFormInit] = useState(false);
+
+  // Initialize form from loaded config.
+  if (ghConfig && !formInit) {
+    if (ghConfig.github_owner) setOwner(ghConfig.github_owner);
+    if (ghConfig.github_repo) setRepo(ghConfig.github_repo);
+    if (ghConfig.default_branch) setBranch(ghConfig.default_branch);
+    if (ghConfig.installation_id) setInstallationId(ghConfig.installation_id);
+    setSarifUpload(ghConfig.sarif_upload_enabled ?? false);
+    setWebhookEnabled(ghConfig.webhook_enabled ?? false);
+    if (ghConfig.webhook_events?.length) setWebhookEvents(ghConfig.webhook_events);
+    if (ghConfig.webhook_agent_model) setWebhookAgentModel(ghConfig.webhook_agent_model);
+    if (ghConfig.webhook_provider_id) setWebhookProviderId(ghConfig.webhook_provider_id);
+    setFormInit(true);
+  }
+
+  const saveMut = useMutation({
+    mutationFn: () =>
+      api.github.updateConfig(projectId, {
+        github_owner: owner,
+        github_repo: repo,
+        default_branch: branch,
+        installation_id: installationId,
+        sarif_upload_enabled: sarifUpload,
+        webhook_enabled: webhookEnabled,
+        webhook_events: webhookEvents,
+        webhook_agent_model: webhookAgentModel,
+        webhook_provider_id: webhookProviderId || undefined,
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['project', projectId, 'github'] });
+    },
+  });
+
+  const deleteMut = useMutation({
+    mutationFn: () => api.github.deleteConfig(projectId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['project', projectId, 'github'] });
+      setOwner('');
+      setRepo('');
+      setBranch('main');
+      setInstallationId(0);
+      setSarifUpload(false);
+      setWebhookEnabled(false);
+      setWebhookEvents(['push']);
+      setWebhookAgentModel('');
+      setWebhookProviderId('');
+      setFormInit(false);
+    },
+  });
+
+  const allEvents = ['push', 'pull_request', 'release'];
+
+  if (configLoading) return <p className="text-sm text-gray-500">Loading...</p>;
+
+  return (
+    <div className="space-y-6">
+      {/* Config form */}
+      <div className="bg-white p-6 rounded-lg border space-y-4">
+        <h2 className="text-lg font-semibold">GitHub Repository</h2>
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            saveMut.mutate();
+          }}
+          className="space-y-4"
+        >
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Owner</label>
+              <input
+                type="text"
+                value={owner}
+                onChange={(e) => setOwner(e.target.value)}
+                placeholder="e.g. my-org"
+                className="w-full border rounded px-3 py-2 text-sm"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Repository</label>
+              <input
+                type="text"
+                value={repo}
+                onChange={(e) => setRepo(e.target.value)}
+                placeholder="e.g. my-app"
+                className="w-full border rounded px-3 py-2 text-sm"
+              />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Default Branch</label>
+              <input
+                type="text"
+                value={branch}
+                onChange={(e) => setBranch(e.target.value)}
+                className="w-full border rounded px-3 py-2 text-sm"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Installation</label>
+              <select
+                value={installationId}
+                onChange={(e) => setInstallationId(Number(e.target.value))}
+                className="w-full border rounded px-3 py-2 text-sm"
+              >
+                <option value={0}>None (public repos only)</option>
+                {installations?.map((inst) => (
+                  <option key={inst.installation_id} value={inst.installation_id}>
+                    {inst.account_login} ({inst.account_type})
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={sarifUpload}
+                onChange={(e) => setSarifUpload(e.target.checked)}
+                className="rounded"
+              />
+              <span>Upload SARIF results to GitHub Code Scanning</span>
+            </label>
+          </div>
+
+          <div className="space-y-2">
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={webhookEnabled}
+                onChange={(e) => setWebhookEnabled(e.target.checked)}
+                className="rounded"
+              />
+              <span>Enable webhook-triggered analyses</span>
+            </label>
+            {webhookEnabled && (
+              <div className="ml-6 space-y-3">
+                <div className="space-y-1">
+                  <p className="text-xs text-gray-500">Trigger analysis on these events:</p>
+                  {allEvents.map((evt) => (
+                    <label key={evt} className="flex items-center gap-2 text-sm">
+                      <input
+                        type="checkbox"
+                        checked={webhookEvents.includes(evt)}
+                        onChange={(e) => {
+                          if (e.target.checked) {
+                            setWebhookEvents([...webhookEvents, evt]);
+                          } else {
+                            setWebhookEvents(webhookEvents.filter((v) => v !== evt));
+                          }
+                        }}
+                        className="rounded"
+                      />
+                      <span>{evt}</span>
+                    </label>
+                  ))}
+                </div>
+                {availableProviders && availableProviders.length > 0 && (
+                  <div className="space-y-2 border-t pt-3">
+                    <p className="text-xs text-gray-500">Provider & model for webhook-triggered analyses:</p>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-xs font-medium text-gray-600 mb-1">Provider</label>
+                        <select
+                          value={webhookProviderId}
+                          onChange={(e) => setWebhookProviderId(e.target.value)}
+                          className="w-full border rounded px-2 py-1.5 text-sm"
+                        >
+                          <option value="">Default (first available)</option>
+                          {availableProviders.map((p) => (
+                            <option key={`${p.source}:${p.id}`} value={p.id}>
+                              {p.label} ({p.api_schema})
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium text-gray-600 mb-1">Model</label>
+                        <input
+                          type="text"
+                          value={webhookAgentModel}
+                          onChange={(e) => setWebhookAgentModel(e.target.value)}
+                          placeholder="Provider default"
+                          className="w-full border rounded px-2 py-1.5 text-sm"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          <div className="flex items-center gap-3">
+            <button
+              type="submit"
+              disabled={saveMut.isPending || !owner || !repo}
+              className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 disabled:opacity-50 text-sm"
+            >
+              {saveMut.isPending ? 'Saving...' : 'Save'}
+            </button>
+            {saveMut.isSuccess && <span className="text-green-600 text-sm">Saved!</span>}
+            {saveMut.isError && (
+              <span className="text-red-600 text-sm">
+                Error: {(saveMut.error as Error).message}
+              </span>
+            )}
+          </div>
+        </form>
+
+        {ghConfig?.id && (
+          <div className="border-t pt-4 mt-4">
+            <button
+              onClick={() => {
+                if (confirm('Remove GitHub integration for this project?')) {
+                  deleteMut.mutate();
+                }
+              }}
+              disabled={deleteMut.isPending}
+              className="text-sm text-red-600 hover:text-red-800"
+            >
+              {deleteMut.isPending ? 'Removing...' : 'Remove GitHub Integration'}
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* Webhook deliveries */}
+      {webhookEnabled && (
+        <div className="bg-white p-6 rounded-lg border space-y-4">
+          <h2 className="text-lg font-semibold">Recent Webhook Deliveries</h2>
+          {!webhooks?.length ? (
+            <p className="text-sm text-gray-500">No webhook deliveries yet.</p>
+          ) : (
+            <div className="border rounded divide-y max-h-96 overflow-y-auto">
+              {webhooks.map((d) => (
+                <div key={d.id} className="px-3 py-2 text-sm flex items-center justify-between">
+                  <div>
+                    <span className="font-medium">{d.event_type}</span>
+                    {d.action && <span className="text-gray-500 ml-1">({d.action})</span>}
+                    <span className="text-gray-400 ml-2">{d.sender_login}</span>
+                    {d.ref && <span className="text-gray-400 ml-2">{d.ref}</span>}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span
+                      className={`text-xs px-2 py-0.5 rounded ${
+                        d.status === 'processed'
+                          ? 'bg-green-100 text-green-700'
+                          : d.status === 'error'
+                          ? 'bg-red-100 text-red-700'
+                          : 'bg-gray-100 text-gray-600'
+                      }`}
+                    >
+                      {d.status}
+                    </span>
+                    <span className="text-xs text-gray-400">
+                      {new Date(d.created_at).toLocaleString()}
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

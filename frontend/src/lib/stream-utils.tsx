@@ -8,7 +8,7 @@ import React from "react";
 export function StreamLine({ line }: { line: string }) {
   if (line.startsWith("[system]")) {
     return (
-      <div className="flex items-start gap-2 py-1 px-2 rounded bg-yellow-950/30 text-yellow-300 text-xs">
+      <div className="flex items-start gap-2 py-1 px-2 rounded bg-yellow-500/10 text-yellow-300 text-xs">
         <span className="shrink-0 mt-0.5">⚙</span>
         <span className="break-words whitespace-pre-wrap">{line.slice(9)}</span>
       </div>
@@ -16,7 +16,7 @@ export function StreamLine({ line }: { line: string }) {
   }
   if (line.startsWith("[thinking]")) {
     return (
-      <div className="py-1 px-2 text-gray-500 text-xs italic border-l-2 border-gray-700 ml-1 break-words whitespace-pre-wrap">
+      <div className="py-1 px-2 text-gray-400 text-xs italic border-l-2 border-gray-600 ml-1 break-words whitespace-pre-wrap">
         💭 {line.slice(11)}
       </div>
     );
@@ -27,19 +27,19 @@ export function StreamLine({ line }: { line: string }) {
     const toolName = colonIdx > 0 ? detail.slice(0, colonIdx) : detail;
     const toolDetail = colonIdx > 0 ? detail.slice(colonIdx + 1).trim() : "";
     return (
-      <div className="flex items-start gap-2 py-1.5 px-2 rounded bg-cyan-950/30 text-xs">
-        <span className="shrink-0 font-mono font-semibold text-cyan-400 bg-cyan-950 px-1.5 py-0.5 rounded text-[10px]">
+      <div className="flex items-start gap-2 py-1.5 px-2 rounded bg-cyan-500/10 text-xs">
+        <span className="shrink-0 font-mono font-semibold text-cyan-300 bg-cyan-900 px-1.5 py-0.5 rounded text-[10px]">
           {toolName}
         </span>
         {toolDetail && (
-          <span className="text-cyan-200/80 break-words whitespace-pre-wrap">{toolDetail}</span>
+          <span className="text-cyan-300 break-words whitespace-pre-wrap">{toolDetail}</span>
         )}
       </div>
     );
   }
   if (line.startsWith("[result]")) {
     return (
-      <div className="py-1 px-2 text-xs text-gray-400 border-l-2 border-green-800 ml-1 break-words whitespace-pre-wrap font-mono">
+      <div className="py-1 px-2 text-xs text-green-400 border-l-2 border-green-500 ml-1 break-words whitespace-pre-wrap font-mono">
         {line.slice(9)}
       </div>
     );
@@ -54,7 +54,7 @@ export function StreamLine({ line }: { line: string }) {
   }
   if (line.startsWith("[stderr]")) {
     return (
-      <div className="py-0.5 px-2 text-red-400/70 text-xs font-mono break-words whitespace-pre-wrap">
+      <div className="py-0.5 px-2 text-red-400 text-xs font-mono break-words whitespace-pre-wrap">
         {line.slice(9)}
       </div>
     );

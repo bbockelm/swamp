@@ -18,9 +18,9 @@ var phase1Template = `You are a security analyst performing a comprehensive vuln
 %s
 %s
 ## Your Task
-1. Clone the repository and thoroughly review the codebase.
-2. Immediately after cloning, record the exact commit SHA being analyzed:
-   Run ` + "`git rev-parse HEAD`" + ` from inside the cloned repository directory
+1. %s
+2. Immediately after %s, record the exact commit SHA being analyzed:
+   Run ` + "`git rev-parse HEAD`" + ` from inside the %s directory
    and write the full 40-character SHA to ` + "`output/git_sha.txt`" + ` (just the SHA, no newline or extra text).
 3. Identify security vulnerabilities across the following categories:
    - OWASP Top 10
@@ -139,7 +139,10 @@ func formatAnalysisContext(ac *models.AnalysisContext) string {
 }
 
 // BuildPrompt constructs the analysis prompt for a given phase.
-func BuildPrompt(pkg *models.SoftwarePackage, phase string, analysisPrompt string, analysisCtx *models.AnalysisContext) string {
+// If preClonedPath is non-empty, the prompt tells the agent the repo is
+// already available locally instead of asking it to clone (so no credentials
+// are ever included in the prompt).
+func BuildPrompt(pkg *models.SoftwarePackage, phase string, analysisPrompt string, analysisCtx *models.AnalysisContext, preClonedPath string) string {
 	commitLine := ""
 	if pkg.GitCommit != "" {
 		commitLine = fmt.Sprintf("- Commit: %s", pkg.GitCommit)
@@ -162,6 +165,19 @@ func BuildPrompt(pkg *models.SoftwarePackage, phase string, analysisPrompt strin
 		return phase2Template
 	default:
 		contextSection := formatAnalysisContext(analysisCtx)
+
+		// Determine clone vs pre-cloned instructions.
+		var step1, afterVerb, dirRef string
+		if preClonedPath != "" {
+			step1 = fmt.Sprintf("The repository has already been cloned for you at `%s`. Thoroughly review the codebase.", preClonedPath)
+			afterVerb = "entering the repository"
+			dirRef = "repository"
+		} else {
+			step1 = "Clone the repository and thoroughly review the codebase."
+			afterVerb = "cloning"
+			dirRef = "cloned repository"
+		}
+
 		return fmt.Sprintf(
 			phase1Template,
 			pkg.GitURL,
@@ -169,6 +185,9 @@ func BuildPrompt(pkg *models.SoftwarePackage, phase string, analysisPrompt strin
 			commitLine,
 			customPrompt,
 			contextSection,
+			step1,
+			afterVerb,
+			dirRef,
 		)
 	}
 }

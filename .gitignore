@@ -46,3 +46,6 @@ build-errors.log
 
 # VSCode stuff
 /swamp.code-workspace
+
+# Test data (vulnerable sample apps for analysis testing)
+/testdata/

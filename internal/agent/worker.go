@@ -94,11 +94,28 @@ func RunWorker(cfg *config.Config) error {
 		return fmt.Errorf("create work dir: %w", err)
 	}
 
+	// Pre-clone the repository if a GitHub clone credential was provided.
+	// This runs in Go code so the credential is never visible to the AI agent.
+	var preClonedPath string
+	if session.GitCloneCred != nil {
+		log.Info().Str("url", session.GitCloneCred.CloneURL).Msg("Pre-cloning private repository")
+		localPath, err := SecureGitClone(ctx, session.GitCloneCred, workDir)
+		// Zero the token in memory immediately after use.
+		session.GitCloneCred.Token = ""
+		session.GitCloneCred = nil
+		if err != nil {
+			log.Warn().Err(err).Msg("Pre-clone failed, agent will attempt clone from prompt")
+		} else {
+			preClonedPath = localPath
+			log.Info().Str("path", localPath).Msg("Pre-cloned repository successfully")
+		}
+	}
+
 	// Build prompt from packages.
 	var prompt string
 	if len(session.Packages) == 1 {
 		pkg := packageInfoToSoftwarePackage(session.Packages[0])
-		prompt = BuildPrompt(&pkg, "phase1", session.CustomPrompt, session.AnalysisContext)
+		prompt = BuildPrompt(&pkg, "phase1", session.CustomPrompt, session.AnalysisContext, preClonedPath)
 	} else {
 		pkgs := make([]models.SoftwarePackage, len(session.Packages))
 		for i, p := range session.Packages {
@@ -217,7 +234,7 @@ func RunWorker(cfg *config.Config) error {
 		reportStatus(serverURL, sessionToken, analysisID, "running", "Phase 2: Exploit validation")
 		streamer.send("[system] Starting Phase 2: Exploit validation")
 		pkg := packageInfoToSoftwarePackage(session.Packages[0])
-		phase2Prompt := BuildPrompt(&pkg, "phase2", "", nil)
+		phase2Prompt := BuildPrompt(&pkg, "phase2", "", nil, "")
 		if err := runPhase(phase2Prompt, "Phase 2", session.ExtLLMPoCModel); err != nil {
 			if isShuttingDown() || ctx.Err() != nil {
 				streamer.send("[system] Phase 2 interrupted — uploading results...")

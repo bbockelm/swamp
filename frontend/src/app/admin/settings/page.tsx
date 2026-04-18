@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { api, BackupSettings, LLMProvider, DiscoveredModel } from '@/lib/api';
+import { api, BackupSettings, LLMProvider, DiscoveredModel, GitHubStatus } from '@/lib/api';
 
 export default function AdminSettingsPage() {
   return (
@@ -14,6 +14,7 @@ export default function AdminSettingsPage() {
 
       <OIDCConfigSection />
       <LLMProvidersSection />
+      <GitHubConfigSection />
       <ExecutorConfigSection />
       <BackupConfigSection />
     </div>
@@ -602,6 +603,88 @@ const K8S_FIELDS = [
   { key: 'k8s_worker_annotations', label: 'Pod Annotations', placeholder: 'key=value,key2=value2' },
   { key: 'k8s_pod_ttl_seconds', label: 'Job TTL (seconds)', placeholder: '3600' },
 ];
+
+function GitHubConfigSection() {
+  const queryClient = useQueryClient();
+  const { data: status, isLoading } = useQuery<GitHubStatus>({
+    queryKey: ['admin', 'github-status'],
+    queryFn: api.admin.getGitHubStatus,
+  });
+
+  const syncMut = useMutation({
+    mutationFn: api.admin.syncGitHubInstallations,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['admin', 'github-status'] });
+    },
+  });
+
+  return (
+    <div className="bg-white p-6 rounded-lg border space-y-4">
+      <h2 className="text-lg font-semibold">GitHub App Integration</h2>
+      {isLoading ? (
+        <p className="text-sm text-gray-500">Loading...</p>
+      ) : !status?.configured ? (
+        <div className="space-y-2">
+          <p className="text-sm text-gray-600">
+            GitHub App is not configured. Set the following environment variables to enable:
+          </p>
+          <ul className="text-sm text-gray-500 list-disc pl-5 space-y-1">
+            <li><code>GITHUB_APP_ID</code> — Your GitHub App&apos;s numeric ID</li>
+            <li><code>GITHUB_APP_PRIVATE_KEY</code> — PEM-encoded private key (or use <code>GITHUB_APP_KEY_FILE</code>)</li>
+            <li><code>GITHUB_WEBHOOK_SECRET</code> — Webhook secret for signature validation</li>
+          </ul>
+        </div>
+      ) : (
+        <div className="space-y-4">
+          <div className="grid grid-cols-2 gap-4 text-sm">
+            <div>
+              <span className="font-medium text-gray-700">App ID:</span>{' '}
+              <span className="text-gray-900">{status.app_id}</span>
+            </div>
+            <div>
+              <span className="font-medium text-gray-700">API URL:</span>{' '}
+              <span className="text-gray-900">{status.api_url}</span>
+            </div>
+            <div className="col-span-2">
+              <span className="font-medium text-gray-700">Webhook URL:</span>{' '}
+              <code className="text-sm bg-gray-100 px-2 py-0.5 rounded">{status.webhook_url}</code>
+            </div>
+          </div>
+
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="text-sm font-medium text-gray-700">Installations</h3>
+              <button
+                onClick={() => syncMut.mutate()}
+                disabled={syncMut.isPending}
+                className="text-sm text-blue-600 hover:text-blue-800 disabled:opacity-50"
+              >
+                {syncMut.isPending ? 'Syncing...' : 'Sync from GitHub'}
+              </button>
+            </div>
+            {status.installations && status.installations.length > 0 ? (
+              <div className="border rounded divide-y">
+                {status.installations.map((inst) => (
+                  <div key={inst.id} className="px-3 py-2 flex items-center justify-between text-sm">
+                    <div>
+                      <span className="font-medium">{inst.account_login}</span>
+                      <span className="text-gray-500 ml-2">({inst.account_type})</span>
+                    </div>
+                    <span className="text-gray-400 text-xs">ID: {inst.installation_id}</span>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-sm text-gray-500">
+                No installations found. Install the GitHub App on your organization or account, then click &quot;Sync from GitHub&quot;.
+              </p>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 function ExecutorConfigSection() {
   const queryClient = useQueryClient();

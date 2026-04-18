@@ -141,6 +141,10 @@ export interface Analysis {
   error_message: string;
   custom_prompt: string;
   git_commit: string;
+  git_branch: string;
+  trigger_event: string;
+  trigger_meta?: Record<string, unknown>;
+  sarif_upload_url?: string;
   triggered_by: string;
   triggered_by_name?: string;
   started_at: string;
@@ -346,6 +350,55 @@ export interface UserStats {
   analysis_count: number;
   finding_count: number;
   member_since: string;
+}
+
+export interface GitHubAppInstallation {
+  id: string;
+  installation_id: number;
+  account_login: string;
+  account_type: string;
+  permissions: Record<string, string>;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface GitHubStatus {
+  configured: boolean;
+  app_id?: number;
+  api_url?: string;
+  webhook_url?: string;
+  installations?: GitHubAppInstallation[];
+}
+
+export interface ProjectGitHubConfig {
+  id?: string;
+  project_id: string;
+  github_owner: string;
+  github_repo: string;
+  default_branch: string;
+  installation_id: number;
+  sarif_upload_enabled: boolean;
+  webhook_enabled: boolean;
+  webhook_events: string[];
+  webhook_agent_model: string;
+  webhook_provider_id?: string;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface GitHubWebhookDelivery {
+  id: string;
+  delivery_id: string;
+  event_type: string;
+  action: string;
+  repo_full_name: string;
+  ref: string;
+  sender_login: string;
+  project_id?: string;
+  analysis_id?: string;
+  status: string;
+  status_detail: string;
+  created_at: string;
 }
 
 // --- API client ---
@@ -834,5 +887,33 @@ export const api = {
       }),
     getRecentLogs: (): Promise<LogEntry[]> =>
       fetchJSON(`${BASE}/admin/logs`),
+    getGitHubStatus: (): Promise<GitHubStatus> =>
+      fetchJSON(`${BASE}/admin/github/status`),
+    syncGitHubInstallations: (): Promise<GitHubStatus> =>
+      fetchJSON(`${BASE}/admin/github/sync-installations`, {
+        method: "POST",
+      }),
+  },
+
+  // --- Project-level GitHub integration ---
+  github: {
+    getConfig: (projectId: string): Promise<ProjectGitHubConfig> =>
+      fetchJSON(`${BASE}/projects/${projectId}/github`),
+    updateConfig: (
+      projectId: string,
+      data: Partial<ProjectGitHubConfig>,
+    ): Promise<ProjectGitHubConfig> =>
+      fetchJSON(`${BASE}/projects/${projectId}/github`, {
+        method: "PUT",
+        body: JSON.stringify(data),
+      }),
+    deleteConfig: (projectId: string): Promise<void> =>
+      fetchJSON(`${BASE}/projects/${projectId}/github`, {
+        method: "DELETE",
+      }),
+    listWebhooks: (
+      projectId: string,
+    ): Promise<GitHubWebhookDelivery[]> =>
+      fetchJSON(`${BASE}/projects/${projectId}/github/webhooks`),
   },
 };

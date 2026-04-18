@@ -287,7 +287,27 @@ function AnalysisCard({ analysis: a, expanded, onToggle }: { analysis: Analysis;
             {a.triggered_by && (
               <div>
                 <span className="text-xs text-gray-500 uppercase">Triggered By</span>
-                <p>{a.triggered_by_name || a.triggered_by.slice(0, 8)}</p>
+                <p>
+                  {a.trigger_event && a.trigger_event !== 'manual' ? (
+                    <span className="inline-flex items-center gap-1">
+                      <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-purple-100 text-purple-800">
+                        {a.trigger_event === 'push' ? 'push' :
+                         a.trigger_event === 'pull_request' ? 'PR' :
+                         a.trigger_event === 'release' ? 'release' :
+                         a.trigger_event}
+                      </span>
+                      {a.triggered_by_name || a.triggered_by.replace('webhook:', '')}
+                    </span>
+                  ) : (
+                    a.triggered_by_name || a.triggered_by.slice(0, 8)
+                  )}
+                </p>
+              </div>
+            )}
+            {a.git_branch && (
+              <div>
+                <span className="text-xs text-gray-500 uppercase">Branch</span>
+                <p className="font-mono text-sm">{a.git_branch}</p>
               </div>
             )}
             {a.git_commit && (

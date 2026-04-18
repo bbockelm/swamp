@@ -58,6 +58,12 @@ type workerTokenEntry struct {
 	extLLMDirectKey     string // non-empty in dev mode: real API key passed directly to the worker
 	extLLMAnalysisModel string // model for Phase 1
 	extLLMPoCModel      string // model for Phase 2
+
+	// Git clone credential for private repos (populated by GitHub App integration).
+	// The token is short-lived (1 hour) and used by the worker's Go code to
+	// pre-clone the repo before launching the AI agent. It never appears in
+	// the prompt or agent environment.
+	gitCloneCred *models.GitCloneCredential
 }
 
 // WorkerSession is the session created after a successful token exchange.
@@ -86,6 +92,10 @@ type WorkerExchangeResponse struct {
 	ExtLLMDirectKey     string `json:"ext_llm_direct_key,omitempty"`     // dev mode: real API key (bypasses proxy)
 	ExtLLMAnalysisModel string `json:"ext_llm_analysis_model,omitempty"` // Phase 1 model
 	ExtLLMPoCModel      string `json:"ext_llm_poc_model,omitempty"`      // Phase 2 model
+
+	// Git clone credential for private repos. Used by the worker's Go code
+	// to pre-clone before the AI agent starts. Never exposed to the agent.
+	GitCloneCred *models.GitCloneCredential `json:"git_clone_cred,omitempty"`
 }
 
 type workerPackageInfo struct {
@@ -135,6 +145,7 @@ func (s *WorkerTokenStore) IssueToken(
 	analysisCtx *models.AnalysisContext,
 	ttl time.Duration,
 	agentProvider, extLLMProxyURL, extLLMDirectKey, extLLMAnalysisModel, extLLMPoCModel string,
+	gitCloneCred *models.GitCloneCredential,
 ) (string, error) {
 	raw := make([]byte, 32)
 	if _, err := rand.Read(raw); err != nil {
@@ -159,6 +170,7 @@ func (s *WorkerTokenStore) IssueToken(
 		extLLMDirectKey:     extLLMDirectKey,
 		extLLMAnalysisModel: extLLMAnalysisModel,
 		extLLMPoCModel:      extLLMPoCModel,
+		gitCloneCred:        gitCloneCred,
 	}
 	return token, nil
 }
@@ -246,6 +258,7 @@ func (s *WorkerTokenStore) ExchangeToken(token string) (*WorkerExchangeResponse,
 		ExtLLMDirectKey:     entry.extLLMDirectKey,
 		ExtLLMAnalysisModel: entry.extLLMAnalysisModel,
 		ExtLLMPoCModel:      entry.extLLMPoCModel,
+		GitCloneCred:        entry.gitCloneCred,
 	}, nil
 }
 

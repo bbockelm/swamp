@@ -39,6 +39,7 @@ type ProcessExecutor struct {
 	hub        *ws.Hub
 	encryptor  *crypto.Encryptor
 	tokenStore *WorkerTokenStore
+	ghInteg    GitHubIntegration // optional GitHub App integration
 
 	mu       sync.Mutex
 	running  map[string]*processState // analysisID → state
@@ -99,6 +100,11 @@ func (e *ProcessExecutor) CanPersist() bool {
 // AgentReady returns true if the executor is properly configured.
 func (e *ProcessExecutor) AgentReady() bool {
 	return true
+}
+
+// SetGitHubIntegration injects the optional GitHub App integration.
+func (e *ProcessExecutor) SetGitHubIntegration(gh GitHubIntegration) {
+	e.ghInteg = gh
 }
 
 // Start reconciles running processes from the state directory and begins
@@ -245,6 +251,18 @@ func (e *ProcessExecutor) launchProcess(analysis *models.Analysis, packages []mo
 		}
 	}
 
+	// Resolve GitHub clone credential for private repos.
+	var gitCloneCred *models.GitCloneCredential
+	if e.ghInteg != nil && analysis.ProjectID != "" {
+		cred, err := e.ghInteg.CloneCredential(ctx, analysis.ProjectID)
+		if err != nil {
+			log.Warn().Err(err).Str("analysis_id", analysis.ID).Msg("Failed to resolve GitHub clone credential")
+		} else if cred != nil {
+			gitCloneCred = cred
+			log.Info().Str("analysis_id", analysis.ID).Msg("Resolved GitHub clone credential for worker")
+		}
+	}
+
 	// Issue one-time token.
 	token, err := e.tokenStore.IssueToken(
 		analysis.ID,
@@ -259,6 +277,7 @@ func (e *ProcessExecutor) launchProcess(analysis *models.Analysis, packages []mo
 		"", // no direct key in process mode — worker reaches SWAMP proxy on localhost
 		extLLMAnalysisModel,
 		extLLMPoCModel,
+		gitCloneCred,
 	)
 	if err != nil {
 		e.failAnalysis(analysis.ID, "Failed to issue worker token", err)

@@ -31,3 +31,19 @@ type AnalysisExecutor interface {
 	// Shutdown cancels running analyses and waits for cleanup.
 	Shutdown(ctx context.Context)
 }
+
+// GitHubIntegration provides optional GitHub App integration for the executor.
+// This is implemented by the github.Client and injected to avoid circular imports.
+type GitHubIntegration interface {
+	// CloneCredential returns a short-lived clone credential for a project's
+	// GitHub repo, without performing the actual clone. The caller uses
+	// SecureGitClone() to perform the clone so that the credential is never
+	// exposed via command-line arguments, environment variables, or files.
+	// Returns nil if the project has no GitHub config.
+	CloneCredential(ctx context.Context, projectID string) (*models.GitCloneCredential, error)
+
+	// UploadSARIFForProject uploads SARIF results to GitHub Code Scanning
+	// if the project has SARIF upload enabled. Returns the Code Scanning
+	// alerts URL if upload succeeded, or "" if skipped.
+	UploadSARIFForProject(ctx context.Context, projectID string, sarifData []byte) (string, error)
+}

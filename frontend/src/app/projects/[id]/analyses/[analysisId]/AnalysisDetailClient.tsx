@@ -202,13 +202,96 @@ export default function AnalysisDetailClient() {
         {analysis.triggered_by && (
           <div>
             <p className="text-xs text-gray-500 uppercase">Triggered By</p>
-            <p className="text-sm">{analysis.triggered_by_name || analysis.triggered_by.slice(0, 8)}</p>
+            <p className="text-sm">
+              {analysis.trigger_event && analysis.trigger_event !== 'manual' ? (
+                <span className="inline-flex items-center gap-1">
+                  <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-purple-100 text-purple-800">
+                    {analysis.trigger_event === 'push' ? '⬆ push' :
+                     analysis.trigger_event === 'pull_request' ? '⑂ PR' :
+                     analysis.trigger_event === 'release' ? '🏷 release' :
+                     analysis.trigger_event}
+                  </span>
+                  {analysis.triggered_by_name || analysis.triggered_by.replace('webhook:', '')}
+                </span>
+              ) : (
+                analysis.triggered_by_name || analysis.triggered_by.slice(0, 8)
+              )}
+            </p>
+          </div>
+        )}
+        {analysis.trigger_event === 'pull_request' && !!analysis.trigger_meta?.pr_url && (
+          <div>
+            <p className="text-xs text-gray-500 uppercase">Pull Request</p>
+            <p className="text-sm">
+              <a
+                href={analysis.trigger_meta.pr_url as string}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-blue-600 hover:underline"
+              >
+                PR #{String(analysis.trigger_meta.pr_number)}
+                {analysis.trigger_meta.head_ref ? ` (${String(analysis.trigger_meta.head_ref)})` : ''}
+                {' '}↗
+              </a>
+            </p>
+          </div>
+        )}
+        {analysis.trigger_event === 'release' && !!analysis.trigger_meta?.release_url && (
+          <div>
+            <p className="text-xs text-gray-500 uppercase">Release</p>
+            <p className="text-sm">
+              <a
+                href={analysis.trigger_meta.release_url as string}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-blue-600 hover:underline"
+              >
+                {String(analysis.trigger_meta.tag || 'release')} ↗
+              </a>
+            </p>
+          </div>
+        )}
+        {analysis.git_branch && (
+          <div>
+            <p className="text-xs text-gray-500 uppercase">Branch</p>
+            <p className="text-sm font-mono">{analysis.git_branch}</p>
           </div>
         )}
         {analysis.git_commit && (
           <div>
             <p className="text-xs text-gray-500 uppercase">Commit</p>
-            <p className="text-sm font-mono">{analysis.git_commit.slice(0, 12)}</p>
+            <p className="text-sm font-mono">
+              {analysis.trigger_meta?.repo ? (
+                <a
+                  href={`https://github.com/${analysis.trigger_meta.repo}/commit/${analysis.git_commit}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-blue-600 hover:underline"
+                >
+                  {analysis.git_commit.slice(0, 12)} ↗
+                </a>
+              ) : (
+                analysis.git_commit.slice(0, 12)
+              )}
+            </p>
+          </div>
+        )}
+        {analysis.sarif_upload_url && (
+          <div>
+            <p className="text-xs text-gray-500 uppercase">GitHub Code Scanning</p>
+            <p className="text-sm">
+              <a
+                href={analysis.sarif_upload_url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1 text-blue-600 hover:underline"
+              >
+                <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800">
+                  ✓ Uploaded
+                </span>
+                View alerts ↗
+              </a>
+            </p>
           </div>
         )}
         {analysis.error_message && (

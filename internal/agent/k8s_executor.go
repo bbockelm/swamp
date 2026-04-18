@@ -27,6 +27,7 @@ type K8sExecutor struct {
 	encryptor  *crypto.Encryptor
 	k8s        K8sClient
 	tokenStore *WorkerTokenStore
+	ghInteg    GitHubIntegration // optional GitHub App integration
 
 	mu       sync.Mutex
 	running  map[string]*k8sAnalysisState // analysisID → state
@@ -77,6 +78,11 @@ func (e *K8sExecutor) CanPersist() bool {
 // AgentReady returns true if the K8s executor is configured.
 func (e *K8sExecutor) AgentReady() bool {
 	return e.cfg.K8sWorkerImage != ""
+}
+
+// SetGitHubIntegration injects the optional GitHub App integration.
+func (e *K8sExecutor) SetGitHubIntegration(gh GitHubIntegration) {
+	e.ghInteg = gh
 }
 
 // Start performs startup reconciliation and begins the sync loop.
@@ -220,6 +226,21 @@ func (e *K8sExecutor) launchJob(analysis *models.Analysis, packages []models.Sof
 		}
 	}
 
+	// Resolve GitHub clone credential for private repos.
+	// The credential is passed to the worker via the token exchange so the
+	// worker can pre-clone the repo in its own Go code. The AI agent never
+	// sees the credential.
+	var gitCloneCred *models.GitCloneCredential
+	if e.ghInteg != nil && analysis.ProjectID != "" {
+		cred, err := e.ghInteg.CloneCredential(ctx, analysis.ProjectID)
+		if err != nil {
+			log.Warn().Err(err).Str("analysis_id", analysis.ID).Msg("Failed to resolve GitHub clone credential")
+		} else if cred != nil {
+			gitCloneCred = cred
+			log.Info().Str("analysis_id", analysis.ID).Msg("Resolved GitHub clone credential for worker")
+		}
+	}
+
 	// Issue one-time token for the worker.
 	token, err := e.tokenStore.IssueToken(
 		analysis.ID,
@@ -234,6 +255,7 @@ func (e *K8sExecutor) launchJob(analysis *models.Analysis, packages []models.Sof
 		extLLMDirectKey,
 		llmConfig.AnalysisModel,
 		llmConfig.PoCModel,
+		gitCloneCred,
 	)
 	if err != nil {
 		e.failAnalysis(analysis.ID, "Failed to issue worker token", err)

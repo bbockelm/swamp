@@ -165,6 +165,10 @@ type Analysis struct {
 	ErrorMessage    string          `json:"error_message"`
 	CustomPrompt    string          `json:"custom_prompt"`
 	GitCommit       string          `json:"git_commit"`
+	GitBranch       string          `json:"git_branch"`
+	TriggerEvent    string          `json:"trigger_event"`
+	TriggerMeta     json.RawMessage `json:"trigger_meta,omitempty"`
+	SARIFUploadURL  string          `json:"sarif_upload_url,omitempty"`
 	EncryptedDEK    []byte          `json:"-"`
 	DEKNonce        []byte          `json:"-"`
 	CreatedAt       time.Time       `json:"created_at"`
@@ -316,6 +320,15 @@ type AnalysisContext struct {
 	Annotations  []FindingAnnotation `json:"annotations,omitempty"`
 }
 
+// GitCloneCredential holds a short-lived credential for cloning a private repo.
+// The worker uses this in its own Go code to pre-clone before the AI agent starts,
+// so the credential is never visible to the agent.
+type GitCloneCredential struct {
+	CloneURL string `json:"clone_url"` // HTTPS URL without embedded credentials
+	Token    string `json:"token"`     // Installation access token (Bearer)
+	Branch   string `json:"branch"`    // Branch to clone (may be empty for default)
+}
+
 // ProjectProviderKey is an encrypted API key for an external provider (e.g. Anthropic).
 type ProjectProviderKey struct {
 	ID           string     `json:"id"`
@@ -370,4 +383,58 @@ type ProjectAllowedProvider struct {
 	ProviderSource string    `json:"provider_source"` // "global" or "env"
 	CreatedAt      time.Time `json:"created_at"`
 	CreatedBy      string    `json:"created_by"`
+}
+
+// GitHubAppInstallation represents a GitHub App installation on an account.
+type GitHubAppInstallation struct {
+	ID             string          `json:"id"`
+	InstallationID int64           `json:"installation_id"`
+	AccountLogin   string          `json:"account_login"`
+	AccountType    string          `json:"account_type"` // "User" or "Organization"
+	Permissions    json.RawMessage `json:"permissions"`
+	CreatedAt      time.Time       `json:"created_at"`
+	UpdatedAt      time.Time       `json:"updated_at"`
+}
+
+// ProjectGitHubConfig holds per-project GitHub integration settings.
+type ProjectGitHubConfig struct {
+	ID                 string    `json:"id"`
+	ProjectID          string    `json:"project_id"`
+	GitHubOwner        string    `json:"github_owner"`
+	GitHubRepo         string    `json:"github_repo"`
+	DefaultBranch      string    `json:"default_branch"`
+	InstallationID     int64     `json:"installation_id"`
+	SARIFUploadEnabled bool      `json:"sarif_upload_enabled"`
+	WebhookEnabled     bool      `json:"webhook_enabled"`
+	WebhookEvents      []string  `json:"webhook_events"`
+	WebhookAgentModel  string    `json:"webhook_agent_model"`
+	WebhookProviderID  *string   `json:"webhook_provider_id,omitempty"`
+	CreatedAt          time.Time `json:"created_at"`
+	UpdatedAt          time.Time `json:"updated_at"`
+}
+
+// GitHubWebhookDelivery is a log entry for a received webhook.
+type GitHubWebhookDelivery struct {
+	ID            string          `json:"id"`
+	DeliveryID    string          `json:"delivery_id"`
+	EventType     string          `json:"event_type"`
+	Action        string          `json:"action"`
+	RepoFullName  string          `json:"repo_full_name"`
+	Ref           string          `json:"ref"`
+	SenderLogin   string          `json:"sender_login"`
+	ProjectID     *string         `json:"project_id,omitempty"`
+	AnalysisID    *string         `json:"analysis_id,omitempty"`
+	Status        string          `json:"status"`
+	StatusDetail  string          `json:"status_detail"`
+	PayloadJSON   json.RawMessage `json:"payload_json,omitempty"`
+	CreatedAt     time.Time       `json:"created_at"`
+}
+
+// GitHubStatus is the summary returned by the GitHub status endpoint.
+type GitHubStatus struct {
+	Configured    bool                     `json:"configured"`
+	AppID         int64                    `json:"app_id,omitempty"`
+	APIURL        string                   `json:"api_url,omitempty"`
+	WebhookURL    string                   `json:"webhook_url,omitempty"`
+	Installations []GitHubAppInstallation   `json:"installations,omitempty"`
 }

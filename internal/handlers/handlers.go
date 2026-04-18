@@ -11,6 +11,7 @@ import (
 	"github.com/bbockelm/swamp/internal/config"
 	"github.com/bbockelm/swamp/internal/crypto"
 	"github.com/bbockelm/swamp/internal/db"
+	"github.com/bbockelm/swamp/internal/github"
 	"github.com/bbockelm/swamp/internal/logbuffer"
 	"github.com/bbockelm/swamp/internal/storage"
 	"github.com/bbockelm/swamp/internal/version"
@@ -25,6 +26,7 @@ type Handler struct {
 	backupSvc *backup.Service
 	executor  agent.AnalysisExecutor
 	logBuf    *logbuffer.Buffer
+	ghClient  *github.Client
 }
 
 // New creates a Handler with all dependencies.

@@ -812,21 +812,23 @@ func (q *Queries) ListProjectPackages(ctx context.Context, projectID string) ([]
 
 func (q *Queries) CreateAnalysis(ctx context.Context, a *models.Analysis) error {
 	return q.pool.QueryRow(ctx, `
-		INSERT INTO analyses (project_id, triggered_by, status, agent_model, agent_config, environment, encrypted_dek, dek_nonce, custom_prompt)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id, created_at, updated_at`,
+		INSERT INTO analyses (project_id, triggered_by, status, agent_model, agent_config, environment, encrypted_dek, dek_nonce, custom_prompt, git_branch, trigger_event, trigger_meta)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING id, created_at, updated_at`,
 		a.ProjectID, a.TriggeredBy, a.Status, a.AgentModel, a.AgentConfig, a.Environment,
-		a.EncryptedDEK, a.DEKNonce, a.CustomPrompt).Scan(&a.ID, &a.CreatedAt, &a.UpdatedAt)
+		a.EncryptedDEK, a.DEKNonce, a.CustomPrompt, a.GitBranch, a.TriggerEvent, a.TriggerMeta).Scan(&a.ID, &a.CreatedAt, &a.UpdatedAt)
 }
 
 func (q *Queries) GetAnalysis(ctx context.Context, id string) (*models.Analysis, error) {
 	var a models.Analysis
 	err := q.pool.QueryRow(ctx, `
 		SELECT a.id, a.project_id, a.triggered_by, COALESCE(u.display_name, ''), a.status, a.status_detail, a.agent_model, a.agent_config,
-		       a.environment, a.started_at, a.completed_at, a.error_message, a.custom_prompt, a.git_commit, a.encrypted_dek, a.dek_nonce, a.created_at, a.updated_at
+		       a.environment, a.started_at, a.completed_at, a.error_message, a.custom_prompt, a.git_commit, a.git_branch,
+		       a.trigger_event, a.trigger_meta, a.sarif_upload_url, a.encrypted_dek, a.dek_nonce, a.created_at, a.updated_at
 		FROM analyses a LEFT JOIN users u ON u.id = a.triggered_by
 		WHERE a.id=$1`, id).Scan(
 		&a.ID, &a.ProjectID, &a.TriggeredBy, &a.TriggeredByName, &a.Status, &a.StatusDetail, &a.AgentModel, &a.AgentConfig,
-		&a.Environment, &a.StartedAt, &a.CompletedAt, &a.ErrorMessage, &a.CustomPrompt, &a.GitCommit, &a.EncryptedDEK, &a.DEKNonce, &a.CreatedAt, &a.UpdatedAt)
+		&a.Environment, &a.StartedAt, &a.CompletedAt, &a.ErrorMessage, &a.CustomPrompt, &a.GitCommit, &a.GitBranch,
+		&a.TriggerEvent, &a.TriggerMeta, &a.SARIFUploadURL, &a.EncryptedDEK, &a.DEKNonce, &a.CreatedAt, &a.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -856,6 +858,12 @@ func (q *Queries) SetAnalysisCompleted(ctx context.Context, id, status, errorMsg
 func (q *Queries) SetAnalysisGitCommit(ctx context.Context, id, gitCommit string) error {
 	_, err := q.pool.Exec(ctx, `
 		UPDATE analyses SET git_commit=$2, updated_at=NOW() WHERE id=$1`, id, gitCommit)
+	return err
+}
+
+func (q *Queries) SetAnalysisSARIFUploadURL(ctx context.Context, id, url string) error {
+	_, err := q.pool.Exec(ctx, `
+		UPDATE analyses SET sarif_upload_url=$2, updated_at=NOW() WHERE id=$1`, id, url)
 	return err
 }
 
@@ -900,7 +908,8 @@ func (q *Queries) ListActiveAnalyses(ctx context.Context) ([]models.Analysis, er
 func (q *Queries) ListProjectAnalyses(ctx context.Context, projectID string) ([]models.Analysis, error) {
 	rows, err := q.pool.Query(ctx, `
 		SELECT a.id, a.project_id, a.triggered_by, COALESCE(u.display_name, ''), a.status, a.status_detail, a.agent_model, a.agent_config,
-		       a.environment, a.started_at, a.completed_at, a.error_message, a.custom_prompt, a.git_commit, a.created_at, a.updated_at
+		       a.environment, a.started_at, a.completed_at, a.error_message, a.custom_prompt, a.git_commit, a.git_branch,
+		       a.trigger_event, a.trigger_meta, a.sarif_upload_url, a.created_at, a.updated_at
 		FROM analyses a LEFT JOIN users u ON u.id = a.triggered_by
 		WHERE a.project_id=$1 ORDER BY a.created_at DESC`, projectID)
 	if err != nil {
@@ -912,6 +921,7 @@ func (q *Queries) ListProjectAnalyses(ctx context.Context, projectID string) ([]
 		var a models.Analysis
 		if err := rows.Scan(&a.ID, &a.ProjectID, &a.TriggeredBy, &a.TriggeredByName, &a.Status, &a.StatusDetail, &a.AgentModel,
 			&a.AgentConfig, &a.Environment, &a.StartedAt, &a.CompletedAt, &a.ErrorMessage, &a.CustomPrompt, &a.GitCommit,
+			&a.GitBranch, &a.TriggerEvent, &a.TriggerMeta, &a.SARIFUploadURL,
 			&a.CreatedAt, &a.UpdatedAt); err != nil {
 			return nil, err
 		}
@@ -924,7 +934,8 @@ func (q *Queries) ListProjectAnalyses(ctx context.Context, projectID string) ([]
 func (q *Queries) ListAllAnalyses(ctx context.Context, userID string) ([]models.Analysis, error) {
 	rows, err := q.pool.Query(ctx, `
 		SELECT a.id, a.project_id, p.name, a.triggered_by, COALESCE(u.display_name, ''), a.status, a.status_detail, a.agent_model, a.agent_config,
-		       a.environment, a.started_at, a.completed_at, a.error_message, a.custom_prompt, a.git_commit, a.created_at, a.updated_at
+		       a.environment, a.started_at, a.completed_at, a.error_message, a.custom_prompt, a.git_commit, a.git_branch,
+		       a.trigger_event, a.trigger_meta, a.sarif_upload_url, a.created_at, a.updated_at
 		FROM analyses a
 		JOIN projects p ON p.id = a.project_id
 		LEFT JOIN users u ON u.id = a.triggered_by
@@ -946,7 +957,8 @@ func (q *Queries) ListAllAnalyses(ctx context.Context, userID string) ([]models.
 		var a models.Analysis
 		if err := rows.Scan(&a.ID, &a.ProjectID, &a.ProjectName, &a.TriggeredBy, &a.TriggeredByName, &a.Status, &a.StatusDetail,
 			&a.AgentModel, &a.AgentConfig, &a.Environment, &a.StartedAt, &a.CompletedAt,
-			&a.ErrorMessage, &a.CustomPrompt, &a.GitCommit, &a.CreatedAt, &a.UpdatedAt); err != nil {
+			&a.ErrorMessage, &a.CustomPrompt, &a.GitCommit, &a.GitBranch,
+			&a.TriggerEvent, &a.TriggerMeta, &a.SARIFUploadURL, &a.CreatedAt, &a.UpdatedAt); err != nil {
 			return nil, err
 		}
 		analyses = append(analyses, a)
@@ -958,7 +970,8 @@ func (q *Queries) ListAllAnalyses(ctx context.Context, userID string) ([]models.
 func (q *Queries) ListAllAnalysesAdmin(ctx context.Context) ([]models.Analysis, error) {
 	rows, err := q.pool.Query(ctx, `
 		SELECT a.id, a.project_id, p.name, a.triggered_by, COALESCE(u.display_name, ''), a.status, a.status_detail, a.agent_model, a.agent_config,
-		       a.environment, a.started_at, a.completed_at, a.error_message, a.custom_prompt, a.git_commit, a.created_at, a.updated_at
+		       a.environment, a.started_at, a.completed_at, a.error_message, a.custom_prompt, a.git_commit, a.git_branch,
+		       a.trigger_event, a.trigger_meta, a.sarif_upload_url, a.created_at, a.updated_at
 		FROM analyses a
 		JOIN projects p ON p.id = a.project_id
 		LEFT JOIN users u ON u.id = a.triggered_by
@@ -973,7 +986,8 @@ func (q *Queries) ListAllAnalysesAdmin(ctx context.Context) ([]models.Analysis, 
 		var a models.Analysis
 		if err := rows.Scan(&a.ID, &a.ProjectID, &a.ProjectName, &a.TriggeredBy, &a.TriggeredByName, &a.Status, &a.StatusDetail,
 			&a.AgentModel, &a.AgentConfig, &a.Environment, &a.StartedAt, &a.CompletedAt,
-			&a.ErrorMessage, &a.CustomPrompt, &a.GitCommit, &a.CreatedAt, &a.UpdatedAt); err != nil {
+			&a.ErrorMessage, &a.CustomPrompt, &a.GitCommit, &a.GitBranch,
+			&a.TriggerEvent, &a.TriggerMeta, &a.SARIFUploadURL, &a.CreatedAt, &a.UpdatedAt); err != nil {
 			return nil, err
 		}
 		analyses = append(analyses, a)
@@ -2256,4 +2270,157 @@ func (q *Queries) IsProviderAllowedForProject(ctx context.Context, projectID, pr
 		 WHERE project_id = $1 AND provider_id = $2 AND provider_source = $3)`,
 		projectID, providerID, providerSource).Scan(&exists)
 	return exists, err
+}
+
+// ---- GitHub App Integration queries ----
+
+func (q *Queries) UpsertGitHubInstallation(ctx context.Context, installationID int64, accountLogin, accountType string, permissions []byte) error {
+	_, err := q.pool.Exec(ctx,
+		`INSERT INTO github_app_installations (installation_id, account_login, account_type, permissions, updated_at)
+		 VALUES ($1, $2, $3, $4, now())
+		 ON CONFLICT (installation_id)
+		 DO UPDATE SET account_login = EXCLUDED.account_login,
+		               account_type = EXCLUDED.account_type,
+		               permissions = EXCLUDED.permissions,
+		               updated_at = now()`,
+		installationID, accountLogin, accountType, permissions)
+	return err
+}
+
+func (q *Queries) DeleteGitHubInstallation(ctx context.Context, installationID int64) error {
+	_, err := q.pool.Exec(ctx,
+		`DELETE FROM github_app_installations WHERE installation_id = $1`,
+		installationID)
+	return err
+}
+
+func (q *Queries) ListGitHubInstallations(ctx context.Context) ([]models.GitHubAppInstallation, error) {
+	rows, err := q.pool.Query(ctx,
+		`SELECT id, installation_id, account_login, account_type, permissions, created_at, updated_at
+		 FROM github_app_installations ORDER BY account_login`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []models.GitHubAppInstallation
+	for rows.Next() {
+		var i models.GitHubAppInstallation
+		if err := rows.Scan(&i.ID, &i.InstallationID, &i.AccountLogin, &i.AccountType, &i.Permissions, &i.CreatedAt, &i.UpdatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, i)
+	}
+	return out, rows.Err()
+}
+
+func (q *Queries) GetProjectGitHubConfig(ctx context.Context, projectID string) (*models.ProjectGitHubConfig, error) {
+	var c models.ProjectGitHubConfig
+	err := q.pool.QueryRow(ctx,
+		`SELECT id, project_id, github_owner, github_repo, default_branch,
+		        installation_id, sarif_upload_enabled, webhook_enabled, webhook_events,
+		        webhook_agent_model, webhook_provider_id,
+		        created_at, updated_at
+		 FROM project_github_config WHERE project_id = $1`, projectID).
+		Scan(&c.ID, &c.ProjectID, &c.GitHubOwner, &c.GitHubRepo, &c.DefaultBranch,
+			&c.InstallationID, &c.SARIFUploadEnabled, &c.WebhookEnabled, &c.WebhookEvents,
+			&c.WebhookAgentModel, &c.WebhookProviderID,
+			&c.CreatedAt, &c.UpdatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return &c, nil
+}
+
+func (q *Queries) UpsertProjectGitHubConfig(ctx context.Context, projectID, owner, repo, branch string, installationID int64, sarifUpload, webhookEnabled bool, webhookEvents []string, webhookAgentModel string, webhookProviderID *string) error {
+	_, err := q.pool.Exec(ctx,
+		`INSERT INTO project_github_config (project_id, github_owner, github_repo, default_branch,
+		        installation_id, sarif_upload_enabled, webhook_enabled, webhook_events,
+		        webhook_agent_model, webhook_provider_id, updated_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, now())
+		 ON CONFLICT (project_id)
+		 DO UPDATE SET github_owner = EXCLUDED.github_owner,
+		               github_repo = EXCLUDED.github_repo,
+		               default_branch = EXCLUDED.default_branch,
+		               installation_id = EXCLUDED.installation_id,
+		               sarif_upload_enabled = EXCLUDED.sarif_upload_enabled,
+		               webhook_enabled = EXCLUDED.webhook_enabled,
+		               webhook_events = EXCLUDED.webhook_events,
+		               webhook_agent_model = EXCLUDED.webhook_agent_model,
+		               webhook_provider_id = EXCLUDED.webhook_provider_id,
+		               updated_at = now()`,
+		projectID, owner, repo, branch, installationID, sarifUpload, webhookEnabled, webhookEvents, webhookAgentModel, webhookProviderID)
+	return err
+}
+
+func (q *Queries) DeleteProjectGitHubConfig(ctx context.Context, projectID string) error {
+	_, err := q.pool.Exec(ctx,
+		`DELETE FROM project_github_config WHERE project_id = $1`, projectID)
+	return err
+}
+
+func (q *Queries) FindProjectByGitHubRepo(ctx context.Context, owner, repo string) (*models.ProjectGitHubConfig, error) {
+	var c models.ProjectGitHubConfig
+	err := q.pool.QueryRow(ctx,
+		`SELECT id, project_id, github_owner, github_repo, default_branch,
+		        installation_id, sarif_upload_enabled, webhook_enabled, webhook_events,
+		        webhook_agent_model, webhook_provider_id,
+		        created_at, updated_at
+		 FROM project_github_config
+		 WHERE lower(github_owner) = lower($1) AND lower(github_repo) = lower($2)`,
+		owner, repo).
+		Scan(&c.ID, &c.ProjectID, &c.GitHubOwner, &c.GitHubRepo, &c.DefaultBranch,
+			&c.InstallationID, &c.SARIFUploadEnabled, &c.WebhookEnabled, &c.WebhookEvents,
+			&c.WebhookAgentModel, &c.WebhookProviderID,
+			&c.CreatedAt, &c.UpdatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return &c, nil
+}
+
+func (q *Queries) InsertWebhookDelivery(ctx context.Context, d *models.GitHubWebhookDelivery) error {
+	return q.pool.QueryRow(ctx,
+		`INSERT INTO github_webhook_deliveries
+		 (delivery_id, event_type, action, repo_full_name, ref, sender_login,
+		  project_id, analysis_id, status, status_detail, payload_json)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+		 RETURNING id`,
+		d.DeliveryID, d.EventType, d.Action, d.RepoFullName, d.Ref, d.SenderLogin,
+		d.ProjectID, d.AnalysisID, d.Status, d.StatusDetail, d.PayloadJSON).Scan(&d.ID)
+}
+
+func (q *Queries) UpdateWebhookDeliveryStatus(ctx context.Context, id, status, detail string, analysisID *string) error {
+	_, err := q.pool.Exec(ctx,
+		`UPDATE github_webhook_deliveries SET status = $2, status_detail = $3, analysis_id = $4 WHERE id = $1`,
+		id, status, detail, analysisID)
+	return err
+}
+
+func (q *Queries) ListWebhookDeliveries(ctx context.Context, projectID string, limit int) ([]models.GitHubWebhookDelivery, error) {
+	query := `SELECT id, delivery_id, event_type, action, repo_full_name, ref, sender_login,
+		        project_id, analysis_id, status, status_detail, created_at
+		 FROM github_webhook_deliveries`
+	args := []interface{}{}
+	if projectID != "" {
+		query += ` WHERE project_id = $1`
+		args = append(args, projectID)
+	}
+	query += ` ORDER BY created_at DESC LIMIT ` + fmt.Sprintf("%d", limit)
+
+	rows, err := q.pool.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []models.GitHubWebhookDelivery
+	for rows.Next() {
+		var d models.GitHubWebhookDelivery
+		if err := rows.Scan(&d.ID, &d.DeliveryID, &d.EventType, &d.Action, &d.RepoFullName,
+			&d.Ref, &d.SenderLogin, &d.ProjectID, &d.AnalysisID, &d.Status, &d.StatusDetail,
+			&d.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, d)
+	}
+	return out, rows.Err()
 }

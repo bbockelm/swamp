@@ -109,6 +109,14 @@ type Config struct {
 	// response which transits the network.
 	K8sDirectLLM bool `envconfig:"K8S_DIRECT_LLM" default:"false"`
 
+	// GitHub App integration.
+	// The private key can be provided as a PEM string or as a file path.
+	GitHubAppID         int64  `envconfig:"GITHUB_APP_ID" default:"0"`
+	GitHubAppPrivateKey string `envconfig:"GITHUB_APP_PRIVATE_KEY" default:""`     // PEM-encoded RSA private key
+	GitHubAppKeyFile    string `envconfig:"GITHUB_APP_KEY_FILE" default:""`         // path to PEM file (alternative)
+	GitHubWebhookSecret string `envconfig:"GITHUB_WEBHOOK_SECRET" default:""`       // HMAC-SHA256 secret for webhook validation
+	GitHubAPIURL        string `envconfig:"GITHUB_API_URL" default:"https://api.github.com"` // for GitHub Enterprise
+
 	// Worker mode settings (used inside worker pods / detached processes).
 	WorkerMode     bool   `envconfig:"SWAMP_WORKER_MODE" default:"false"`
 	WorkerToken    string `envconfig:"SWAMP_WORKER_TOKEN" default:""`
@@ -269,6 +277,28 @@ func (c *Config) IsKubernetesExecutor() bool {
 // IsProcessExecutor returns true if the executor mode is process.
 func (c *Config) IsProcessExecutor() bool {
 	return c.ExecutorMode == "process"
+}
+
+// GitHubAppConfigured returns true if a GitHub App ID and private key are set.
+func (c *Config) GitHubAppConfigured() bool {
+	return c.GitHubAppID != 0 && c.GitHubAppPrivateKeyPEM() != ""
+}
+
+// GitHubAppPrivateKeyPEM returns the PEM-encoded private key, loading from
+// file if necessary.
+func (c *Config) GitHubAppPrivateKeyPEM() string {
+	if c.GitHubAppPrivateKey != "" {
+		return c.GitHubAppPrivateKey
+	}
+	if c.GitHubAppKeyFile != "" {
+		data, err := os.ReadFile(c.GitHubAppKeyFile)
+		if err != nil {
+			log.Warn().Err(err).Str("file", c.GitHubAppKeyFile).Msg("Failed to read GitHub App key file")
+			return ""
+		}
+		return strings.TrimSpace(string(data))
+	}
+	return ""
 }
 
 // IsWorkerMode returns true if this process is a worker pod.

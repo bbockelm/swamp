@@ -20,6 +20,7 @@ import (
 	"github.com/bbockelm/swamp/internal/crypto"
 	"github.com/bbockelm/swamp/internal/db"
 	"github.com/bbockelm/swamp/internal/frontend"
+	ghclient "github.com/bbockelm/swamp/internal/github"
 	"github.com/bbockelm/swamp/internal/handlers"
 	swampmcp "github.com/bbockelm/swamp/internal/mcp"
 	swampoauth2 "github.com/bbockelm/swamp/internal/oauth2"
@@ -135,6 +136,23 @@ func New(cfg *config.Config, pool *pgxpool.Pool, store *storage.Store) (*chi.Mux
 	// Health check
 	r.Get("/healthz", h.HealthCheck)
 
+	// Initialize GitHub App client (if configured).
+	ghClient := ghclient.NewClient(cfg, queries)
+	h.SetGitHubClient(ghClient)
+
+	// Wire GitHub integration into all executor types.
+	if ghClient != nil && ghClient.Configured() {
+		if localExec, ok := exec.(*agent.Executor); ok {
+			localExec.SetGitHubIntegration(ghClient)
+		}
+		if k8sExec, ok := exec.(*agent.K8sExecutor); ok {
+			k8sExec.SetGitHubIntegration(ghClient)
+		}
+		if procExec, ok := exec.(*agent.ProcessExecutor); ok {
+			procExec.SetGitHubIntegration(ghClient)
+		}
+	}
+
 	// Version info (public)
 	r.Get("/api/v1/version", h.GetVersion)
 
@@ -234,6 +252,9 @@ func New(cfg *config.Config, pool *pgxpool.Pool, store *storage.Store) (*chi.Mux
 
 	// API routes
 	r.Route("/api/v1", func(r chi.Router) {
+
+		// --- GitHub webhook (public, signature-validated) ---
+		r.Post("/github/webhook", h.HandleGitHubWebhook)
 
 		// --- Public auth endpoints ---
 		r.Route("/auth", func(r chi.Router) {
@@ -366,6 +387,14 @@ func New(cfg *config.Config, pool *pgxpool.Pool, store *storage.Store) (*chi.Mux
 						})
 					})
 
+					// GitHub integration (project-level)
+					r.Route("/github", func(r chi.Router) {
+						r.Get("/", h.GetProjectGitHubConfig)
+						r.Put("/", h.UpdateProjectGitHubConfig)
+						r.Delete("/", h.DeleteProjectGitHubConfig)
+						r.Get("/webhooks", h.ListWebhookDeliveries)
+					})
+
 					// Available providers (readable by anyone with project access)
 					r.Get("/available-providers", h.ListAvailableProviders)
 					r.Get("/available-providers/{providerSource}/{providerID}/models", h.DiscoverAvailableProviderModels)
@@ -453,6 +482,12 @@ func New(cfg *config.Config, pool *pgxpool.Pool, store *storage.Store) (*chi.Mux
 						r.Post("/restore", h.RestoreBackup)
 						r.Delete("/", h.DeleteBackup)
 					})
+				})
+
+				// GitHub App integration
+				r.Route("/github", func(r chi.Router) {
+					r.Get("/status", h.GetGitHubStatus)
+					r.Post("/sync-installations", h.SyncGitHubInstallations)
 				})
 
 				// OAuth2 clients (admin management)
