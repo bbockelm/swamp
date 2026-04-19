@@ -145,6 +145,8 @@ export interface Analysis {
   status: string;
   status_detail: string;
   error_message: string;
+  agent_model?: string;
+  agent_config?: Record<string, unknown>;
   custom_prompt: string;
   git_commit: string;
   git_branch: string;
@@ -175,6 +177,7 @@ export interface AggregatedTokenUsage extends TokenUsage {
 export interface AnalysisResult {
   id: string;
   analysis_id: string;
+  package_id?: string;
   result_type: string;
   filename: string;
   s3_key: string;
@@ -182,6 +185,9 @@ export interface AnalysisResult {
   file_size: number;
   finding_count: number;
   severity_counts: Record<string, number>;
+  sarif_upload_attempted: boolean;
+  sarif_upload_url?: string;
+  sarif_upload_error?: string;
   created_at: string;
 }
 
@@ -301,6 +307,9 @@ export interface Finding {
   annotation_by: string;
   git_url?: string;
   git_commit?: string;
+  sarif_upload_attempted?: boolean;
+  sarif_upload_url?: string;
+  sarif_upload_error?: string;
 }
 
 export interface FindingAnnotation {

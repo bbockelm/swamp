@@ -23,6 +23,26 @@ function timeAgo(dateStr: string): string {
   return new Date(dateStr).toLocaleDateString();
 }
 
+function summarizeSARIFUploads(results: AnalysisResult[] | undefined) {
+  const sarifResults = results?.filter((result) => result.result_type === "sarif") ?? [];
+  const attempted = sarifResults.filter((result) => result.sarif_upload_attempted).length;
+  const uploaded = sarifResults.filter((result) => !!result.sarif_upload_url).length;
+  const failed = sarifResults.filter(
+    (result) => result.sarif_upload_attempted && !result.sarif_upload_url && !!result.sarif_upload_error,
+  ).length;
+  const skipped = sarifResults.length - attempted;
+  const alertsURL = sarifResults.find((result) => result.sarif_upload_url)?.sarif_upload_url ?? "";
+
+  return {
+    total: sarifResults.length,
+    attempted,
+    uploaded,
+    failed,
+    skipped,
+    alertsURL,
+  };
+}
+
 export default function AnalysisDetailClient() {
   const { id: projectId, analysisId } = useResolvedParams<{
     id: string;
@@ -118,12 +138,19 @@ export default function AnalysisDetailClient() {
   const notesResult = results?.find((r) => r.result_type === "analysis_notes");
   const promptResult = results?.find((r) => r.result_type === "analysis_prompt");
   const contextResult = results?.find((r) => r.result_type === "analysis_context");
+  const sarifUploadSummary = summarizeSARIFUploads(results);
 
   const specialTypes = new Set([
     "sarif", "markdown", "markdown_report", "agent_log",
     "analysis_notes", "analysis_prompt", "analysis_context",
   ]);
-  const otherArtifacts = results?.filter((r) => !specialTypes.has(r.result_type)) ?? [];
+  const otherArtifacts = results?.filter((r) => !specialTypes.has(r.result_type) && r.filename !== "git_sha.txt") ?? [];
+  const providerID = typeof analysis.agent_config?.llm_provider_id === "string"
+    ? analysis.agent_config.llm_provider_id
+    : "";
+  const providerSource = typeof analysis.agent_config?.provider_source === "string"
+    ? analysis.agent_config.provider_source
+    : "";
 
   return (
     <div>
@@ -277,6 +304,17 @@ export default function AnalysisDetailClient() {
             </p>
           </div>
         )}
+          {(analysis.agent_model || providerID) && (
+            <div>
+              <p className="text-xs text-gray-500 uppercase">Model</p>
+              <p className="text-sm font-mono">{analysis.agent_model || "auto"}</p>
+              {providerID && (
+                <p className="text-xs text-gray-500 mt-0.5">
+                  Provider: {providerSource ? `${providerSource}/` : ""}{providerID}
+                </p>
+              )}
+            </div>
+          )}
         {analysis.sarif_upload_url && (
           <div>
             <p className="text-xs text-gray-500 uppercase">GitHub Code Scanning</p>
@@ -308,6 +346,13 @@ export default function AnalysisDetailClient() {
       {/* Token Usage */}
       {analysis.token_usage && analysis.token_usage.length > 0 && (
         <TokenUsageBox usage={analysis.token_usage} />
+      )}
+
+      {sarifUploadSummary.total > 0 && (
+        <SARIFUploadSummaryCard
+          summary={sarifUploadSummary}
+          fallbackURL={analysis.sarif_upload_url}
+        />
       )}
 
       {/* Results */}
@@ -545,6 +590,60 @@ function TokenUsageBox({ usage }: { usage: TokenUsage[] }) {
   );
 }
 
+function SARIFUploadSummaryCard({
+  summary,
+  fallbackURL,
+}: {
+  summary: ReturnType<typeof summarizeSARIFUploads>;
+  fallbackURL?: string;
+}) {
+  const alertsURL = summary.alertsURL || fallbackURL || "";
+
+  return (
+    <div className="bg-gray-50 border rounded p-4 mb-6">
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h3 className="text-sm font-semibold text-gray-700">GitHub SARIF Upload</h3>
+          <p className="text-xs text-gray-500 mt-1">
+            {summary.total} SARIF artifact{summary.total === 1 ? "" : "s"} in this analysis
+          </p>
+        </div>
+        {alertsURL && (
+          <a
+            href={alertsURL}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-sm text-blue-600 hover:underline whitespace-nowrap"
+          >
+            View alerts ↗
+          </a>
+        )}
+      </div>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-4">
+        <div className="rounded border bg-white p-3">
+          <p className="text-xs uppercase text-gray-500">Attempted</p>
+          <p className="text-lg font-semibold text-gray-900">{summary.attempted}</p>
+        </div>
+        <div className="rounded border bg-green-50 p-3">
+          <p className="text-xs uppercase text-green-700">Uploaded</p>
+          <p className="text-lg font-semibold text-green-800">{summary.uploaded}</p>
+        </div>
+        <div className="rounded border bg-red-50 p-3">
+          <p className="text-xs uppercase text-red-700">Failed</p>
+          <p className="text-lg font-semibold text-red-800">{summary.failed}</p>
+        </div>
+        <div className="rounded border bg-gray-100 p-3">
+          <p className="text-xs uppercase text-gray-600">Skipped</p>
+          <p className="text-lg font-semibold text-gray-800">{summary.skipped}</p>
+        </div>
+      </div>
+      <p className="text-xs text-gray-500 mt-3">
+        Per-file status and concrete upload errors are available in the findings table.
+      </p>
+    </div>
+  );
+}
+
 /** Collapsible section that fetches and renders a markdown result artifact inline. */
 function CollapsibleResultSection({
   title,
@@ -761,12 +860,10 @@ function TerminalStream({
                 : "bg-yellow-400"
           }`}
         />
-        {totalInput > 0 && (
-          <span className="text-xs text-gray-400 ml-auto font-mono">
-            {formatTokenCount(totalInput)} in / {formatTokenCount(totalOutput)} out
-            {totalCost > 0 && <> · ~${totalCost.toFixed(4)}</>}
-          </span>
-        )}
+        <span className="text-xs text-gray-400 ml-auto font-mono">
+          Live tokens: {formatTokenCount(totalInput)} in / {formatTokenCount(totalOutput)} out
+          {totalCost > 0 && <> · ~${totalCost.toFixed(4)}</>}
+        </span>
       </div>
       <div
         ref={containerRef}

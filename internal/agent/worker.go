@@ -528,13 +528,13 @@ func runWorkerAgent(ctx context.Context, cfg *config.Config, session *WorkerExch
 	}
 
 	// Capture stdout/stderr to log files and stream to server.
-	stdoutFile, err := os.Create(filepath.Join(workDir, "output", "agent_stdout.log"))
+	stdoutFile, err := os.OpenFile(filepath.Join(workDir, "output", "agent_stdout.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0640)
 	if err != nil {
 		return fmt.Errorf("create stdout log: %w", err)
 	}
 	defer func() { _ = stdoutFile.Close() }()
 
-	stderrFile, err := os.Create(filepath.Join(workDir, "output", "agent_stderr.log"))
+	stderrFile, err := os.OpenFile(filepath.Join(workDir, "output", "agent_stderr.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0640)
 	if err != nil {
 		return fmt.Errorf("create stderr log: %w", err)
 	}
@@ -623,6 +623,9 @@ func uploadResults(serverURL, sessionToken, analysisID, outputDir string) error 
 
 	for _, entry := range entries {
 		if entry.IsDir() {
+			continue
+		}
+		if entry.Name() == "git_sha.txt" {
 			continue
 		}
 		filePath := filepath.Join(outputDir, entry.Name())

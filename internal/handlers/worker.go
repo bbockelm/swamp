@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -576,6 +577,16 @@ func (wh *WorkerHandler) UploadResult(w http.ResponseWriter, r *http.Request) {
 		ResultType:  resultType,
 		ContentType: "application/octet-stream",
 	}
+	if resultType == "sarif" {
+		base := strings.TrimSuffix(filename, ".sarif")
+		for i := range session.Packages {
+			if strings.EqualFold(session.Packages[i].Name, base) {
+				pkgID := session.Packages[i].ID
+				result.PackageID = &pkgID
+				break
+			}
+		}
+	}
 
 	if err := wh.h.queries.CreateAnalysisResult(r.Context(), result); err != nil {
 		log.Error().Err(err).Str("filename", filename).Msg("Failed to insert analysis result row")
@@ -608,6 +619,8 @@ func (wh *WorkerHandler) UploadResult(w http.ResponseWriter, r *http.Request) {
 				log.Info().Int("count", len(findings)).Str("analysis_id", analysisID).Msg("Saved individual findings from uploaded SARIF")
 			}
 		}
+
+		wh.trackSARIFUploadAttempt(r.Context(), analysis, session, result, plaintext)
 	}
 
 	// Extract token usage from agent stdout logs.
@@ -641,6 +654,84 @@ func (wh *WorkerHandler) UploadResult(w http.ResponseWriter, r *http.Request) {
 		Msg("Worker uploaded result file")
 
 	respondJSON(w, http.StatusCreated, result)
+}
+
+func (wh *WorkerHandler) trackSARIFUploadAttempt(ctx context.Context, analysis *models.Analysis, session *agent.WorkerSession, result *models.AnalysisResult, sarifData []byte) {
+	if result == nil || result.ID == "" {
+		return
+	}
+	if wh.h == nil || wh.h.ghClient == nil || !wh.h.ghClient.Configured() {
+		log.Info().Str("analysis_id", analysis.ID).Str("result_id", result.ID).Msg("Skipping GitHub SARIF upload: GitHub integration not configured")
+		return
+	}
+
+	attempted := false
+	uploadURL := ""
+	uploadErrMsg := ""
+
+	var pkg *models.SoftwarePackage
+	if result.PackageID != nil {
+		for i := range session.Packages {
+			if session.Packages[i].ID == *result.PackageID {
+				pkg = &session.Packages[i]
+				break
+			}
+		}
+	}
+
+	if pkg != nil && pkg.SARIFUploadEnabled && pkg.GitHubOwner != "" && pkg.GitHubRepo != "" && pkg.InstallationID != 0 {
+		attempted = true
+		log.Info().
+			Str("analysis_id", analysis.ID).
+			Str("result_id", result.ID).
+			Str("package_id", pkg.ID).
+			Str("package", pkg.Name).
+			Msg("Attempting GitHub SARIF upload for package result")
+		url, err := wh.h.ghClient.UploadSARIFForPackage(ctx, pkg, sarifData)
+		if err != nil {
+			uploadErrMsg = err.Error()
+			log.Warn().Err(err).Str("analysis_id", analysis.ID).Str("result_id", result.ID).Str("package_id", pkg.ID).Msg("GitHub SARIF upload failed for package result")
+		} else {
+			uploadURL = url
+		}
+	}
+
+	if !attempted {
+		if ghCfg, err := wh.h.queries.GetProjectGitHubConfig(ctx, analysis.ProjectID); err == nil && ghCfg.SARIFUploadEnabled && ghCfg.InstallationID != 0 {
+			attempted = true
+			log.Info().
+				Str("analysis_id", analysis.ID).
+				Str("result_id", result.ID).
+				Msg("Attempting GitHub SARIF upload via project-level config")
+			url, upErr := wh.h.ghClient.UploadSARIFForProject(ctx, analysis.ProjectID, sarifData)
+			if upErr != nil {
+				uploadErrMsg = upErr.Error()
+				log.Warn().Err(upErr).Str("analysis_id", analysis.ID).Str("result_id", result.ID).Msg("GitHub SARIF upload failed for project result")
+			} else {
+				uploadURL = url
+			}
+		}
+	}
+
+	if !attempted {
+		log.Info().Str("analysis_id", analysis.ID).Str("result_id", result.ID).Msg("Skipping GitHub SARIF upload: no eligible package/project SARIF config")
+		return
+	}
+
+	if uploadURL == "" && uploadErrMsg == "" {
+		uploadErrMsg = "Upload attempted but no GitHub alerts URL was returned"
+	}
+	if err := wh.h.queries.SetResultSARIFUploadStatus(ctx, result.ID, true, uploadURL, uploadErrMsg); err != nil {
+		log.Warn().Err(err).Str("result_id", result.ID).Msg("Failed to persist SARIF upload tracking status")
+	}
+	if uploadURL != "" {
+		if err := wh.h.queries.SetAnalysisSARIFUploadURL(ctx, analysis.ID, uploadURL); err != nil {
+			log.Warn().Err(err).Str("analysis_id", analysis.ID).Msg("Failed to record analysis SARIF upload URL")
+		}
+		wh.hub.Broadcast(analysis.ID, []byte("[system] SARIF results uploaded to GitHub"))
+		return
+	}
+	wh.hub.Broadcast(analysis.ID, []byte("[error] GitHub SARIF upload failed: "+uploadErrMsg))
 }
 
 // authenticateWorker validates the Bearer token in the request.

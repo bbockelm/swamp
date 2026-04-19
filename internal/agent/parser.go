@@ -143,6 +143,11 @@ func ParseOutputDir(outputDir, analysisID, projectID string, packages []models.S
 			result.Summary, result.FindingCount, result.SeverityCounts = parseSARIF(fullPath)
 			// Extract individual findings for the findings table.
 			findings := extractFindings(fullPath, analysisID, projectID)
+			for i := range findings {
+				// Temporarily tag with the source filename; replaced with UUID later
+				// when the corresponding analysis_result row is created.
+				findings[i].ResultID = name
+			}
 			out.Findings = append(out.Findings, findings...)
 			// Try to match per-package SARIF files (e.g. "mypackage.sarif").
 			baseName := strings.TrimSuffix(name, ".sarif")

@@ -338,7 +338,6 @@ func (e *Executor) run(analysis *models.Analysis, packages []models.SoftwarePack
 		// Mark completed for new provider-based path.
 		completeCtx, completeCancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer completeCancel()
-		e.tryUploadSARIFToGitHub(completeCtx, analysis, packages, sarifPath)
 		if err := e.queries.SetAnalysisCompleted(completeCtx, analysis.ID, "completed", ""); err != nil {
 			log.Error().Err(err).Str("analysis_id", analysis.ID).Msg("Failed to mark analysis completed")
 		}
@@ -415,7 +414,6 @@ func (e *Executor) run(analysis *models.Analysis, packages []models.SoftwarePack
 	// Mark completed (use a fresh context in case the original expired during Phase 2).
 	completeCtx, completeCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer completeCancel()
-	e.tryUploadSARIFToGitHub(completeCtx, analysis, packages, sarifPath)
 	if err := e.queries.SetAnalysisCompleted(completeCtx, analysis.ID, "completed", ""); err != nil {
 		log.Error().Err(err).Str("analysis_id", analysis.ID).Msg("Failed to mark analysis completed")
 	}
@@ -550,13 +548,13 @@ func (e *Executor) runAgent(ctx context.Context, workDir, prompt string, analysi
 	cmd.Env = append(cmd.Env, fmt.Sprintf("ANTHROPIC_API_KEY=%s", anthropicKey))
 
 	// Capture stdout/stderr to log files and broadcast via WebSocket.
-	stdoutFile, err := os.Create(filepath.Join(workDir, "output", "agent_stdout.log"))
+	stdoutFile, err := os.OpenFile(filepath.Join(workDir, "output", "agent_stdout.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0640)
 	if err != nil {
 		return fmt.Errorf("create stdout log: %w", err)
 	}
 	defer func() { _ = stdoutFile.Close() }()
 
-	stderrFile, err := os.Create(filepath.Join(workDir, "output", "agent_stderr.log"))
+	stderrFile, err := os.OpenFile(filepath.Join(workDir, "output", "agent_stderr.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0640)
 	if err != nil {
 		return fmt.Errorf("create stderr log: %w", err)
 	}
@@ -676,6 +674,10 @@ func (e *Executor) uploadOutputDir(ctx context.Context, outputDir, analysisID st
 	if pkgs, pkgErr := e.queries.ListAnalysisPackages(ctx, analysisID); pkgErr == nil {
 		packages = pkgs
 	}
+	pkgByID := make(map[string]models.SoftwarePackage, len(packages))
+	for _, p := range packages {
+		pkgByID[p.ID] = p
+	}
 
 	results, err := ParseOutputDir(outputDir, analysisID, analysis.ProjectID, packages)
 	if err != nil {
@@ -723,10 +725,83 @@ func (e *Executor) uploadOutputDir(ctx context.Context, outputDir, analysisID st
 			continue
 		}
 
+		if results.Results[i].ResultType == "sarif" {
+			attempted := false
+			uploadURL := ""
+			uploadErrMsg := ""
+
+			if e.ghInteg != nil {
+				if results.Results[i].PackageID != nil {
+					if pkg, ok := pkgByID[*results.Results[i].PackageID]; ok && pkg.SARIFUploadEnabled && pkg.GitHubOwner != "" && pkg.GitHubRepo != "" && pkg.InstallationID != 0 {
+						attempted = true
+						log.Info().
+							Str("analysis_id", analysisID).
+							Str("result_id", results.Results[i].ID).
+							Str("package_id", pkg.ID).
+							Str("package", pkg.Name).
+							Msg("Attempting GitHub SARIF upload for package result")
+						url, upErr := e.ghInteg.UploadSARIFForPackage(ctx, &pkg, plaintext)
+						if upErr != nil {
+							uploadErrMsg = upErr.Error()
+							log.Warn().Err(upErr).
+								Str("analysis_id", analysisID).
+								Str("result_id", results.Results[i].ID).
+								Str("package_id", pkg.ID).
+								Msg("GitHub SARIF upload failed for package result")
+						} else {
+							uploadURL = url
+						}
+					}
+				}
+
+				if !attempted {
+					if ghCfg, cfgErr := e.queries.GetProjectGitHubConfig(ctx, analysis.ProjectID); cfgErr == nil && ghCfg.SARIFUploadEnabled && ghCfg.InstallationID != 0 {
+						attempted = true
+						log.Info().
+							Str("analysis_id", analysisID).
+							Str("result_id", results.Results[i].ID).
+							Msg("Attempting GitHub SARIF upload via project-level config")
+						url, upErr := e.ghInteg.UploadSARIFForProject(ctx, analysis.ProjectID, plaintext)
+						if upErr != nil {
+							uploadErrMsg = upErr.Error()
+							log.Warn().Err(upErr).
+								Str("analysis_id", analysisID).
+								Str("result_id", results.Results[i].ID).
+								Msg("GitHub SARIF upload failed for project result")
+						} else {
+							uploadURL = url
+						}
+					}
+				}
+			}
+
+			if attempted {
+				if uploadURL == "" && uploadErrMsg == "" {
+					uploadErrMsg = "Upload attempted but no GitHub alerts URL was returned"
+				}
+				if err := e.queries.SetResultSARIFUploadStatus(ctx, results.Results[i].ID, true, uploadURL, uploadErrMsg); err != nil {
+					log.Warn().Err(err).Str("result_id", results.Results[i].ID).Msg("Failed to persist SARIF upload tracking status")
+				}
+				if uploadURL != "" {
+					if err := e.queries.SetAnalysisSARIFUploadURL(ctx, analysisID, uploadURL); err != nil {
+						log.Warn().Err(err).Str("analysis_id", analysisID).Msg("Failed to record analysis SARIF upload URL")
+					}
+					e.hub.Broadcast(analysisID, []byte("[system] SARIF results uploaded to GitHub"))
+				} else {
+					e.hub.Broadcast(analysisID, []byte("[error] GitHub SARIF upload failed: "+uploadErrMsg))
+				}
+			} else {
+				log.Info().
+					Str("analysis_id", analysisID).
+					Str("result_id", results.Results[i].ID).
+					Msg("Skipping GitHub SARIF upload: no eligible package or project GitHub config")
+			}
+		}
+
 		// Link findings to the result record now that we have the result ID.
 		for j := range results.Findings {
-			// Only link findings that don't yet have a result_id (from this SARIF file).
-			if results.Findings[j].ResultID == "" {
+			// During parse we temporarily use the SARIF filename as ResultID.
+			if results.Findings[j].ResultID == results.Results[i].Filename {
 				results.Findings[j].ResultID = results.Results[i].ID
 			}
 		}

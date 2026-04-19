@@ -871,8 +871,6 @@ function FindingsTab({
 }
 
 function GitHubTab({ projectId }: { projectId: string }) {
-  const queryClient = useQueryClient();
-
   const { data: installations, isLoading } = useQuery({
     queryKey: ['github-installations'],
     queryFn: async () => {
@@ -885,13 +883,6 @@ function GitHubTab({ projectId }: { projectId: string }) {
     queryKey: ['github-app-info'],
     queryFn: () => api.github.appInfo(),
     staleTime: 300_000,
-  });
-
-  const claimMut = useMutation({
-    mutationFn: (installationId: number) => api.github.claimInstallation(installationId),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['github-installations'] });
-    },
   });
 
   if (isLoading) return <p className="text-sm text-gray-500">Loading…</p>;

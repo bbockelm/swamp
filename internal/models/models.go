@@ -199,7 +199,9 @@ type AnalysisResult struct {
 	Summary        string          `json:"summary"`
 	FindingCount   int             `json:"finding_count"`
 	SeverityCounts json.RawMessage `json:"severity_counts"`
+	SARIFUploadAttempted bool      `json:"sarif_upload_attempted"`
 	SARIFUploadURL string          `json:"sarif_upload_url,omitempty"`
+	SARIFUploadError string        `json:"sarif_upload_error,omitempty"`
 	CreatedAt      time.Time       `json:"created_at"`
 }
 
@@ -279,6 +281,9 @@ type Finding struct {
 	RawJSON     json.RawMessage `json:"raw_json"`
 	GitCommit   string          `json:"git_commit"`
 	CreatedAt   time.Time       `json:"created_at"`
+	SARIFUploadAttempted bool    `json:"sarif_upload_attempted,omitempty"`
+	SARIFUploadURL       string  `json:"sarif_upload_url,omitempty"`
+	SARIFUploadError     string  `json:"sarif_upload_error,omitempty"`
 	// Joined fields (not always populated)
 	LatestStatus string `json:"latest_status,omitempty"`
 	LatestNote   string `json:"latest_note,omitempty"`

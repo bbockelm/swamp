@@ -138,13 +138,13 @@ func runOpenCodeProcess(ctx context.Context, binary, workDir, prompt, analysisID
 		fmt.Sprintf("XDG_STATE_HOME=%s", filepath.Join(workDir, "state")),
 	)
 
-	stdoutFile, err := os.Create(filepath.Join(workDir, "output", "agent_stdout.log"))
+	stdoutFile, err := os.OpenFile(filepath.Join(workDir, "output", "agent_stdout.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0640)
 	if err != nil {
 		return fmt.Errorf("create stdout log: %w", err)
 	}
 	defer func() { _ = stdoutFile.Close() }()
 
-	stderrFile, err := os.Create(filepath.Join(workDir, "output", "agent_stderr.log"))
+	stderrFile, err := os.OpenFile(filepath.Join(workDir, "output", "agent_stderr.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0640)
 	if err != nil {
 		return fmt.Errorf("create stderr log: %w", err)
 	}

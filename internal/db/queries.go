@@ -1109,7 +1109,22 @@ func (q *Queries) UpdateAnalysisResultMetadata(ctx context.Context, id, summary 
 // SetResultSARIFUploadURL records the GitHub Code Scanning alerts URL on a result.
 func (q *Queries) SetResultSARIFUploadURL(ctx context.Context, resultID, url string) error {
 	_, err := q.pool.Exec(ctx, `
-		UPDATE analysis_results SET sarif_upload_url = $2 WHERE id = $1`, resultID, url)
+		UPDATE analysis_results
+		SET sarif_upload_attempted = true,
+		    sarif_upload_url = $2,
+		    sarif_upload_error = ''
+		WHERE id = $1`, resultID, url)
+	return err
+}
+
+// SetResultSARIFUploadStatus records SARIF upload attempt status for a result.
+func (q *Queries) SetResultSARIFUploadStatus(ctx context.Context, resultID string, attempted bool, url, errMsg string) error {
+	_, err := q.pool.Exec(ctx, `
+		UPDATE analysis_results
+		SET sarif_upload_attempted = $2,
+		    sarif_upload_url = COALESCE($3, ''),
+		    sarif_upload_error = COALESCE($4, '')
+		WHERE id = $1`, resultID, attempted, url, errMsg)
 	return err
 }
 
@@ -1117,7 +1132,7 @@ func (q *Queries) ListAnalysisResults(ctx context.Context, analysisID string) ([
 	rows, err := q.pool.Query(ctx, `
 		SELECT id, analysis_id, package_id, result_type, s3_key, filename,
 		       content_type, file_size, summary, finding_count, severity_counts,
-		       sarif_upload_url, created_at
+		       sarif_upload_attempted, sarif_upload_url, sarif_upload_error, created_at
 		FROM analysis_results WHERE analysis_id=$1 ORDER BY created_at`, analysisID)
 	if err != nil {
 		return nil, err
@@ -1128,7 +1143,7 @@ func (q *Queries) ListAnalysisResults(ctx context.Context, analysisID string) ([
 		var r models.AnalysisResult
 		if err := rows.Scan(&r.ID, &r.AnalysisID, &r.PackageID, &r.ResultType, &r.S3Key, &r.Filename,
 			&r.ContentType, &r.FileSize, &r.Summary, &r.FindingCount, &r.SeverityCounts,
-			&r.SARIFUploadURL, &r.CreatedAt); err != nil {
+			&r.SARIFUploadAttempted, &r.SARIFUploadURL, &r.SARIFUploadError, &r.CreatedAt); err != nil {
 			return nil, err
 		}
 		results = append(results, r)
@@ -1141,11 +1156,11 @@ func (q *Queries) GetAnalysisResult(ctx context.Context, id string) (*models.Ana
 	err := q.pool.QueryRow(ctx, `
 		SELECT id, analysis_id, package_id, result_type, s3_key, filename,
 		       content_type, file_size, summary, finding_count, severity_counts,
-		       sarif_upload_url, created_at
+		       sarif_upload_attempted, sarif_upload_url, sarif_upload_error, created_at
 		FROM analysis_results WHERE id=$1`, id).Scan(
 		&r.ID, &r.AnalysisID, &r.PackageID, &r.ResultType, &r.S3Key, &r.Filename,
 		&r.ContentType, &r.FileSize, &r.Summary, &r.FindingCount, &r.SeverityCounts,
-		&r.SARIFUploadURL, &r.CreatedAt)
+		&r.SARIFUploadAttempted, &r.SARIFUploadURL, &r.SARIFUploadError, &r.CreatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -1183,10 +1198,12 @@ func (q *Queries) ListProjectFindings(ctx context.Context, projectID string, fil
 		SELECT f.id, f.project_id, f.analysis_id, f.result_id, f.rule_id, f.level,
 		       f.message, f.file_path, f.start_line, f.end_line, f.snippet, f.fingerprint,
 		       f.raw_json, f.git_commit, f.created_at,
+		       ar.sarif_upload_attempted, ar.sarif_upload_url, ar.sarif_upload_error,
 		       COALESCE(fa.status, 'open') AS latest_status,
 		       COALESCE(fa.note, '') AS latest_note,
 		       COALESCE(u.display_name, '') AS annotation_by
 		FROM findings f
+		LEFT JOIN analysis_results ar ON ar.id = f.result_id
 		LEFT JOIN LATERAL (
 		    SELECT fa2.status, fa2.note, fa2.user_id
 		    FROM finding_annotations fa2
@@ -1258,6 +1275,7 @@ func (q *Queries) ListProjectFindings(ctx context.Context, projectID string, fil
 		if err := rows.Scan(&f.ID, &f.ProjectID, &f.AnalysisID, &f.ResultID, &f.RuleID,
 			&f.Level, &f.Message, &f.FilePath, &f.StartLine, &f.EndLine, &f.Snippet,
 			&f.Fingerprint, &f.RawJSON, &f.GitCommit, &f.CreatedAt,
+			&f.SARIFUploadAttempted, &f.SARIFUploadURL, &f.SARIFUploadError,
 			&f.LatestStatus, &f.LatestNote, &f.AnnotationBy); err != nil {
 			return nil, err
 		}
@@ -1337,8 +1355,10 @@ func (q *Queries) GetFinding(ctx context.Context, id string) (*models.Finding, e
 		SELECT f.id, f.project_id, f.analysis_id, f.result_id, f.rule_id, f.level,
 		       f.message, f.file_path, f.start_line, f.end_line, f.snippet, f.fingerprint,
 		       f.raw_json, f.created_at,
+		       ar.sarif_upload_attempted, ar.sarif_upload_url, ar.sarif_upload_error,
 		       COALESCE(fa.status, 'open'), COALESCE(fa.note, ''), COALESCE(u.display_name, '')
 		FROM findings f
+		LEFT JOIN analysis_results ar ON ar.id = f.result_id
 		LEFT JOIN LATERAL (
 		    SELECT fa2.status, fa2.note, fa2.user_id
 		    FROM finding_annotations fa2
@@ -1350,6 +1370,7 @@ func (q *Queries) GetFinding(ctx context.Context, id string) (*models.Finding, e
 		&f.ID, &f.ProjectID, &f.AnalysisID, &f.ResultID, &f.RuleID,
 		&f.Level, &f.Message, &f.FilePath, &f.StartLine, &f.EndLine, &f.Snippet,
 		&f.Fingerprint, &f.RawJSON, &f.CreatedAt,
+		&f.SARIFUploadAttempted, &f.SARIFUploadURL, &f.SARIFUploadError,
 		&f.LatestStatus, &f.LatestNote, &f.AnnotationBy)
 	if err != nil {
 		return nil, err

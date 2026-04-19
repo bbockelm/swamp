@@ -42,6 +42,19 @@ function statusLabel(status: string): string {
   return STATUS_OPTIONS.find((s) => s.value === status)?.label || status;
 }
 
+function uploadStatus(f: Finding): { label: string; color: string } {
+  if (!f.sarif_upload_attempted) {
+    return { label: 'Not attempted', color: 'bg-gray-100 text-gray-700' };
+  }
+  if (f.sarif_upload_url) {
+    return { label: 'Uploaded', color: 'bg-green-100 text-green-700' };
+  }
+  if (f.sarif_upload_error) {
+    return { label: 'Failed', color: 'bg-red-100 text-red-700' };
+  }
+  return { label: 'Attempted', color: 'bg-amber-100 text-amber-800' };
+}
+
 function buildGitHubLink(gitUrl: string, filePath: string, line?: number, commitSha?: string): string | null {
   const match = gitUrl.match(/github\.com\/([^/]+\/[^/]+?)(?:\.git)?$/);
   if (!match) return null;
@@ -288,6 +301,7 @@ export function FindingsTable({
                 <th className={thClass} onClick={() => handleSort('message')}>
                   Message <SortIcon field="message" sortField={sortField} sortDir={sortDir} />
                 </th>
+                <th className="text-left px-4 py-2 font-medium w-36">GitHub Upload</th>
               </tr>
             </thead>
             <tbody className="divide-y">
@@ -335,6 +349,7 @@ function FindingRow({
 }) {
   const level = finding.level || 'note';
   const ghLink = gitUrl ? buildGitHubLink(gitUrl, finding.file_path, finding.start_line, finding.git_commit) : null;
+  const upload = uploadStatus(finding);
 
   return (
     <>
@@ -369,10 +384,15 @@ function FindingRow({
           )}
         </td>
         <td className="px-4 py-2 text-gray-700 max-w-md truncate">{finding.message || '-'}</td>
+        <td className="px-4 py-2">
+          <span className={`inline-block px-2 py-0.5 rounded text-xs font-medium ${upload.color}`}>
+            {upload.label}
+          </span>
+        </td>
       </tr>
       {expanded && (
         <tr>
-          <td colSpan={5} className="bg-gray-50 px-4 py-4">
+          <td colSpan={6} className="bg-gray-50 px-4 py-4">
             <FindingDetail finding={finding} projectId={projectId} canEdit={canEdit} />
           </td>
         </tr>
@@ -421,6 +441,31 @@ function FindingDetail({ finding, projectId, canEdit }: { finding: Finding; proj
           {finding.start_line}
           {finding.end_line > 0 && finding.end_line !== finding.start_line && `–${finding.end_line}`}
         </div>
+        <div>
+          <span className="text-gray-500">GitHub Upload:</span>{' '}
+          <span className={`inline-block px-2 py-0.5 rounded text-xs font-medium ${uploadStatus(finding).color}`}>
+            {uploadStatus(finding).label}
+          </span>
+        </div>
+        {finding.sarif_upload_url && (
+          <div className="col-span-2">
+            <span className="text-gray-500">Code Scanning:</span>{' '}
+            <a
+              href={finding.sarif_upload_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-blue-600 hover:underline"
+            >
+              View alerts ↗
+            </a>
+          </div>
+        )}
+        {finding.sarif_upload_attempted && finding.sarif_upload_error && (
+          <div className="col-span-2 text-red-700 font-mono break-words">
+            <span className="text-gray-500 font-sans">Upload error:</span>{' '}
+            {finding.sarif_upload_error}
+          </div>
+        )}
       </div>
 
       {finding.message && (
