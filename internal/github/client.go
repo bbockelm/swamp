@@ -29,6 +29,48 @@ import (
 	"github.com/bbockelm/swamp/internal/models"
 )
 
+// parseGitHubRepo extracts owner/repo from common GitHub URL formats.
+// Supported forms:
+// - https://github.com/owner/repo(.git)
+// - ssh://git@github.com/owner/repo(.git)
+// - git@github.com:owner/repo(.git)
+func parseGitHubRepo(gitURL string) (owner, repo string) {
+	u := strings.TrimSpace(gitURL)
+	if u == "" {
+		return "", ""
+	}
+
+	lower := strings.ToLower(u)
+	if strings.HasPrefix(lower, "git@github.com:") {
+		rest := strings.TrimPrefix(u, "git@github.com:")
+		parts := strings.SplitN(rest, "/", 2)
+		if len(parts) != 2 {
+			return "", ""
+		}
+		owner = strings.TrimSpace(parts[0])
+		repo = strings.TrimSuffix(strings.TrimSpace(parts[1]), ".git")
+		repo = strings.TrimSuffix(repo, "/")
+		return owner, repo
+	}
+
+	for _, prefix := range []string{"https://github.com/", "http://github.com/", "ssh://git@github.com/"} {
+		if strings.HasPrefix(lower, prefix) {
+			rest := u[len(prefix):]
+			parts := strings.SplitN(rest, "/", 3)
+			if len(parts) < 2 {
+				return "", ""
+			}
+			owner = strings.TrimSpace(parts[0])
+			repo = strings.TrimSpace(parts[1])
+			repo = strings.TrimSuffix(repo, ".git")
+			repo = strings.TrimSuffix(repo, "/")
+			return owner, repo
+		}
+	}
+
+	return "", ""
+}
+
 // Client provides GitHub App API operations.
 type Client struct {
 	cfg     *config.Config
@@ -42,9 +84,9 @@ type Client struct {
 	tokens map[int64]*cachedToken
 
 	// Cached app metadata from GET /app.
-	appSlug     string // e.g. "my-swamp-app"
-	appHTMLURL  string // e.g. "https://github.com/apps/my-swamp-app"
-	appInfoErr  error
+	appSlug    string // e.g. "my-swamp-app"
+	appHTMLURL string // e.g. "https://github.com/apps/my-swamp-app"
+	appInfoErr error
 	appInfoOnce sync.Once
 }
 
@@ -512,22 +554,78 @@ func (c *Client) CloneCredential(ctx context.Context, projectID string) (*models
 // own GitHub config fields. Falls back to project-level config.
 func (c *Client) CloneCredentialForPackage(ctx context.Context, pkg *models.SoftwarePackage) (*models.GitCloneCredential, error) {
 	if c == nil || !c.Configured() {
+		if pkg != nil {
+			log.Debug().
+				Str("package_id", pkg.ID).
+				Str("package", pkg.Name).
+				Msg("Skipping GitHub clone credential resolution: integration not configured")
+		}
 		return nil, nil
 	}
+
+	ownerSource := "package"
+	owner := pkg.GitHubOwner
+	repo := pkg.GitHubRepo
+	if owner == "" || repo == "" {
+		ownerSource = "git_url"
+		owner, repo = parseGitHubRepo(pkg.GitURL)
+	}
+	installSource := "package"
+	installationID := pkg.InstallationID
+	if installationID == 0 && owner != "" {
+		installSource = "owner_lookup"
+		if inst, err := c.queries.GetInstallationByOwner(ctx, owner); err == nil {
+			installationID = inst.InstallationID
+		}
+	}
+
 	// Use package-level GitHub config if present.
-	if pkg.GitHubOwner != "" && pkg.GitHubRepo != "" && pkg.InstallationID != 0 {
-		token, err := c.GetInstallationToken(ctx, pkg.InstallationID)
+	if owner != "" && repo != "" && installationID != 0 {
+		token, err := c.GetInstallationToken(ctx, installationID)
 		if err != nil {
 			return nil, fmt.Errorf("getting installation token for package: %w", err)
 		}
+		log.Debug().
+			Str("package_id", pkg.ID).
+			Str("package", pkg.Name).
+			Str("owner", owner).
+			Str("repo", repo).
+			Str("owner_source", ownerSource).
+			Str("installation_source", installSource).
+			Int64("installation_id", installationID).
+			Msg("Resolved GitHub clone credential for package")
 		return &models.GitCloneCredential{
-			CloneURL: fmt.Sprintf("https://github.com/%s/%s.git", pkg.GitHubOwner, pkg.GitHubRepo),
+			CloneURL: fmt.Sprintf("https://github.com/%s/%s.git", owner, repo),
 			Token:    token,
 			Branch:   pkg.GitBranch,
 		}, nil
 	}
 	// Fall back to project-level config.
-	return c.CloneCredential(ctx, pkg.ProjectID)
+	log.Debug().
+		Str("package_id", pkg.ID).
+		Str("package", pkg.Name).
+		Str("owner", owner).
+		Str("repo", repo).
+		Str("owner_source", ownerSource).
+		Int64("installation_id", installationID).
+		Msg("Package-level clone credential unavailable; trying project-level GitHub config")
+
+	cred, err := c.CloneCredential(ctx, pkg.ProjectID)
+	if err != nil {
+		return nil, err
+	}
+	if cred != nil {
+		log.Debug().
+			Str("package_id", pkg.ID).
+			Str("package", pkg.Name).
+			Msg("Resolved GitHub clone credential via project-level config")
+	} else {
+		log.Debug().
+			Str("package_id", pkg.ID).
+			Str("package", pkg.Name).
+			Msg("No GitHub clone credential resolved for package")
+	}
+	return cred, nil
 }
 
 // UploadSARIFForProject implements agent.GitHubIntegration.

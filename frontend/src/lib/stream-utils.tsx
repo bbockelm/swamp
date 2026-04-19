@@ -8,7 +8,7 @@ import React from "react";
 export function StreamLine({ line }: { line: string }) {
   if (line.startsWith("[system]")) {
     return (
-      <div className="flex items-start gap-2 py-1 px-2 rounded bg-yellow-900/40 text-yellow-100 text-sm">
+      <div className="flex items-start gap-2 py-1 px-2 rounded bg-yellow-800/50 text-yellow-200 text-sm">
         <span className="shrink-0 mt-0.5">⚙</span>
         <span className="break-words whitespace-pre-wrap">{line.slice(9)}</span>
       </div>
@@ -54,9 +54,16 @@ export function StreamLine({ line }: { line: string }) {
     );
   }
   if (line.startsWith("[result]")) {
+    const content = line.slice(9);
+    // Detect stderr-like error output in results and render prominently.
+    const isErrorOutput = /^\/bin\/\w+:|^sh:|^bash:|^error:|^fatal:|^E:|^Traceback /i.test(content.trimStart());
     return (
-      <div className="py-1 px-2 text-sm text-green-200 border-l-2 border-green-400 ml-1 break-words whitespace-pre-wrap font-mono">
-        {line.slice(9)}
+      <div className={`py-1 px-2 text-sm border-l-2 ml-1 break-words whitespace-pre-wrap font-mono ${
+        isErrorOutput
+          ? 'text-red-300 border-red-400'
+          : 'text-gray-200 border-green-400'
+      }`}>
+        {content}
       </div>
     );
   }
@@ -70,7 +77,7 @@ export function StreamLine({ line }: { line: string }) {
   }
   if (line.startsWith("[stderr]")) {
     return (
-      <div className="py-0.5 px-2 text-red-200 text-sm font-mono break-words whitespace-pre-wrap">
+      <div className="py-0.5 px-2 text-red-300 text-sm font-mono break-words whitespace-pre-wrap">
         {line.slice(9)}
       </div>
     );

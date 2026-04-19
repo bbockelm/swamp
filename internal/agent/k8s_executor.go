@@ -552,11 +552,18 @@ func (e *K8sExecutor) failAnalysis(analysisID, detail string, err error) {
 	if err != nil {
 		errMsg = err.Error()
 	}
+	if strings.TrimSpace(errMsg) == "" {
+		errMsg = detail
+	}
 	log.Error().Err(err).Str("analysis_id", analysisID).Str("detail", detail).Msg("Analysis failed")
 	dbCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	a, getErr := e.queries.GetAnalysis(dbCtx, analysisID)
 	if getErr == nil && (a.Status == "cancelled" || a.Status == "completed" || a.Status == "timed_out") {
+		return
+	}
+	if getErr == nil && a.Status == "failed" && strings.TrimSpace(a.ErrorMessage) != "" {
+		// Preserve an existing worker-reported failure reason.
 		return
 	}
 	_ = e.queries.SetAnalysisCompleted(dbCtx, analysisID, "failed", errMsg)

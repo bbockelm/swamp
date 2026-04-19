@@ -822,6 +822,11 @@ function AnalysesTab({
                     {a.status_detail}
                   </p>
                 )}
+                {a.error_message && (
+                  <p className="text-sm text-red-600 mt-1 font-mono break-words">
+                    {a.error_message}
+                  </p>
+                )}
               </Link>
             ))}
           </div>
