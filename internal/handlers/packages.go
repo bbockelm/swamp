@@ -60,10 +60,13 @@ func (h *Handler) CreatePackage(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	// If we have a GitHub owner/repo but no installation ID, try to inherit
-	// from the project's GitHub config.
+	// from the project's GitHub config, then fall back to matching by owner
+	// in the installations table.
 	if pkg.GitHubOwner != "" && pkg.InstallationID == 0 {
 		if ghCfg, err := h.queries.GetProjectGitHubConfig(r.Context(), projectID); err == nil && ghCfg.InstallationID != 0 {
 			pkg.InstallationID = ghCfg.InstallationID
+		} else if inst, err := h.queries.GetInstallationByOwner(r.Context(), pkg.GitHubOwner); err == nil {
+			pkg.InstallationID = inst.InstallationID
 		}
 	}
 	if err := h.queries.CreatePackage(r.Context(), &pkg); err != nil {
@@ -116,6 +119,15 @@ func (h *Handler) UpdatePackage(w http.ResponseWriter, r *http.Request) {
 		if owner != "" {
 			pkg.GitHubOwner = owner
 			pkg.GitHubRepo = repo
+		}
+		// Auto-match installation if the URL changed and no explicit ID was provided.
+		if updates.InstallationID == nil && pkg.GitHubOwner != "" {
+			projectID := chi.URLParam(r, "projectID")
+			if ghCfg, err := h.queries.GetProjectGitHubConfig(r.Context(), projectID); err == nil && ghCfg.InstallationID != 0 {
+				pkg.InstallationID = ghCfg.InstallationID
+			} else if inst, err := h.queries.GetInstallationByOwner(r.Context(), pkg.GitHubOwner); err == nil {
+				pkg.InstallationID = inst.InstallationID
+			}
 		}
 	}
 	if updates.GitBranch != nil {

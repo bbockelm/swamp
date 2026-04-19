@@ -392,13 +392,14 @@ type ProjectAllowedProvider struct {
 
 // GitHubAppInstallation represents a GitHub App installation on an account.
 type GitHubAppInstallation struct {
-	ID             string          `json:"id"`
-	InstallationID int64           `json:"installation_id"`
-	AccountLogin   string          `json:"account_login"`
-	AccountType    string          `json:"account_type"` // "User" or "Organization"
-	Permissions    json.RawMessage `json:"permissions"`
-	CreatedAt      time.Time       `json:"created_at"`
-	UpdatedAt      time.Time       `json:"updated_at"`
+	ID                string          `json:"id"`
+	InstallationID    int64           `json:"installation_id"`
+	AccountLogin      string          `json:"account_login"`
+	AccountType       string          `json:"account_type"` // "User" or "Organization"
+	Permissions       json.RawMessage `json:"permissions"`
+	InstalledByUserID *string         `json:"installed_by_user_id,omitempty"`
+	CreatedAt         time.Time       `json:"created_at"`
+	UpdatedAt         time.Time       `json:"updated_at"`
 }
 
 // ProjectGitHubConfig holds per-project GitHub integration settings.

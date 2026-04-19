@@ -291,6 +291,11 @@ func New(cfg *config.Config, pool *pgxpool.Pool, store *storage.Store) (*chi.Mux
 			// Agent status (is analysis agent configured?)
 			r.Get("/agent/status", h.AgentStatus)
 
+			// GitHub App installations (available to all authenticated users)
+			r.Get("/github/installations", h.ListGitHubInstallations)
+			r.Post("/github/installations/{installationID}/claim", h.ClaimInstallation)
+			r.Get("/github/app-info", h.GetGitHubAppInfo)
+
 			// Dashboard stats
 			r.Get("/dashboard/stats", h.DashboardStats)
 

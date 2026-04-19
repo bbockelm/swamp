@@ -28,6 +28,123 @@ func (h *Handler) GetGitHubStatus(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusOK, status)
 }
 
+// ListGitHubInstallations returns GitHub App installations the current user
+// is authorized to see:
+//   - Admins: all installations (optionally filtered by ?owner=)
+//   - Others: only installations they created, or installations linked to
+//     projects where they have admin access.
+func (h *Handler) ListGitHubInstallations(w http.ResponseWriter, r *http.Request) {
+	type response struct {
+		Installations []models.GitHubAppInstallation `json:"installations"`
+		InstallURL    string                         `json:"install_url,omitempty"`
+	}
+
+	if h.ghClient == nil || !h.ghClient.Configured() {
+		respondJSON(w, http.StatusOK, response{Installations: []models.GitHubAppInstallation{}})
+		return
+	}
+
+	user := GetUserFromContext(r.Context())
+	if user == nil {
+		respondError(w, http.StatusUnauthorized, "Not authenticated")
+		return
+	}
+
+	var installations []models.GitHubAppInstallation
+	var err error
+
+	if UserHasRole(r.Context(), RoleAdmin) {
+		installations, err = h.queries.ListGitHubInstallations(r.Context())
+	} else {
+		installations, err = h.queries.ListInstallationsForUser(r.Context(), user.ID)
+	}
+	if err != nil {
+		log.Error().Err(err).Msg("Failed to list installations")
+		respondError(w, http.StatusInternalServerError, "Failed to list installations")
+		return
+	}
+	if installations == nil {
+		installations = []models.GitHubAppInstallation{}
+	}
+
+	// Filter by owner if specified (case-insensitive).
+	owner := r.URL.Query().Get("owner")
+	if owner != "" {
+		filtered := make([]models.GitHubAppInstallation, 0, 1)
+		for _, inst := range installations {
+			if strings.EqualFold(inst.AccountLogin, owner) {
+				filtered = append(filtered, inst)
+			}
+		}
+		installations = filtered
+	}
+
+	respondJSON(w, http.StatusOK, response{
+		Installations: installations,
+		InstallURL:    h.ghClient.InstallURL(r.Context()),
+	})
+}
+
+// ClaimInstallation lets an authenticated user claim ownership of an
+// installation (sets installed_by_user_id if not already set). This is
+// called after the user returns from installing the GitHub App.
+func (h *Handler) ClaimInstallation(w http.ResponseWriter, r *http.Request) {
+	if h.ghClient == nil || !h.ghClient.Configured() {
+		respondError(w, http.StatusBadRequest, "GitHub App is not configured")
+		return
+	}
+
+	user := GetUserFromContext(r.Context())
+	if user == nil {
+		respondError(w, http.StatusUnauthorized, "Not authenticated")
+		return
+	}
+
+	installationIDStr := chi.URLParam(r, "installationID")
+	installationID, err := strconv.ParseInt(installationIDStr, 10, 64)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "Invalid installation ID")
+		return
+	}
+
+	// Sync installations from GitHub first to ensure this one exists.
+	if err := h.ghClient.SyncInstallations(r.Context()); err != nil {
+		log.Error().Err(err).Msg("Failed to sync installations before claim")
+	}
+
+	// Try to claim (only sets if not already claimed).
+	if err := h.queries.SetInstallationInstalledBy(r.Context(), installationID, user.ID); err != nil {
+		log.Error().Err(err).Int64("installation_id", installationID).Msg("Failed to claim installation")
+		respondError(w, http.StatusInternalServerError, "Failed to claim installation")
+		return
+	}
+
+	// Return the installation.
+	inst, err := h.queries.GetInstallationByID(r.Context(), installationID)
+	if err != nil {
+		respondError(w, http.StatusNotFound, "Installation not found")
+		return
+	}
+	respondJSON(w, http.StatusOK, inst)
+}
+
+// GetGitHubAppInfo returns non-sensitive GitHub App info (configured status
+// and install URL). Available to any authenticated user.
+func (h *Handler) GetGitHubAppInfo(w http.ResponseWriter, r *http.Request) {
+	type response struct {
+		Configured bool   `json:"configured"`
+		InstallURL string `json:"install_url,omitempty"`
+	}
+	if h.ghClient == nil || !h.ghClient.Configured() {
+		respondJSON(w, http.StatusOK, response{Configured: false})
+		return
+	}
+	respondJSON(w, http.StatusOK, response{
+		Configured: true,
+		InstallURL: h.ghClient.InstallURL(r.Context()),
+	})
+}
+
 // SyncGitHubInstallations fetches installations from GitHub and syncs to DB (admin only).
 func (h *Handler) SyncGitHubInstallations(w http.ResponseWriter, r *http.Request) {
 	if h.ghClient == nil || !h.ghClient.Configured() {
@@ -176,6 +293,14 @@ func (h *Handler) HandleGitHubWebhook(w http.ResponseWriter, r *http.Request) {
 
 	eventType := r.Header.Get("X-GitHub-Event")
 	deliveryID := r.Header.Get("X-GitHub-Delivery")
+
+	// Handle installation lifecycle events (created/deleted) before parsing
+	// repo-specific payload fields, since these events don't have a repository.
+	if eventType == "installation" {
+		h.handleInstallationEvent(r.Context(), body, deliveryID)
+		respondJSON(w, http.StatusOK, map[string]string{"status": "processed", "event": "installation"})
+		return
+	}
 
 	// Parse common payload fields.
 	var payload struct {
@@ -475,4 +600,50 @@ func (h *Handler) triggerWebhookAnalysis(ctx context.Context, ghCfg *models.Proj
 	}
 
 	return analysis.ID, nil
+}
+
+// handleInstallationEvent processes GitHub App installation/uninstallation events.
+func (h *Handler) handleInstallationEvent(ctx context.Context, body []byte, deliveryID string) {
+	var payload struct {
+		Action       string `json:"action"`
+		Installation struct {
+			ID      int64 `json:"id"`
+			Account struct {
+				Login string `json:"login"`
+				Type  string `json:"type"`
+			} `json:"account"`
+		} `json:"installation"`
+		Sender struct {
+			Login string `json:"login"`
+		} `json:"sender"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		log.Error().Err(err).Str("delivery_id", deliveryID).Msg("Failed to parse installation event")
+		return
+	}
+
+	installationID := payload.Installation.ID
+	accountLogin := payload.Installation.Account.Login
+	accountType := payload.Installation.Account.Type
+
+	log.Info().
+		Str("action", payload.Action).
+		Int64("installation_id", installationID).
+		Str("account", accountLogin).
+		Str("sender", payload.Sender.Login).
+		Msg("Processing installation event")
+
+	switch payload.Action {
+	case "created":
+		if err := h.queries.UpsertGitHubInstallation(ctx, installationID, accountLogin, accountType, []byte("{}")); err != nil {
+			log.Error().Err(err).Int64("installation_id", installationID).Msg("Failed to upsert installation")
+			return
+		}
+	case "deleted":
+		if err := h.queries.DeleteGitHubInstallation(ctx, installationID); err != nil {
+			log.Error().Err(err).Int64("installation_id", installationID).Msg("Failed to delete installation")
+		}
+	default:
+		log.Debug().Str("action", payload.Action).Int64("installation_id", installationID).Msg("Ignored installation action")
+	}
 }

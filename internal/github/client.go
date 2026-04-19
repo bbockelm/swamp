@@ -40,6 +40,12 @@ type Client struct {
 	// Cache installation tokens (they last 1 hour, we expire at 50 min).
 	mu     sync.Mutex
 	tokens map[int64]*cachedToken
+
+	// Cached app metadata from GET /app.
+	appSlug    string // e.g. "my-swamp-app"
+	appHTMLURL string // e.g. "https://github.com/apps/my-swamp-app"
+	appInfoErr error
+	appInfoOnce sync.Once
 }
 
 type cachedToken struct {
@@ -94,6 +100,63 @@ func NewClient(cfg *config.Config, queries *db.Queries) *Client {
 // Configured returns true if this client is usable.
 func (c *Client) Configured() bool {
 	return c != nil && c.privKey != nil
+}
+
+// fetchAppInfo fetches app metadata (slug, html_url) from GET /app (cached).
+func (c *Client) fetchAppInfo(ctx context.Context) {
+	c.appInfoOnce.Do(func() {
+		jwt, err := c.generateJWT()
+		if err != nil {
+			c.appInfoErr = err
+			return
+		}
+		url := fmt.Sprintf("%s/app", c.apiURL)
+		req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+		if err != nil {
+			c.appInfoErr = err
+			return
+		}
+		req.Header.Set("Authorization", "Bearer "+jwt)
+		req.Header.Set("Accept", "application/vnd.github+json")
+		req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			c.appInfoErr = fmt.Errorf("fetching app info: %w", err)
+			return
+		}
+		defer func() { _ = resp.Body.Close() }()
+		body, _ := io.ReadAll(resp.Body)
+		if resp.StatusCode != 200 {
+			c.appInfoErr = fmt.Errorf("GET /app returned %d: %s", resp.StatusCode, string(body))
+			return
+		}
+
+		var result struct {
+			Slug    string `json:"slug"`
+			HTMLURL string `json:"html_url"`
+		}
+		if err := json.Unmarshal(body, &result); err != nil {
+			c.appInfoErr = err
+			return
+		}
+		c.appSlug = result.Slug
+		c.appHTMLURL = result.HTMLURL
+		log.Info().Str("slug", c.appSlug).Str("html_url", c.appHTMLURL).Msg("GitHub App info fetched")
+	})
+}
+
+// InstallURL returns the URL where users can install the GitHub App.
+// Returns empty string if the app info hasn't been fetched or failed.
+func (c *Client) InstallURL(ctx context.Context) string {
+	if c == nil || !c.Configured() {
+		return ""
+	}
+	c.fetchAppInfo(ctx)
+	if c.appHTMLURL != "" {
+		return c.appHTMLURL + "/installations/new"
+	}
+	return ""
 }
 
 // generateJWT creates a signed JWT for GitHub App authentication.

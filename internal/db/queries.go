@@ -2349,7 +2349,8 @@ func (q *Queries) DeleteGitHubInstallation(ctx context.Context, installationID i
 
 func (q *Queries) ListGitHubInstallations(ctx context.Context) ([]models.GitHubAppInstallation, error) {
 	rows, err := q.pool.Query(ctx,
-		`SELECT id, installation_id, account_login, account_type, permissions, created_at, updated_at
+		`SELECT id, installation_id, account_login, account_type, permissions,
+		        installed_by_user_id, created_at, updated_at
 		 FROM github_app_installations ORDER BY account_login`)
 	if err != nil {
 		return nil, err
@@ -2358,12 +2359,99 @@ func (q *Queries) ListGitHubInstallations(ctx context.Context) ([]models.GitHubA
 	var out []models.GitHubAppInstallation
 	for rows.Next() {
 		var i models.GitHubAppInstallation
-		if err := rows.Scan(&i.ID, &i.InstallationID, &i.AccountLogin, &i.AccountType, &i.Permissions, &i.CreatedAt, &i.UpdatedAt); err != nil {
+		if err := rows.Scan(&i.ID, &i.InstallationID, &i.AccountLogin, &i.AccountType,
+			&i.Permissions, &i.InstalledByUserID, &i.CreatedAt, &i.UpdatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, i)
 	}
 	return out, rows.Err()
+}
+
+// GetInstallationByOwner looks up an installation by account_login (case-insensitive).
+func (q *Queries) GetInstallationByOwner(ctx context.Context, owner string) (*models.GitHubAppInstallation, error) {
+	var i models.GitHubAppInstallation
+	err := q.pool.QueryRow(ctx,
+		`SELECT id, installation_id, account_login, account_type, permissions,
+		        installed_by_user_id, created_at, updated_at
+		 FROM github_app_installations
+		 WHERE lower(account_login) = lower($1)`, owner).
+		Scan(&i.ID, &i.InstallationID, &i.AccountLogin, &i.AccountType,
+			&i.Permissions, &i.InstalledByUserID, &i.CreatedAt, &i.UpdatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return &i, nil
+}
+
+// ListInstallationsForUser returns installations visible to a non-admin user:
+// installations they created, or installations linked to projects they admin.
+func (q *Queries) ListInstallationsForUser(ctx context.Context, userID string) ([]models.GitHubAppInstallation, error) {
+	rows, err := q.pool.Query(ctx,
+		`SELECT DISTINCT ON (gi.installation_id)
+		        gi.id, gi.installation_id, gi.account_login, gi.account_type,
+		        gi.permissions, gi.installed_by_user_id, gi.created_at, gi.updated_at
+		 FROM github_app_installations gi
+		 WHERE gi.installed_by_user_id = $1
+		    OR gi.installation_id IN (
+		        -- installations used by projects the user owns or admins
+		        SELECT pgc.installation_id FROM project_github_config pgc
+		        JOIN projects p ON p.id = pgc.project_id
+		        WHERE pgc.installation_id != 0
+		          AND (p.owner_id = $1
+		               OR EXISTS (SELECT 1 FROM group_members gm
+		                          WHERE gm.group_id = p.admin_group_id AND gm.user_id = $1))
+		    )
+		    OR gi.installation_id IN (
+		        -- installations used by packages in projects the user owns or admins
+		        SELECT sp.installation_id FROM software_packages sp
+		        JOIN projects p ON p.id = sp.project_id
+		        WHERE sp.installation_id != 0
+		          AND (p.owner_id = $1
+		               OR EXISTS (SELECT 1 FROM group_members gm
+		                          WHERE gm.group_id = p.admin_group_id AND gm.user_id = $1))
+		    )
+		 ORDER BY gi.installation_id, gi.account_login`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []models.GitHubAppInstallation
+	for rows.Next() {
+		var i models.GitHubAppInstallation
+		if err := rows.Scan(&i.ID, &i.InstallationID, &i.AccountLogin, &i.AccountType,
+			&i.Permissions, &i.InstalledByUserID, &i.CreatedAt, &i.UpdatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, i)
+	}
+	return out, rows.Err()
+}
+
+// SetInstallationInstalledBy records who installed a GitHub App installation.
+func (q *Queries) SetInstallationInstalledBy(ctx context.Context, installationID int64, userID string) error {
+	_, err := q.pool.Exec(ctx,
+		`UPDATE github_app_installations
+		 SET installed_by_user_id = $2, updated_at = now()
+		 WHERE installation_id = $1 AND installed_by_user_id IS NULL`,
+		installationID, userID)
+	return err
+}
+
+// GetInstallationByID looks up an installation by its numeric GitHub installation_id.
+func (q *Queries) GetInstallationByID(ctx context.Context, installationID int64) (*models.GitHubAppInstallation, error) {
+	var i models.GitHubAppInstallation
+	err := q.pool.QueryRow(ctx,
+		`SELECT id, installation_id, account_login, account_type, permissions,
+		        installed_by_user_id, created_at, updated_at
+		 FROM github_app_installations
+		 WHERE installation_id = $1`, installationID).
+		Scan(&i.ID, &i.InstallationID, &i.AccountLogin, &i.AccountType,
+			&i.Permissions, &i.InstalledByUserID, &i.CreatedAt, &i.UpdatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return &i, nil
 }
 
 func (q *Queries) GetProjectGitHubConfig(ctx context.Context, projectID string) (*models.ProjectGitHubConfig, error) {

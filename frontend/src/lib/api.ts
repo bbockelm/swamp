@@ -366,6 +366,16 @@ export interface GitHubAppInstallation {
   updated_at: string;
 }
 
+export interface GitHubInstallationsResponse {
+  installations: GitHubAppInstallation[];
+  install_url?: string;
+}
+
+export interface GitHubAppInfo {
+  configured: boolean;
+  install_url?: string;
+}
+
 export interface GitHubStatus {
   configured: boolean;
   app_id?: number;
@@ -903,6 +913,12 @@ export const api = {
 
   // --- Project-level GitHub integration ---
   github: {
+    listInstallations: (owner?: string): Promise<GitHubInstallationsResponse> =>
+      fetchJSON(`${BASE}/github/installations${owner ? `?owner=${encodeURIComponent(owner)}` : ''}`),
+    claimInstallation: (installationId: number): Promise<GitHubAppInstallation> =>
+      fetchJSON(`${BASE}/github/installations/${installationId}/claim`, { method: 'POST' }),
+    appInfo: (): Promise<GitHubAppInfo> =>
+      fetchJSON(`${BASE}/github/app-info`),
     getConfig: (projectId: string): Promise<ProjectGitHubConfig> =>
       fetchJSON(`${BASE}/projects/${projectId}/github`),
     updateConfig: (
