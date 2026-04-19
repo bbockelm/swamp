@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/rs/zerolog/log"
 	"github.com/yuin/goldmark"
 	gmhtml "github.com/yuin/goldmark/renderer/html"
 )
@@ -30,13 +31,15 @@ func (h *Handler) GetPublicAUPVersioned(w http.ResponseWriter, r *http.Request) 
 	if requestedVersion != currentVersion {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.WriteHeader(http.StatusNotFound)
-		fmt.Fprintf(w, `<!DOCTYPE html>
+		if _, err := fmt.Fprintf(w, `<!DOCTYPE html>
 <html><head><title>AUP Not Found</title></head>
 <body style="font-family:system-ui,sans-serif;max-width:700px;margin:40px auto;padding:0 20px">
 <h1>AUP Version Not Found</h1>
 <p>Version %q is not the current acceptable use policy.</p>
 <p><a href="/aup">View the current policy</a></p>
-</body></html>`, html.EscapeString(requestedVersion))
+</body></html>`, html.EscapeString(requestedVersion)); err != nil {
+			log.Error().Err(err).Msg("Failed to write AUP not-found response")
+		}
 		return
 	}
 
@@ -44,12 +47,14 @@ func (h *Handler) GetPublicAUPVersioned(w http.ResponseWriter, r *http.Request) 
 	if text == "" {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.WriteHeader(http.StatusNotFound)
-		fmt.Fprint(w, `<!DOCTYPE html>
+		if _, err := fmt.Fprint(w, `<!DOCTYPE html>
 <html><head><title>AUP Not Configured</title></head>
 <body style="font-family:system-ui,sans-serif;max-width:700px;margin:40px auto;padding:0 20px">
 <h1>Acceptable Use Policy</h1>
 <p>No acceptable use policy has been configured yet.</p>
-</body></html>`)
+</body></html>`); err != nil {
+			log.Error().Err(err).Msg("Failed to write AUP not-configured response")
+		}
 		return
 	}
 
@@ -86,7 +91,7 @@ func (h *Handler) GetPublicAUPVersioned(w http.ResponseWriter, r *http.Request) 
 	)
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	fmt.Fprintf(w, `<!DOCTYPE html>
+	if _, err := fmt.Fprintf(w, `<!DOCTYPE html>
 <html>
 <head>
 <meta charset="utf-8">
@@ -115,5 +120,7 @@ func (h *Handler) GetPublicAUPVersioned(w http.ResponseWriter, r *http.Request) 
 <h1>Acceptable Use Policy</h1>
 %s
 </body>
-</html>`, bodyHTML.String())
+</html>`, bodyHTML.String()); err != nil {
+		log.Error().Err(err).Msg("Failed to write AUP response")
+	}
 }

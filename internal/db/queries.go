@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/rs/zerolog/log"
 
 	"github.com/bbockelm/swamp/internal/models"
 )
@@ -2608,7 +2610,11 @@ func (q *Queries) ReplaceAnalysisTokenUsage(ctx context.Context, analysisID stri
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+	defer func() {
+		if err := tx.Rollback(ctx); err != nil && err != pgx.ErrTxClosed {
+			log.Error().Err(err).Msg("Failed to rollback token usage transaction")
+		}
+	}()
 
 	if _, err := tx.Exec(ctx, `DELETE FROM analysis_token_usage WHERE analysis_id = $1`, analysisID); err != nil {
 		return err

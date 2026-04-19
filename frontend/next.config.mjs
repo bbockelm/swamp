@@ -1,5 +1,8 @@
 /** @type {import('next').NextConfig} */
-const path = require("path");
+import path from "path";
+import { fileURLToPath } from "url";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const nextConfig = {
   // Static export: produces plain HTML/JS/CSS in out/ for embedding into the Go binary.
@@ -37,8 +40,8 @@ const nextConfig = {
         destination: "http://localhost:8080/aup",
       },
       {
-        source: "/aup-v:version*",
-        destination: "http://localhost:8080/aup-v:version*",
+        source: "/aup-v:path(.*)",
+        destination: "http://localhost:8080/aup-v:path",
       },
     ];
   },
@@ -49,4 +52,4 @@ const nextConfig = {
   },
 };
 
-module.exports = nextConfig;
+export default nextConfig;
