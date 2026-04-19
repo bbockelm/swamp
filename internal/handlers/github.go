@@ -157,7 +157,7 @@ func (h *Handler) ClaimInstallation(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Return the installation.
-	inst, err := h.queries.GetInstallationByID(r.Context(), installationID)
+	inst, err = h.queries.GetInstallationByID(r.Context(), installationID)
 	if err != nil {
 		respondError(w, http.StatusNotFound, "Installation not found")
 		return
