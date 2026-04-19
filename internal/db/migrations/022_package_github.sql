@@ -5,11 +5,12 @@
 -- installation linkage (webhooks arrive at the repo level, but one project
 -- may have multiple packages pointing at the same repo).
 
+-- Use IF NOT EXISTS so this migration is safe to re-run after a partial failure.
 ALTER TABLE software_packages
-    ADD COLUMN github_owner         TEXT NOT NULL DEFAULT '',
-    ADD COLUMN github_repo          TEXT NOT NULL DEFAULT '',
-    ADD COLUMN installation_id      BIGINT NOT NULL DEFAULT 0,
-    ADD COLUMN sarif_upload_enabled BOOLEAN NOT NULL DEFAULT false;
+    ADD COLUMN IF NOT EXISTS github_owner         TEXT NOT NULL DEFAULT '',
+    ADD COLUMN IF NOT EXISTS github_repo          TEXT NOT NULL DEFAULT '',
+    ADD COLUMN IF NOT EXISTS installation_id      BIGINT NOT NULL DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS sarif_upload_enabled BOOLEAN NOT NULL DEFAULT false;
 
 -- Back-fill from the existing project_github_config when a package's
 -- git_url matches the project's configured GitHub repo.
@@ -37,15 +38,15 @@ WHERE github_owner = ''
   AND git_url ~ '^https?://github\.com/[^/]+/[^/]+';
 
 -- Index for webhook matching: find packages by their GitHub repo.
-CREATE INDEX idx_packages_github_repo
+CREATE INDEX IF NOT EXISTS idx_packages_github_repo
     ON software_packages (github_owner, github_repo)
     WHERE github_owner != '';
 
 -- Add per-package SARIF upload URL to analysis results so we can track
 -- which packages had their SARIF uploaded to GitHub.
 ALTER TABLE analysis_results
-    ADD COLUMN package_id       UUID REFERENCES software_packages(id) ON DELETE SET NULL,
-    ADD COLUMN sarif_upload_url TEXT NOT NULL DEFAULT '';
+    ADD COLUMN IF NOT EXISTS package_id       UUID REFERENCES software_packages(id) ON DELETE SET NULL,
+    ADD COLUMN IF NOT EXISTS sarif_upload_url TEXT NOT NULL DEFAULT '';
 
 -- +goose Down
 ALTER TABLE analysis_results DROP COLUMN IF EXISTS sarif_upload_url;
