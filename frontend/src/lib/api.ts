@@ -157,6 +157,19 @@ export interface Analysis {
   updated_at: string;
 }
 
+export interface TokenUsage {
+  model: string;
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_tokens: number;
+  cache_write_tokens: number;
+  cost_usd: number;
+}
+
+export interface AggregatedTokenUsage extends TokenUsage {
+  analysis_count: number;
+}
+
 export interface AnalysisResult {
   id: string;
   analysis_id: string;
@@ -345,6 +358,7 @@ export interface DashboardStats {
   recent_analyses: Analysis[];
   total_findings: number;
   severity_counts: Record<string, number>;
+  token_usage?: AggregatedTokenUsage[];
 }
 
 export interface UserStats {
@@ -574,11 +588,11 @@ export const api = {
         method: "POST",
         body: JSON.stringify(data),
       }),
-    get: async (projectId: string, id: string): Promise<Analysis> => {
-      const resp = await fetchJSON<{ analysis: Analysis }>(
+    get: async (projectId: string, id: string): Promise<Analysis & { token_usage?: TokenUsage[] }> => {
+      const resp = await fetchJSON<{ analysis: Analysis; token_usage?: TokenUsage[] }>(
         `${BASE}/projects/${projectId}/analyses/${id}`,
       );
-      return resp.analysis;
+      return { ...resp.analysis, token_usage: resp.token_usage };
     },
     cancel: (projectId: string, id: string): Promise<void> =>
       fetchJSON(`${BASE}/projects/${projectId}/analyses/${id}/cancel`, {

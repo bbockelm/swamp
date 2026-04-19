@@ -611,10 +611,17 @@ function GitHubConfigSection() {
     queryFn: api.admin.getGitHubStatus,
   });
 
+  const [syncMessage, setSyncMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
   const syncMut = useMutation({
     mutationFn: api.admin.syncGitHubInstallations,
-    onSuccess: () => {
+    onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['admin', 'github-status'] });
+      const count = data.installations?.length ?? 0;
+      setSyncMessage({ type: 'success', text: `Synced ${count} installation${count !== 1 ? 's' : ''} from GitHub.` });
+    },
+    onError: (err: Error) => {
+      setSyncMessage({ type: 'error', text: err.message || 'Failed to sync installations.' });
     },
   });
 
@@ -655,13 +662,18 @@ function GitHubConfigSection() {
             <div className="flex items-center justify-between mb-2">
               <h3 className="text-sm font-medium text-gray-700">Installations</h3>
               <button
-                onClick={() => syncMut.mutate()}
+                onClick={() => { setSyncMessage(null); syncMut.mutate(); }}
                 disabled={syncMut.isPending}
                 className="text-sm text-blue-600 hover:text-blue-800 disabled:opacity-50"
               >
                 {syncMut.isPending ? 'Syncing...' : 'Sync from GitHub'}
               </button>
             </div>
+            {syncMessage && (
+              <p className={`text-xs mb-2 ${syncMessage.type === 'success' ? 'text-green-600' : 'text-red-600'}`}>
+                {syncMessage.text}
+              </p>
+            )}
             {status.installations && status.installations.length > 0 ? (
               <div className="border rounded divide-y">
                 {status.installations.map((inst) => (

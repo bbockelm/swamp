@@ -20,6 +20,7 @@ import (
 	"github.com/bbockelm/swamp/internal/crypto"
 	"github.com/bbockelm/swamp/internal/db"
 	"github.com/bbockelm/swamp/internal/logbuffer"
+	"github.com/bbockelm/swamp/internal/models"
 	"github.com/bbockelm/swamp/internal/router"
 	"github.com/bbockelm/swamp/internal/storage"
 )
@@ -47,6 +48,12 @@ func main() {
 	if len(os.Args) > 1 && os.Args[1] == "fix-finding-counts" {
 		if err := runFixFindingCounts(); err != nil {
 			log.Fatal().Err(err).Msg("Fix finding counts failed")
+		}
+		return
+	}
+	if len(os.Args) > 1 && os.Args[1] == "backfill-token-usage" {
+		if err := runBackfillTokenUsage(); err != nil {
+			log.Fatal().Err(err).Msg("Backfill token usage failed")
 		}
 		return
 	}
@@ -147,6 +154,9 @@ func run() error {
 
 	// Executor lifecycle: mark stale jobs and start sync loop.
 	exec.Start(ctx)
+
+	// Background backfill of token usage for historical analyses.
+	go backfillTokenUsageBackground(ctx, queries, store, enc)
 
 	// In dev mode, create the admin account and print a one-time login URL.
 	if cfg.IsDevelopment() {
@@ -511,5 +521,162 @@ func runFixFindingCounts() error {
 		Int("skipped", skipped).
 		Int("failed", failed).
 		Msg("Fix finding counts complete")
+	return nil
+}
+
+// backfillTokenUsageBackground runs the token usage backfill in the background
+// at server startup. It processes analyses that have agent_stdout.log results
+// but no token usage rows yet.
+func backfillTokenUsageBackground(ctx context.Context, queries *db.Queries, store *storage.Store, enc *crypto.Encryptor) {
+	if enc == nil || store == nil {
+		return
+	}
+
+	ids, err := queries.ListAnalysisIDsWithoutUsage(ctx)
+	if err != nil {
+		log.Error().Err(err).Msg("Token usage backfill: failed to list analyses")
+		return
+	}
+	if len(ids) == 0 {
+		return
+	}
+
+	log.Info().Int("count", len(ids)).Msg("Token usage backfill: starting")
+	backfilled, failed := backfillTokenUsageForIDs(ctx, ids, queries, store, enc)
+	log.Info().Int("backfilled", backfilled).Int("failed", failed).Msg("Token usage backfill: complete")
+}
+
+// backfillTokenUsageForIDs processes a list of analysis IDs, downloading their
+// agent_stdout.log, parsing token usage, and storing it in the DB.
+func backfillTokenUsageForIDs(ctx context.Context, ids []string, queries *db.Queries, store *storage.Store, enc *crypto.Encryptor) (backfilled, failed int) {
+	for _, analysisID := range ids {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+
+		analysis, err := queries.GetAnalysis(ctx, analysisID)
+		if err != nil {
+			log.Error().Err(err).Str("analysis_id", analysisID).Msg("Token usage backfill: failed to load analysis")
+			failed++
+			continue
+		}
+
+		// Find the agent_stdout.log result.
+		results, err := queries.ListAnalysisResults(ctx, analysisID)
+		if err != nil {
+			failed++
+			continue
+		}
+		var stdoutResult *models.AnalysisResult
+		for i := range results {
+			if results[i].ResultType == "agent_log" && results[i].Filename == "agent_stdout.log" {
+				stdoutResult = &results[i]
+				break
+			}
+		}
+		if stdoutResult == nil {
+			continue
+		}
+
+		// Download and decrypt.
+		reader, err := store.Download(ctx, stdoutResult.S3Key)
+		if err != nil {
+			log.Error().Err(err).Str("analysis_id", analysisID).Msg("Token usage backfill: failed to download log")
+			failed++
+			continue
+		}
+		ciphertext, err := io.ReadAll(reader)
+		_ = reader.Close()
+		if err != nil {
+			failed++
+			continue
+		}
+
+		dek, err := enc.UnwrapDEK(analysis.EncryptedDEK, analysis.DEKNonce)
+		if err != nil {
+			log.Error().Err(err).Str("analysis_id", analysisID).Msg("Token usage backfill: failed to unwrap DEK")
+			failed++
+			continue
+		}
+
+		plaintext, err := crypto.Decrypt(dek, ciphertext)
+		if err != nil {
+			log.Error().Err(err).Str("analysis_id", analysisID).Msg("Token usage backfill: failed to decrypt")
+			failed++
+			continue
+		}
+
+		lines := strings.Split(string(plaintext), "\n")
+		usages := agent.ExtractTokenUsage(lines)
+		if len(usages) == 0 {
+			continue
+		}
+
+		if err := queries.ReplaceAnalysisTokenUsage(ctx, analysisID, usages); err != nil {
+			log.Error().Err(err).Str("analysis_id", analysisID).Msg("Token usage backfill: failed to store")
+			failed++
+			continue
+		}
+
+		totalIn, totalOut := int64(0), int64(0)
+		for _, u := range usages {
+			totalIn += u.InputTokens
+			totalOut += u.OutputTokens
+		}
+		log.Info().
+			Str("analysis_id", analysisID).
+			Int("models", len(usages)).
+			Int64("input", totalIn).
+			Int64("output", totalOut).
+			Msg("Token usage backfill: processed")
+		backfilled++
+	}
+	return
+}
+
+// runBackfillTokenUsage is the CLI subcommand version of the backfill.
+func runBackfillTokenUsage() error {
+	ctx := context.Background()
+
+	cfg, err := config.Load()
+	if err != nil {
+		return fmt.Errorf("loading config: %w", err)
+	}
+
+	if err := cfg.EnsureMasterKey(); err != nil {
+		return fmt.Errorf("ensuring master key: %w", err)
+	}
+	if cfg.InstanceKey == "" {
+		return fmt.Errorf("SWAMP_INSTANCE_KEY required for decryption")
+	}
+
+	pool, err := db.Connect(ctx, cfg.DatabaseURL)
+	if err != nil {
+		return fmt.Errorf("connecting to database: %w", err)
+	}
+	defer pool.Close()
+
+	store, err := storage.New(cfg)
+	if err != nil {
+		return fmt.Errorf("initializing storage: %w", err)
+	}
+
+	enc, err := crypto.NewEncryptor(cfg.InstanceKey)
+	if err != nil {
+		return fmt.Errorf("initializing encryption: %w", err)
+	}
+
+	queries := db.NewQueries(pool)
+
+	ids, err := queries.ListAnalysisIDsWithoutUsage(ctx)
+	if err != nil {
+		return fmt.Errorf("listing analyses: %w", err)
+	}
+
+	log.Info().Int("count", len(ids)).Msg("Analyses to backfill")
+	backfilled, failed := backfillTokenUsageForIDs(ctx, ids, queries, store, enc)
+	log.Info().Int("backfilled", backfilled).Int("failed", failed).Msg("Backfill complete")
 	return nil
 }

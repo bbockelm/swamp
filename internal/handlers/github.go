@@ -147,16 +147,19 @@ func (h *Handler) GetGitHubAppInfo(w http.ResponseWriter, r *http.Request) {
 
 // SyncGitHubInstallations fetches installations from GitHub and syncs to DB (admin only).
 func (h *Handler) SyncGitHubInstallations(w http.ResponseWriter, r *http.Request) {
+	user := GetUserFromContext(r.Context())
 	if h.ghClient == nil || !h.ghClient.Configured() {
 		respondError(w, http.StatusBadRequest, "GitHub App is not configured")
 		return
 	}
+	log.Info().Str("user_id", user.ID).Str("email", user.Email).Msg("Admin triggered GitHub installation sync")
 	if err := h.ghClient.SyncInstallations(r.Context()); err != nil {
 		log.Error().Err(err).Msg("Failed to sync GitHub installations")
-		respondError(w, http.StatusInternalServerError, "Failed to sync installations: "+err.Error())
+		respondError(w, http.StatusInternalServerError, "Failed to sync installations")
 		return
 	}
 	status := h.ghClient.Status(r.Context())
+	log.Info().Int("installations", len(status.Installations)).Msg("GitHub installation sync completed")
 	respondJSON(w, http.StatusOK, status)
 }
 

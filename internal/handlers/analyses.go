@@ -194,9 +194,13 @@ func (h *Handler) GetAnalysis(w http.ResponseWriter, r *http.Request) {
 	// Also fetch linked packages
 	packages, _ := h.queries.ListAnalysisPackages(r.Context(), analysisID)
 
+	// Fetch token usage
+	tokenUsage, _ := h.queries.GetAnalysisTokenUsage(r.Context(), analysisID)
+
 	respondJSON(w, http.StatusOK, map[string]any{
-		"analysis": analysis,
-		"packages": packages,
+		"analysis":    analysis,
+		"packages":    packages,
+		"token_usage": tokenUsage,
 	})
 }
 

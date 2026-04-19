@@ -3,7 +3,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api, type SoftwarePackage, type Analysis, type Group, type Project, type ProjectGitHubConfig, type GitHubWebhookDelivery } from '@/lib/api';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useCallback } from 'react';
 import Link from 'next/link';
 import { AnalysisStatus } from '@/components/AnalysisStatus';
 import { Pagination, paginate } from '@/components/Pagination';
@@ -167,6 +167,8 @@ function PackagesTab({
   const [gitBranch, setGitBranch] = useState('main');
   const [analysisPrompt, setAnalysisPrompt] = useState('');
   const [sarifUploadEnabled, setSarifUploadEnabled] = useState(false);
+  const [branchError, setBranchError] = useState<string | null>(null);
+  const [installationWarning, setInstallationWarning] = useState<string | null>(null);
 
   // Parse owner/repo from the git URL for display.
   const parsedGitHub = useMemo(() => {
@@ -180,6 +182,26 @@ function PackagesTab({
     queryFn: () => api.github.appInfo(),
     staleTime: 300_000,
   });
+
+  const handleBranchDetection = useCallback((result: { ok: boolean; error?: string }) => {
+    setBranchError(result.ok ? null : (result.error ?? 'Could not detect branches.'));
+  }, []);
+
+  const handleSarifToggle = useCallback(async (checked: boolean) => {
+    setSarifUploadEnabled(checked);
+    setInstallationWarning(null);
+    if (!checked || !parsedGitHub) return;
+    try {
+      const resp = await api.github.listInstallations(parsedGitHub.owner);
+      if (!resp.installations || resp.installations.length === 0) {
+        setInstallationWarning(
+          `No GitHub App installation found for "${parsedGitHub.owner}". Results won't be uploaded until the app is installed.`
+        );
+      }
+    } catch {
+      // If the probe fails, don't block — the user can still enable it.
+    }
+  }, [parsedGitHub]);
 
   const createMutation = useMutation({
     mutationFn: () =>
@@ -198,6 +220,8 @@ function PackagesTab({
       setGitBranch('main');
       setAnalysisPrompt('');
       setSarifUploadEnabled(false);
+      setBranchError(null);
+      setInstallationWarning(null);
     },
   });
 
@@ -230,6 +254,8 @@ function PackagesTab({
     setGitBranch(pkg.git_branch);
     setAnalysisPrompt(pkg.analysis_prompt || '');
     setSarifUploadEnabled(pkg.sarif_upload_enabled ?? false);
+    setBranchError(null);
+    setInstallationWarning(null);
     setAdding(false);
   };
 
@@ -240,6 +266,8 @@ function PackagesTab({
     setGitBranch('main');
     setAnalysisPrompt('');
     setSarifUploadEnabled(false);
+    setBranchError(null);
+    setInstallationWarning(null);
   };
 
   return (
@@ -248,7 +276,7 @@ function PackagesTab({
         <h2 className="text-lg font-semibold">Software Packages</h2>
         {canEdit && (
           <button
-            onClick={() => { setAdding(true); setEditingId(null); setName(''); setGitUrl(''); setGitBranch('main'); setAnalysisPrompt(''); setSarifUploadEnabled(false); }}
+            onClick={() => { setAdding(true); setEditingId(null); setName(''); setGitUrl(''); setGitBranch('main'); setAnalysisPrompt(''); setSarifUploadEnabled(false); setBranchError(null); setInstallationWarning(null); }}
             className="bg-blue-600 text-white px-3 py-1.5 text-sm rounded hover:bg-blue-700"
           >
             Add Package
@@ -277,23 +305,25 @@ function PackagesTab({
               className="w-full border rounded px-3 py-2 text-sm"
               placeholder="https://github.com/org/repo.git"
             />
-            {parsedGitHub && (
+            {parsedGitHub && !branchError && (
               <p className="text-xs text-green-600 mt-1">
                 Detected GitHub repo: {parsedGitHub.owner}/{parsedGitHub.repo}
               </p>
             )}
+            {parsedGitHub && branchError && (
+              <p className="text-xs text-amber-600 mt-1">
+                {branchError}
+                {appInfo?.configured && appInfo.install_url && (
+                  <>{' '}
+                    <a href={appInfo.install_url} target="_blank" rel="noopener noreferrer" className="underline text-blue-600 hover:text-blue-700">
+                      Install the GitHub App
+                    </a>{' '}
+                    on <strong>{parsedGitHub.owner}</strong> to grant access.
+                  </>
+                )}
+              </p>
+            )}
           </div>
-
-          {/* GitHub App — install link for private repos */}
-          {parsedGitHub && appInfo?.configured && appInfo.install_url && (
-            <p className="text-xs text-gray-500">
-              Private repo? Ensure the{' '}
-              <a href={appInfo.install_url} target="_blank" rel="noopener noreferrer" className="underline text-blue-600 hover:text-blue-700">
-                GitHub App is installed
-              </a>{' '}
-              on <strong>{parsedGitHub.owner}</strong>. The installation will be auto-detected on save.
-            </p>
-          )}
 
           <div className="grid grid-cols-2 gap-3">
             <div>
@@ -313,6 +343,7 @@ function PackagesTab({
               value={gitBranch}
               onChange={setGitBranch}
               projectId={projectId}
+              onDetectionResult={handleBranchDetection}
             />
           </div>
           <div>
@@ -327,15 +358,30 @@ function PackagesTab({
               placeholder="Focus on authentication and SQL injection..."
             />
           </div>
-          <label className="flex items-center gap-2 text-sm">
-            <input
-              type="checkbox"
-              checked={sarifUploadEnabled}
-              onChange={(e) => setSarifUploadEnabled(e.target.checked)}
-              className="rounded"
-            />
-            <span>Upload SARIF results to GitHub Code Scanning</span>
-          </label>
+          <div>
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={sarifUploadEnabled}
+                onChange={(e) => handleSarifToggle(e.target.checked)}
+                className="rounded"
+              />
+              <span>Upload results to GitHub Code Scanning</span>
+            </label>
+            {installationWarning && (
+              <p className="text-xs text-amber-600 mt-1">
+                {installationWarning}
+                {appInfo?.configured && appInfo.install_url && (
+                  <>{' '}
+                    <a href={appInfo.install_url} target="_blank" rel="noopener noreferrer" className="underline text-blue-600 hover:text-blue-700">
+                      Install the GitHub App
+                    </a>{' '}
+                    to enable uploads.
+                  </>
+                )}
+              </p>
+            )}
+          </div>
           <div className="flex gap-2">
             <button
               type="submit"
@@ -382,23 +428,25 @@ function PackagesTab({
                     required
                     className="w-full border rounded px-3 py-2 text-sm"
                   />
-                  {parsedGitHub && (
+                  {parsedGitHub && !branchError && (
                     <p className="text-xs text-green-600 mt-1">
                       Detected GitHub repo: {parsedGitHub.owner}/{parsedGitHub.repo}
                     </p>
                   )}
+                  {parsedGitHub && branchError && (
+                    <p className="text-xs text-amber-600 mt-1">
+                      {branchError}
+                      {appInfo?.configured && appInfo.install_url && (
+                        <>{' '}
+                          <a href={appInfo.install_url} target="_blank" rel="noopener noreferrer" className="underline text-blue-600 hover:text-blue-700">
+                            Install the GitHub App
+                          </a>{' '}
+                          on <strong>{parsedGitHub.owner}</strong> to grant access.
+                        </>
+                      )}
+                    </p>
+                  )}
                 </div>
-
-                {/* GitHub App — install link for private repos */}
-                {parsedGitHub && appInfo?.configured && appInfo.install_url && (
-                  <p className="text-xs text-gray-500">
-                    Private repo? Ensure the{' '}
-                    <a href={appInfo.install_url} target="_blank" rel="noopener noreferrer" className="underline text-blue-600 hover:text-blue-700">
-                      GitHub App is installed
-                    </a>{' '}
-                    on <strong>{parsedGitHub.owner}</strong>. The installation will be auto-detected on save.
-                  </p>
-                )}
 
                 <div className="grid grid-cols-2 gap-3">
                   <div>
@@ -419,6 +467,7 @@ function PackagesTab({
                     onChange={setGitBranch}
                     projectId={projectId}
                     packageId={pkg.id}
+                    onDetectionResult={handleBranchDetection}
                   />
                 </div>
                 <div>
@@ -432,15 +481,30 @@ function PackagesTab({
                     className="w-full border rounded px-3 py-2 text-sm"
                   />
                 </div>
-                <label className="flex items-center gap-2 text-sm">
-                  <input
-                    type="checkbox"
-                    checked={sarifUploadEnabled}
-                    onChange={(e) => setSarifUploadEnabled(e.target.checked)}
-                    className="rounded"
-                  />
-                  <span>Upload SARIF results to GitHub Code Scanning</span>
-                </label>
+                <div>
+                  <label className="flex items-center gap-2 text-sm">
+                    <input
+                      type="checkbox"
+                      checked={sarifUploadEnabled}
+                      onChange={(e) => handleSarifToggle(e.target.checked)}
+                      className="rounded"
+                    />
+                    <span>Upload results to GitHub Code Scanning</span>
+                  </label>
+                  {installationWarning && (
+                    <p className="text-xs text-amber-600 mt-1">
+                      {installationWarning}
+                      {appInfo?.configured && appInfo.install_url && (
+                        <>{' '}
+                          <a href={appInfo.install_url} target="_blank" rel="noopener noreferrer" className="underline text-blue-600 hover:text-blue-700">
+                            Install the GitHub App
+                          </a>{' '}
+                          to enable uploads.
+                        </>
+                      )}
+                    </p>
+                  )}
+                </div>
                 <div className="flex gap-2">
                   <button
                     type="submit"

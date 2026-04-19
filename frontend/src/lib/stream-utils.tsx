@@ -141,6 +141,137 @@ export function truncateStr(s: string, n: number): string {
   return s.length <= n ? s : s.slice(0, n) + "…";
 }
 
+// ─── token usage tracking ───────────────────────────────────
+
+/** Shared model pricing table — single source of truth for both Go and TS. */
+import modelPricingData from "@pricing/model_pricing.json";
+
+interface PricingEntry {
+  substring: string;
+  input: number;
+  output: number;
+  cache_read: number;
+  cache_write: number;
+}
+
+const MODEL_PRICING: PricingEntry[] = modelPricingData as PricingEntry[];
+
+function lookupPricing(model: string): PricingEntry | null {
+  const lower = model.toLowerCase();
+  for (const entry of MODEL_PRICING) {
+    if (lower.includes(entry.substring)) return entry;
+  }
+  return null;
+}
+
+/** Estimate cost for a usage record using the pricing table. Returns 0 for unknown models. */
+export function estimateCostFromUsage(u: StreamTokenUsage): number {
+  const p = lookupPricing(u.model);
+  if (!p) return 0;
+  return (
+    (u.input_tokens * p.input) / 1_000_000 +
+    (u.output_tokens * p.output) / 1_000_000 +
+    (u.cache_read_tokens * p.cache_read) / 1_000_000 +
+    (u.cache_write_tokens * p.cache_write) / 1_000_000
+  );
+}
+
+/** Per-model token usage accumulated from stream events. */
+export interface StreamTokenUsage {
+  model: string;
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_tokens: number;
+  cache_write_tokens: number;
+  cost_usd: number;
+}
+
+/** Extract token usage from a raw JSON stream line. Returns null if not a usage event. */
+export function extractTokenUsage(line: string): StreamTokenUsage | null {
+  line = line.trim();
+  if (!line || line[0] !== "{") return null;
+  let raw: Record<string, unknown>;
+  try {
+    raw = JSON.parse(line);
+  } catch {
+    return null;
+  }
+  const eventType = raw.type as string;
+  if (!eventType) return null;
+
+  if (eventType === "assistant") {
+    return extractClaudeUsage(raw);
+  }
+  if (eventType === "step_finish") {
+    return extractOpenCodeUsage(raw);
+  }
+  return null;
+}
+
+function extractClaudeUsage(raw: Record<string, unknown>): StreamTokenUsage | null {
+  const msg = raw.message as Record<string, unknown> | undefined;
+  if (!msg) return null;
+  const usage = msg.usage as Record<string, unknown> | undefined;
+  if (!usage) return null;
+  const model = (msg.model as string) || "unknown";
+  const u: StreamTokenUsage = {
+    model,
+    input_tokens: (usage.input_tokens as number) || 0,
+    output_tokens: (usage.output_tokens as number) || 0,
+    cache_read_tokens: (usage.cache_read_input_tokens as number) || 0,
+    cache_write_tokens: (usage.cache_creation_input_tokens as number) || 0,
+    cost_usd: 0,
+  };
+  u.cost_usd = estimateCostFromUsage(u);
+  return u;
+}
+
+function extractOpenCodeUsage(raw: Record<string, unknown>): StreamTokenUsage | null {
+  const part = raw.part as Record<string, unknown> | undefined;
+  if (!part) return null;
+  const tokens = part.tokens as Record<string, unknown> | undefined;
+  if (!tokens) return null;
+  const cache = tokens.cache as Record<string, unknown> | undefined;
+  const model = (part.modelID as string) || "opencode";
+  return {
+    model,
+    input_tokens: (tokens.input as number) || 0,
+    output_tokens: (tokens.output as number) || 0,
+    cache_read_tokens: cache ? ((cache.read as number) || 0) : 0,
+    cache_write_tokens: cache ? ((cache.write as number) || 0) : 0,
+    cost_usd: (part.cost as number) || 0,
+  };
+}
+
+/** Accumulate a usage event into a per-model map. Returns a new map. */
+export function accumulateUsage(
+  current: Record<string, StreamTokenUsage>,
+  usage: StreamTokenUsage,
+): Record<string, StreamTokenUsage> {
+  const existing = current[usage.model];
+  if (existing) {
+    return {
+      ...current,
+      [usage.model]: {
+        model: usage.model,
+        input_tokens: existing.input_tokens + usage.input_tokens,
+        output_tokens: existing.output_tokens + usage.output_tokens,
+        cache_read_tokens: existing.cache_read_tokens + usage.cache_read_tokens,
+        cache_write_tokens: existing.cache_write_tokens + usage.cache_write_tokens,
+        cost_usd: existing.cost_usd + usage.cost_usd,
+      },
+    };
+  }
+  return { ...current, [usage.model]: { ...usage } };
+}
+
+/** Format a token count for display (e.g. 1234 → "1.2K", 1234567 → "1.2M"). */
+export function formatTokenCount(n: number): string {
+  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + "M";
+  if (n >= 1_000) return (n / 1_000).toFixed(1) + "K";
+  return String(n);
+}
+
 // ─── internal helpers ───────────────────────────────────────
 
 function parseOpenCodeTextEvent(raw: Record<string, unknown>): string {

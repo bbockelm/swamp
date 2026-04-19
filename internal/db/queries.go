@@ -852,7 +852,7 @@ func (q *Queries) ListProjectPackages(ctx context.Context, projectID string) ([]
 func (q *Queries) CreateAnalysis(ctx context.Context, a *models.Analysis) error {
 	return q.pool.QueryRow(ctx, `
 		INSERT INTO analyses (project_id, triggered_by, status, agent_model, agent_config, environment, encrypted_dek, dek_nonce, custom_prompt, git_branch, trigger_event, trigger_meta)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, COALESCE($12, '{}')) RETURNING id, created_at, updated_at`,
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, COALESCE($12::jsonb, '{}'::jsonb)) RETURNING id, created_at, updated_at`,
 		a.ProjectID, a.TriggeredBy, a.Status, a.AgentModel, a.AgentConfig, a.Environment,
 		a.EncryptedDEK, a.DEKNonce, a.CustomPrompt, a.GitBranch, a.TriggerEvent, a.TriggerMeta).Scan(&a.ID, &a.CreatedAt, &a.UpdatedAt)
 }
@@ -1660,6 +1660,14 @@ func (q *Queries) GetAppConfig(ctx context.Context, key string) (string, error) 
 	var val string
 	err := q.pool.QueryRow(ctx, `SELECT value FROM app_config WHERE key=$1`, key).Scan(&val)
 	return val, err
+}
+
+// GetAppConfigWithTimestamp returns both the value and the updated_at timestamp.
+func (q *Queries) GetAppConfigWithTimestamp(ctx context.Context, key string) (string, time.Time, error) {
+	var val string
+	var updatedAt time.Time
+	err := q.pool.QueryRow(ctx, `SELECT value, updated_at FROM app_config WHERE key=$1`, key).Scan(&val, &updatedAt)
+	return val, updatedAt, err
 }
 
 func (q *Queries) SetAppConfig(ctx context.Context, key, value string) error {
@@ -2564,4 +2572,141 @@ func (q *Queries) ListWebhookDeliveries(ctx context.Context, projectID string, l
 		out = append(out, d)
 	}
 	return out, rows.Err()
+}
+
+// ---- Token Usage ----
+
+// GetAnalysisTokenUsage returns per-model token usage for a single analysis.
+func (q *Queries) GetAnalysisTokenUsage(ctx context.Context, analysisID string) ([]models.TokenUsage, error) {
+	rows, err := q.pool.Query(ctx, `
+		SELECT id, analysis_id, model, input_tokens, output_tokens,
+		       cache_read_tokens, cache_write_tokens, cost_usd
+		FROM analysis_token_usage
+		WHERE analysis_id = $1
+		ORDER BY model`, analysisID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []models.TokenUsage
+	for rows.Next() {
+		var u models.TokenUsage
+		if err := rows.Scan(&u.ID, &u.AnalysisID, &u.Model,
+			&u.InputTokens, &u.OutputTokens,
+			&u.CacheReadTokens, &u.CacheWriteTokens, &u.CostUSD); err != nil {
+			return nil, err
+		}
+		out = append(out, u)
+	}
+	return out, rows.Err()
+}
+
+// ReplaceAnalysisTokenUsage deletes existing usage rows for the analysis and
+// inserts the provided rows, all in a single transaction.
+func (q *Queries) ReplaceAnalysisTokenUsage(ctx context.Context, analysisID string, usages []models.TokenUsage) error {
+	tx, err := q.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	if _, err := tx.Exec(ctx, `DELETE FROM analysis_token_usage WHERE analysis_id = $1`, analysisID); err != nil {
+		return err
+	}
+	for _, u := range usages {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO analysis_token_usage
+				(analysis_id, model, input_tokens, output_tokens,
+				 cache_read_tokens, cache_write_tokens, cost_usd)
+			VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+			analysisID, u.Model, u.InputTokens, u.OutputTokens,
+			u.CacheReadTokens, u.CacheWriteTokens, u.CostUSD); err != nil {
+			return err
+		}
+	}
+	return tx.Commit(ctx)
+}
+
+// AggregatedTokenUsage is token usage summed across analyses per model.
+type AggregatedTokenUsage struct {
+	Model            string  `json:"model"`
+	AnalysisCount    int     `json:"analysis_count"`
+	InputTokens      int64   `json:"input_tokens"`
+	OutputTokens     int64   `json:"output_tokens"`
+	CacheReadTokens  int64   `json:"cache_read_tokens"`
+	CacheWriteTokens int64   `json:"cache_write_tokens"`
+	CostUSD          float64 `json:"cost_usd"`
+}
+
+// GetAggregatedTokenUsage returns total token usage grouped by model,
+// scoped to analyses the user can see (via group membership), or all
+// analyses if the user is an admin.
+func (q *Queries) GetAggregatedTokenUsage(ctx context.Context, userID string, isAdmin bool) ([]AggregatedTokenUsage, error) {
+	var query string
+	var args []any
+	if isAdmin {
+		query = `
+			SELECT u.model,
+			       COUNT(DISTINCT u.analysis_id) AS analysis_count,
+			       SUM(u.input_tokens), SUM(u.output_tokens),
+			       SUM(u.cache_read_tokens), SUM(u.cache_write_tokens),
+			       SUM(u.cost_usd)
+			FROM analysis_token_usage u
+			GROUP BY u.model
+			ORDER BY SUM(u.input_tokens) + SUM(u.output_tokens) DESC`
+	} else {
+		query = `
+			SELECT u.model,
+			       COUNT(DISTINCT u.analysis_id) AS analysis_count,
+			       SUM(u.input_tokens), SUM(u.output_tokens),
+			       SUM(u.cache_read_tokens), SUM(u.cache_write_tokens),
+			       SUM(u.cost_usd)
+			FROM analysis_token_usage u
+			JOIN analyses a ON a.id = u.analysis_id
+			JOIN projects p ON p.id = a.project_id
+			JOIN group_members gm ON gm.group_id = p.group_id AND gm.user_id = $1
+			GROUP BY u.model
+			ORDER BY SUM(u.input_tokens) + SUM(u.output_tokens) DESC`
+		args = append(args, userID)
+	}
+
+	rows, err := q.pool.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []AggregatedTokenUsage
+	for rows.Next() {
+		var a AggregatedTokenUsage
+		if err := rows.Scan(&a.Model, &a.AnalysisCount,
+			&a.InputTokens, &a.OutputTokens,
+			&a.CacheReadTokens, &a.CacheWriteTokens, &a.CostUSD); err != nil {
+			return nil, err
+		}
+		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+
+// ListAnalysisIDsWithoutUsage returns IDs of completed analyses that have no
+// token usage rows yet (for backfill purposes).
+func (q *Queries) ListAnalysisIDsWithoutUsage(ctx context.Context) ([]string, error) {
+	rows, err := q.pool.Query(ctx, `
+		SELECT a.id FROM analyses a
+		LEFT JOIN analysis_token_usage u ON u.analysis_id = a.id
+		WHERE a.status = 'completed' AND u.id IS NULL
+		ORDER BY a.created_at DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
 }

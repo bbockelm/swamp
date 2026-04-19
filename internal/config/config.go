@@ -112,9 +112,9 @@ type Config struct {
 	// GitHub App integration.
 	// The private key can be provided as a PEM string or as a file path.
 	GitHubAppID         int64  `envconfig:"GITHUB_APP_ID" default:"0"`
-	GitHubAppPrivateKey string `envconfig:"GITHUB_APP_PRIVATE_KEY" default:""`     // PEM-encoded RSA private key
-	GitHubAppKeyFile    string `envconfig:"GITHUB_APP_KEY_FILE" default:""`         // path to PEM file (alternative)
-	GitHubWebhookSecret string `envconfig:"GITHUB_WEBHOOK_SECRET" default:""`       // HMAC-SHA256 secret for webhook validation
+	GitHubAppPrivateKey string `envconfig:"GITHUB_APP_PRIVATE_KEY" default:""`               // PEM-encoded RSA private key
+	GitHubAppKeyFile    string `envconfig:"GITHUB_APP_KEY_FILE" default:""`                  // path to PEM file (alternative)
+	GitHubWebhookSecret string `envconfig:"GITHUB_WEBHOOK_SECRET" default:""`                // HMAC-SHA256 secret for webhook validation
 	GitHubAPIURL        string `envconfig:"GITHUB_API_URL" default:"https://api.github.com"` // for GitHub Enterprise
 
 	// Worker mode settings (used inside worker pods / detached processes).

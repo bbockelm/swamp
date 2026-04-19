@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"crypto/rand"
+	_ "embed"
 	"encoding/hex"
 	"fmt"
 	"net/http"
@@ -14,6 +15,9 @@ import (
 	"github.com/bbockelm/swamp/internal/db"
 	"github.com/bbockelm/swamp/internal/models"
 )
+
+//go:embed default_aup.md
+var defaultAUPText string
 
 // --- Admin: User Management ---
 
@@ -359,12 +363,12 @@ func (h *Handler) getAUPVersion(ctx context.Context) string {
 	return h.cfg.AUPVersion
 }
 
-// getAUPText returns the DB-stored AUP text, or a default if not set.
+// getAUPText returns the DB-stored AUP text, or the embedded default if not set.
 func (h *Handler) getAUPText(ctx context.Context) string {
 	if v, _ := h.queries.GetAppConfig(ctx, "aup_text"); v != "" {
 		return v
 	}
-	return ""
+	return defaultAUPText
 }
 
 func (h *Handler) GetAUPConfig(w http.ResponseWriter, r *http.Request) {

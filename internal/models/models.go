@@ -444,3 +444,15 @@ type GitHubStatus struct {
 	WebhookURL    string                   `json:"webhook_url,omitempty"`
 	Installations []GitHubAppInstallation   `json:"installations,omitempty"`
 }
+
+// TokenUsage holds per-model token usage for an analysis.
+type TokenUsage struct {
+	ID              string  `json:"id"`
+	AnalysisID      string  `json:"analysis_id"`
+	Model           string  `json:"model"`
+	InputTokens     int64   `json:"input_tokens"`
+	OutputTokens    int64   `json:"output_tokens"`
+	CacheReadTokens int64   `json:"cache_read_tokens"`
+	CacheWriteTokens int64  `json:"cache_write_tokens"`
+	CostUSD         float64 `json:"cost_usd"`
+}

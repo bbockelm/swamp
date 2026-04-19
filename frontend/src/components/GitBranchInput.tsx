@@ -28,9 +28,11 @@ interface Props {
   /** When provided, uses the backend branch API (supports private repos). */
   projectId?: string;
   packageId?: string;
+  /** Called when branch detection succeeds or fails for a GitHub URL. */
+  onDetectionResult?: (result: { ok: boolean; error?: string }) => void;
 }
 
-export function GitBranchInput({ gitUrl, value, onChange, labelClassName, projectId, packageId }: Props) {
+export function GitBranchInput({ gitUrl, value, onChange, labelClassName, projectId, packageId, onDetectionResult }: Props) {
   const [branches, setBranches] = useState<string[]>([]);
   const [defaultBranch, setDefaultBranch] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -40,6 +42,8 @@ export function GitBranchInput({ gitUrl, value, onChange, labelClassName, projec
   const wrapperRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const prevUrlRef = useRef<string>('');
+  const onDetectionResultRef = useRef(onDetectionResult);
+  onDetectionResultRef.current = onDetectionResult;
 
   // Close dropdown when clicking outside
   useEffect(() => {
@@ -64,6 +68,7 @@ export function GitBranchInput({ gitUrl, value, onChange, labelClassName, projec
         if (!value || value === 'main' || value === 'master') {
           onChange(names[0]);
         }
+        onDetectionResultRef.current?.({ ok: true });
         return true;
       }
     } catch {
@@ -110,10 +115,12 @@ export function GitBranchInput({ gitUrl, value, onChange, labelClassName, projec
       if (!value || value === 'main' || value === 'master') {
         onChange(repoData.default_branch);
       }
+      onDetectionResultRef.current?.({ ok: true });
     } catch {
       // Not a public repo or rate limited — fall back to text input
       setBranches([]);
       setDefaultBranch(null);
+      onDetectionResultRef.current?.({ ok: false, error: 'Could not access this repository. It may be private or not exist.' });
     } finally {
       setLoading(false);
     }
@@ -126,6 +133,7 @@ export function GitBranchInput({ gitUrl, value, onChange, labelClassName, projec
     if (!gh) {
       setBranches([]);
       setDefaultBranch(null);
+      onDetectionResultRef.current?.({ ok: true }); // clear any previous error
       return;
     }
 

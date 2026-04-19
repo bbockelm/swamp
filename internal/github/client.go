@@ -42,9 +42,9 @@ type Client struct {
 	tokens map[int64]*cachedToken
 
 	// Cached app metadata from GET /app.
-	appSlug    string // e.g. "my-swamp-app"
-	appHTMLURL string // e.g. "https://github.com/apps/my-swamp-app"
-	appInfoErr error
+	appSlug     string // e.g. "my-swamp-app"
+	appHTMLURL  string // e.g. "https://github.com/apps/my-swamp-app"
+	appInfoErr  error
 	appInfoOnce sync.Once
 }
 
@@ -343,6 +343,7 @@ func (c *Client) ValidateWebhookSignature(payload []byte, signature string) bool
 
 // SyncInstallations fetches all installations from GitHub and syncs them to the database.
 func (c *Client) SyncInstallations(ctx context.Context) error {
+	log.Info().Msg("Starting GitHub App installation sync")
 	jwt, err := c.generateJWT()
 	if err != nil {
 		return err
@@ -379,14 +380,17 @@ func (c *Client) SyncInstallations(ctx context.Context) error {
 		return fmt.Errorf("parsing installations: %w", err)
 	}
 
+	log.Info().Int("count", len(installations)).Msg("Fetched installations from GitHub API")
 	for _, inst := range installations {
 		permJSON, _ := json.Marshal(inst.Permissions)
 		if err := c.queries.UpsertGitHubInstallation(ctx, inst.ID, inst.Account.Login, inst.Account.Type, permJSON); err != nil {
 			log.Error().Err(err).Int64("installation_id", inst.ID).Msg("Failed to upsert installation")
+		} else {
+			log.Info().Int64("installation_id", inst.ID).Str("account", inst.Account.Login).Str("type", inst.Account.Type).Msg("Upserted installation")
 		}
 	}
 
-	log.Info().Int("count", len(installations)).Msg("Synced GitHub App installations")
+	log.Info().Int("count", len(installations)).Msg("GitHub App installation sync finished")
 	return nil
 }
 

@@ -8,7 +8,8 @@ import { SARIFViewer } from "@/components/SARIFViewer";
 import { MarkdownReport, RenderedMarkdown } from "@/components/MarkdownReport";
 import { useEffect, useRef, useState } from "react";
 import { useResolvedParams } from "@/lib/useResolvedParams";
-import { StreamLine, processLogLines } from "@/lib/stream-utils";
+import { StreamLine, processLogLines, extractTokenUsage, accumulateUsage, formatTokenCount, type StreamTokenUsage } from "@/lib/stream-utils";
+import type { TokenUsage } from "@/lib/api";
 
 function timeAgo(dateStr: string): string {
   const seconds = Math.floor((Date.now() - new Date(dateStr).getTime()) / 1000);
@@ -304,6 +305,11 @@ export default function AnalysisDetailClient() {
         )}
       </div>
 
+      {/* Token Usage */}
+      {analysis.token_usage && analysis.token_usage.length > 0 && (
+        <TokenUsageBox usage={analysis.token_usage} />
+      )}
+
       {/* Results */}
       {results && results.filter((r) => r.result_type !== "agent_log").length > 0 ? (
         <div className="space-y-6 mb-6">
@@ -481,6 +487,64 @@ export default function AnalysisDetailClient() {
   );
 }
 
+/** Displays per-model token usage for a completed analysis. */
+function TokenUsageBox({ usage }: { usage: TokenUsage[] }) {
+  const totalInput = usage.reduce((s, u) => s + u.input_tokens, 0);
+  const totalOutput = usage.reduce((s, u) => s + u.output_tokens, 0);
+  const totalCacheRead = usage.reduce((s, u) => s + u.cache_read_tokens, 0);
+  const totalCacheWrite = usage.reduce((s, u) => s + u.cache_write_tokens, 0);
+  const totalCost = usage.reduce((s, u) => s + u.cost_usd, 0);
+
+  return (
+    <div className="bg-gray-50 border rounded p-4 mb-6">
+      <div className="flex items-baseline gap-2 mb-3">
+        <h3 className="text-sm font-semibold text-gray-700">Token Usage</h3>
+        {totalCost > 0 && (
+          <span className="text-xs text-gray-400">(estimated cost)</span>
+        )}
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="text-xs text-gray-500 uppercase border-b">
+              <th className="text-left py-1 pr-4">Model</th>
+              <th className="text-right py-1 px-2">Input</th>
+              <th className="text-right py-1 px-2">Output</th>
+              <th className="text-right py-1 px-2">Cache Read</th>
+              <th className="text-right py-1 px-2">Cache Write</th>
+              <th className="text-right py-1 pl-2">Est. Cost</th>
+            </tr>
+          </thead>
+          <tbody>
+            {usage.map((u) => (
+              <tr key={u.model} className="border-b border-gray-100">
+                <td className="py-1.5 pr-4 font-mono text-xs">{u.model}</td>
+                <td className="py-1.5 px-2 text-right font-mono">{formatTokenCount(u.input_tokens)}</td>
+                <td className="py-1.5 px-2 text-right font-mono">{formatTokenCount(u.output_tokens)}</td>
+                <td className="py-1.5 px-2 text-right font-mono text-gray-400">{formatTokenCount(u.cache_read_tokens)}</td>
+                <td className="py-1.5 px-2 text-right font-mono text-gray-400">{formatTokenCount(u.cache_write_tokens)}</td>
+                <td className="py-1.5 pl-2 text-right font-mono">
+                  {u.cost_usd > 0 ? `$${u.cost_usd.toFixed(4)}` : "—"}
+                </td>
+              </tr>
+            ))}
+            {usage.length > 1 && (
+              <tr className="font-semibold">
+                <td className="py-1.5 pr-4 text-xs">Total</td>
+                <td className="py-1.5 px-2 text-right font-mono">{formatTokenCount(totalInput)}</td>
+                <td className="py-1.5 px-2 text-right font-mono">{formatTokenCount(totalOutput)}</td>
+                <td className="py-1.5 px-2 text-right font-mono text-gray-400">{formatTokenCount(totalCacheRead)}</td>
+                <td className="py-1.5 px-2 text-right font-mono text-gray-400">{formatTokenCount(totalCacheWrite)}</td>
+                <td className="py-1.5 pl-2 text-right font-mono">${totalCost.toFixed(4)}</td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 /** Collapsible section that fetches and renders a markdown result artifact inline. */
 function CollapsibleResultSection({
   title,
@@ -621,6 +685,7 @@ function TerminalStream({
   const [status, setStatus] = useState<"connecting" | "connected" | "error">(
     "connecting",
   );
+  const [usage, setUsage] = useState<Record<string, StreamTokenUsage>>({});
   const containerRef = useRef<HTMLDivElement>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const retryRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -644,7 +709,12 @@ function TerminalStream({
       ws.onmessage = (event) => {
         if (!cancelled) {
           setStatus("connected");
-          setLines((prev) => [...prev, event.data]);
+          const data = event.data as string;
+          setLines((prev) => [...prev, data]);
+          const tok = extractTokenUsage(data);
+          if (tok) {
+            setUsage((prev) => accumulateUsage(prev, tok));
+          }
         }
       };
 
@@ -673,6 +743,11 @@ function TerminalStream({
       containerRef.current.scrollTop = containerRef.current.scrollHeight;
   }, [lines]);
 
+  const usageEntries = Object.values(usage);
+  const totalInput = usageEntries.reduce((s, u) => s + u.input_tokens, 0);
+  const totalOutput = usageEntries.reduce((s, u) => s + u.output_tokens, 0);
+  const totalCost = usageEntries.reduce((s, u) => s + u.cost_usd, 0);
+
   return (
     <div className="mb-6">
       <div className="flex items-center gap-2 mb-2">
@@ -686,6 +761,12 @@ function TerminalStream({
                 : "bg-yellow-400"
           }`}
         />
+        {totalInput > 0 && (
+          <span className="text-xs text-gray-400 ml-auto font-mono">
+            {formatTokenCount(totalInput)} in / {formatTokenCount(totalOutput)} out
+            {totalCost > 0 && <> · ~${totalCost.toFixed(4)}</>}
+          </span>
+        )}
       </div>
       <div
         ref={containerRef}

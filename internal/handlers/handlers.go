@@ -186,7 +186,22 @@ func (h *Handler) DashboardStats(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusInternalServerError, "Failed to load dashboard stats")
 		return
 	}
-	respondJSON(w, http.StatusOK, stats)
+
+	// Include aggregated token usage in the dashboard stats.
+	usage, _ := h.queries.GetAggregatedTokenUsage(r.Context(), user.ID, isAdmin)
+	if usage == nil {
+		usage = []db.AggregatedTokenUsage{}
+	}
+
+	respondJSON(w, http.StatusOK, map[string]any{
+		"project_count":   stats.ProjectCount,
+		"group_count":     stats.GroupCount,
+		"analysis_counts": stats.AnalysisCounts,
+		"recent_analyses": stats.RecentAnalyses,
+		"total_findings":  stats.TotalFindings,
+		"severity_counts": stats.SeverityCounts,
+		"token_usage":     usage,
+	})
 }
 
 // respondJSON writes a JSON response with the given status code.

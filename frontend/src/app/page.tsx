@@ -1,7 +1,7 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { api, type Analysis } from "@/lib/api";
+import { api, type Analysis, type AggregatedTokenUsage } from "@/lib/api";
 import Link from "next/link";
 import { AnalysisStatus } from "@/components/AnalysisStatus";
 
@@ -456,6 +456,71 @@ function DashboardContent({ userName }: { userName: string }) {
         </div>
       </div>
 
+      {/* Token Usage */}
+      {stats?.token_usage && stats.token_usage.length > 0 && (
+        <div className="mt-6 bg-white rounded-lg border p-5">
+          <div className="flex items-baseline gap-2 mb-4">
+            <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">
+              LLM Usage
+            </h2>
+            <span className="text-xs text-gray-400">(estimated cost)</span>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-xs text-gray-500 uppercase border-b">
+                  <th className="text-left py-1 pr-4">Model</th>
+                  <th className="text-right py-1 px-2">Analyses</th>
+                  <th className="text-right py-1 px-2">Input</th>
+                  <th className="text-right py-1 px-2">Output</th>
+                  <th className="text-right py-1 px-2">Cache Read</th>
+                  <th className="text-right py-1 px-2">Cache Write</th>
+                  <th className="text-right py-1 pl-2">Est. Cost</th>
+                </tr>
+              </thead>
+              <tbody>
+                {stats.token_usage.map((u: AggregatedTokenUsage) => (
+                  <tr key={u.model} className="border-b border-gray-100">
+                    <td className="py-1.5 pr-4 font-mono text-xs">{u.model}</td>
+                    <td className="py-1.5 px-2 text-right">{u.analysis_count}</td>
+                    <td className="py-1.5 px-2 text-right font-mono">{fmtTok(u.input_tokens)}</td>
+                    <td className="py-1.5 px-2 text-right font-mono">{fmtTok(u.output_tokens)}</td>
+                    <td className="py-1.5 px-2 text-right font-mono text-gray-400">{fmtTok(u.cache_read_tokens)}</td>
+                    <td className="py-1.5 px-2 text-right font-mono text-gray-400">{fmtTok(u.cache_write_tokens)}</td>
+                    <td className="py-1.5 pl-2 text-right font-mono">
+                      {u.cost_usd > 0 ? `$${u.cost_usd.toFixed(2)}` : "—"}
+                    </td>
+                  </tr>
+                ))}
+                {stats.token_usage.length > 1 && (
+                  <tr className="font-semibold">
+                    <td className="py-1.5 pr-4 text-xs">Total</td>
+                    <td className="py-1.5 px-2 text-right">
+                      {stats.token_usage.reduce((s: number, u: AggregatedTokenUsage) => s + u.analysis_count, 0)}
+                    </td>
+                    <td className="py-1.5 px-2 text-right font-mono">
+                      {fmtTok(stats.token_usage.reduce((s: number, u: AggregatedTokenUsage) => s + u.input_tokens, 0))}
+                    </td>
+                    <td className="py-1.5 px-2 text-right font-mono">
+                      {fmtTok(stats.token_usage.reduce((s: number, u: AggregatedTokenUsage) => s + u.output_tokens, 0))}
+                    </td>
+                    <td className="py-1.5 px-2 text-right font-mono text-gray-400">
+                      {fmtTok(stats.token_usage.reduce((s: number, u: AggregatedTokenUsage) => s + u.cache_read_tokens, 0))}
+                    </td>
+                    <td className="py-1.5 px-2 text-right font-mono text-gray-400">
+                      {fmtTok(stats.token_usage.reduce((s: number, u: AggregatedTokenUsage) => s + u.cache_write_tokens, 0))}
+                    </td>
+                    <td className="py-1.5 pl-2 text-right font-mono">
+                      ${stats.token_usage.reduce((s: number, u: AggregatedTokenUsage) => s + u.cost_usd, 0).toFixed(2)}
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
       {/* Recent analyses */}
       <div className="mt-6 bg-white rounded-lg border p-5">
         <div className="flex justify-between items-center mb-4">
@@ -573,6 +638,12 @@ function StatusBar({
       </div>
     </div>
   );
+}
+
+function fmtTok(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
+  return n.toString();
 }
 
 function severityColor(sev: string): string {

@@ -4,6 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useState, useEffect } from 'react';
 import { Sidebar } from './Sidebar';
+import { RenderedMarkdown } from './MarkdownReport';
 import { api } from '@/lib/api';
 
 const publicPaths = ['/login', '/'];
@@ -93,25 +94,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                   Before using SWAMP, you must agree to the Acceptable Use Policy
                   (version {session.aup_version}).
                 </p>
-                <div className="bg-gray-50 border rounded p-4 max-h-48 overflow-y-auto text-xs leading-relaxed">
-                  {session.aup_text ? (
-                    <div style={{ whiteSpace: 'pre-wrap' }}>{session.aup_text}</div>
-                  ) : (
-                    <>
-                      <p>
-                        By using this platform you agree to use it only for lawful
-                        purposes related to software security analysis. You will not
-                        attempt to disrupt the service, access data belonging to
-                        other users without authorization, or use analysis results
-                        to exploit vulnerabilities in systems you do not own or have
-                        permission to test.
-                      </p>
-                      <p className="mt-2">
-                        The platform operators reserve the right to suspend or
-                        terminate accounts that violate this policy.
-                      </p>
-                    </>
-                  )}
+                <div className="bg-gray-50 border rounded p-4 max-h-48 overflow-y-auto text-xs leading-relaxed prose prose-xs max-w-none">
+                  <RenderedMarkdown content={session.aup_text || ''} />
                 </div>
               </div>
               <button

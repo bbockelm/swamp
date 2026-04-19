@@ -247,6 +247,10 @@ func New(cfg *config.Config, pool *pgxpool.Pool, store *storage.Store) (*chi.Mux
 		hub.HandleConnect(w, r, analysisID)
 	})
 
+	// Public AUP pages (no authentication required).
+	r.Get("/aup", h.GetPublicAUP)
+	r.Get("/aup-v{version}", h.GetPublicAUPVersioned)
+
 	// OpenAPI spec
 	r.Get("/api/v1/openapi.yaml", openapi.Handler())
 

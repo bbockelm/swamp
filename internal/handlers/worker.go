@@ -610,6 +610,29 @@ func (wh *WorkerHandler) UploadResult(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Extract token usage from agent stdout logs.
+	if resultType == "agent_log" && filename == "agent_stdout.log" {
+		lines := strings.Split(string(plaintext), "\n")
+		usages := agent.ExtractTokenUsage(lines)
+		if len(usages) > 0 {
+			if err := wh.h.queries.ReplaceAnalysisTokenUsage(r.Context(), analysisID, usages); err != nil {
+				log.Error().Err(err).Str("analysis_id", analysisID).Msg("Failed to save token usage")
+			} else {
+				totalIn, totalOut := int64(0), int64(0)
+				for _, u := range usages {
+					totalIn += u.InputTokens
+					totalOut += u.OutputTokens
+				}
+				log.Info().
+					Int("models", len(usages)).
+					Int64("input_tokens", totalIn).
+					Int64("output_tokens", totalOut).
+					Str("analysis_id", analysisID).
+					Msg("Saved token usage from agent stdout")
+			}
+		}
+	}
+
 	log.Info().
 		Str("analysis_id", analysisID).
 		Str("filename", filename).
