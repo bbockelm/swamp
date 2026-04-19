@@ -933,6 +933,8 @@ export const api = {
       fetchJSON(`${BASE}/github/installations/${installationId}/claim`, { method: 'POST' }),
     appInfo: (): Promise<GitHubAppInfo> =>
       fetchJSON(`${BASE}/github/app-info`),
+    listBranches: (owner: string, repo: string): Promise<string[]> =>
+      fetchJSON(`${BASE}/github/branches?owner=${encodeURIComponent(owner)}&repo=${encodeURIComponent(repo)}`),
     getConfig: (projectId: string): Promise<ProjectGitHubConfig> =>
       fetchJSON(`${BASE}/projects/${projectId}/github`),
     updateConfig: (

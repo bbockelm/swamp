@@ -21,6 +21,22 @@ export function StreamLine({ line }: { line: string }) {
       </div>
     );
   }
+  if (line.startsWith("[tool_error]")) {
+    const detail = line.slice(13);
+    const colonIdx = detail.indexOf(":");
+    const toolName = colonIdx > 0 ? detail.slice(0, colonIdx) : detail;
+    const toolDetail = colonIdx > 0 ? detail.slice(colonIdx + 1).trim() : "";
+    return (
+      <div className="flex items-start gap-2 py-1.5 px-2 rounded bg-red-500/15 text-xs">
+        <span className="shrink-0 font-mono font-semibold text-red-100 bg-red-700 px-1.5 py-0.5 rounded text-[10px]">
+          {toolName}
+        </span>
+        {toolDetail && (
+          <span className="text-red-300 break-words whitespace-pre-wrap">{toolDetail}</span>
+        )}
+      </div>
+    );
+  }
   if (line.startsWith("[tool]")) {
     const detail = line.slice(7);
     const colonIdx = detail.indexOf(":");
@@ -46,8 +62,8 @@ export function StreamLine({ line }: { line: string }) {
   }
   if (line.startsWith("[error]")) {
     return (
-      <div className="flex items-start gap-2 py-1.5 px-2 rounded bg-red-500/20 text-red-400 text-xs border-l-2 border-red-500">
-        <span className="shrink-0 text-red-500 font-bold">✕</span>
+      <div className="flex items-start gap-2 py-1.5 px-2 rounded bg-red-900/60 text-red-300 text-xs border-l-2 border-red-500">
+        <span className="shrink-0 text-red-400 font-bold">✕</span>
         <span className="break-words whitespace-pre-wrap font-mono font-semibold">{line.slice(8)}</span>
       </div>
     );
@@ -296,19 +312,22 @@ function parseOpenCodeToolUseEvent(raw: Record<string, unknown>): string {
       if (lname === "bash") {
         detail = (input.description as string) || truncateStr((input.command as string) || "", 120);
       } else if (["read", "write", "edit", "view", "glob", "grep", "patch"].includes(lname)) {
-        detail = (input.file_path as string) || "";
+        detail = (input.file_path as string) || (input.filePath as string) || "";
       } else {
-        for (const key of ["description", "file_path", "command", "query", "url"]) {
+        for (const key of ["description", "file_path", "filePath", "command", "query", "url"]) {
           if (input[key]) { detail = truncateStr(String(input[key]), 120); break; }
         }
       }
     }
   }
 
-  let msg = detail ? `[tool] ${toolName}: ${detail}` : `[tool] ${toolName}`;
   const status = state.status as string | undefined;
   const errStr = ((state.error as string) || "").trim();
-  if (status === "error" && errStr) {
+  const isError = status === "error";
+  let msg = detail
+    ? (isError ? `[tool_error] ${toolName}: ${detail}` : `[tool] ${toolName}: ${detail}`)
+    : (isError ? `[tool_error] ${toolName}` : `[tool] ${toolName}`);
+  if (isError && errStr) {
     msg += "\n[error] " + truncateStr(errStr, 300);
   }
   const output = ((state.output as string) || "").trim();

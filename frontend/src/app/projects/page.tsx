@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import {
@@ -15,8 +15,6 @@ import {
   type AvailableProvider,
   type ProjectAllowedProvider,
   type DiscoveredModel,
-  type ProjectGitHubConfig,
-  type GitHubWebhookDelivery,
 } from "@/lib/api";
 import { AnalysisStatus } from "@/components/AnalysisStatus";
 import { Pagination, paginate } from "@/components/Pagination";
@@ -550,6 +548,40 @@ function PackagesTab({ projectId }: { projectId: string }) {
   const [gitUrl, setGitUrl] = useState("");
   const [gitBranch, setGitBranch] = useState("main");
   const [analysisPrompt, setAnalysisPrompt] = useState("");
+  const [sarifUploadEnabled, setSarifUploadEnabled] = useState(false);
+  const [branchError, setBranchError] = useState<string | null>(null);
+  const [installationWarning, setInstallationWarning] = useState<string | null>(null);
+
+  const handleBranchDetection = useCallback((result: { ok: boolean; error?: string }) => {
+    setBranchError(result.ok ? null : (result.error ?? 'Could not detect branches.'));
+  }, []);
+
+  const { data: appInfo } = useQuery({
+    queryKey: ['github', 'app-info'],
+    queryFn: () => api.github.appInfo(),
+  });
+
+  // Parse owner/repo from current gitUrl for warning messages.
+  const parsedGitHub = useMemo(() => {
+    const m = gitUrl.match(/github\.com[/:]([^/]+)\/([^/.]+?)(?:\.git)?\/?$/i);
+    return m ? { owner: m[1], repo: m[2] } : null;
+  }, [gitUrl]);
+
+  const handleSarifToggle = useCallback(async (checked: boolean) => {
+    setSarifUploadEnabled(checked);
+    setInstallationWarning(null);
+    if (!checked || !parsedGitHub) return;
+    try {
+      const resp = await api.github.listInstallations(parsedGitHub.owner);
+      if (!resp.installations || resp.installations.length === 0) {
+        setInstallationWarning(
+          `No GitHub App installation found for "${parsedGitHub.owner}". Results won't be uploaded until the app is installed.`
+        );
+      }
+    } catch {
+      // If the probe fails, don't block — the user can still enable it.
+    }
+  }, [parsedGitHub]);
 
   const { data: packages } = useQuery({
     queryKey: ["packages", projectId],
@@ -563,6 +595,7 @@ function PackagesTab({ projectId }: { projectId: string }) {
         git_url: gitUrl,
         git_branch: gitBranch,
         analysis_prompt: analysisPrompt,
+        sarif_upload_enabled: sarifUploadEnabled,
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["packages", projectId] });
@@ -571,6 +604,9 @@ function PackagesTab({ projectId }: { projectId: string }) {
       setGitUrl("");
       setGitBranch("main");
       setAnalysisPrompt("");
+      setSarifUploadEnabled(false);
+      setBranchError(null);
+      setInstallationWarning(null);
     },
   });
 
@@ -581,6 +617,7 @@ function PackagesTab({ projectId }: { projectId: string }) {
         git_url: gitUrl,
         git_branch: gitBranch,
         analysis_prompt: analysisPrompt,
+        sarif_upload_enabled: sarifUploadEnabled,
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["packages", projectId] });
@@ -600,7 +637,10 @@ function PackagesTab({ projectId }: { projectId: string }) {
     setGitUrl(pkg.git_url);
     setGitBranch(pkg.git_branch);
     setAnalysisPrompt(pkg.analysis_prompt || "");
+    setSarifUploadEnabled(pkg.sarif_upload_enabled ?? false);
     setAdding(false);
+    setBranchError(null);
+    setInstallationWarning(null);
   };
 
   const cancelEdit = () => {
@@ -609,6 +649,9 @@ function PackagesTab({ projectId }: { projectId: string }) {
     setGitUrl("");
     setGitBranch("main");
     setAnalysisPrompt("");
+    setSarifUploadEnabled(false);
+    setBranchError(null);
+    setInstallationWarning(null);
   };
 
   return (
@@ -621,11 +664,14 @@ function PackagesTab({ projectId }: { projectId: string }) {
           onClick={() => {
             setAdding(!adding);
             setEditingId(null);
+            setBranchError(null);
+            setInstallationWarning(null);
             if (!adding) {
               setName("");
               setGitUrl("");
               setGitBranch("main");
               setAnalysisPrompt("");
+              setSarifUploadEnabled(false);
             }
           }}
           className={`px-3 py-1.5 text-sm rounded font-medium transition-colors ${
@@ -659,6 +705,19 @@ function PackagesTab({ projectId }: { projectId: string }) {
               placeholder="https://github.com/org/repo.git"
               autoFocus
             />
+            {parsedGitHub && branchError && (
+              <p className="text-xs text-amber-600 mt-1">
+                {branchError}
+                {appInfo?.configured && appInfo.install_url && (
+                  <>{' '}
+                    <a href={appInfo.install_url} target="_blank" rel="noopener noreferrer" className="underline text-blue-600 hover:text-blue-700">
+                      Install the GitHub App
+                    </a>{' '}
+                    on <strong>{parsedGitHub.owner}</strong> to grant access.
+                  </>
+                )}
+              </p>
+            )}
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
@@ -678,6 +737,7 @@ function PackagesTab({ projectId }: { projectId: string }) {
               value={gitBranch}
               onChange={setGitBranch}
               labelClassName="block text-xs font-medium text-gray-500 mb-1"
+              onDetectionResult={handleBranchDetection}
             />
           </div>
           <div>
@@ -691,6 +751,30 @@ function PackagesTab({ projectId }: { projectId: string }) {
               className="w-full border rounded px-3 py-2 text-sm"
               placeholder="Focus on authentication and SQL injection..."
             />
+          </div>
+          <div>
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={sarifUploadEnabled}
+                onChange={(e) => handleSarifToggle(e.target.checked)}
+                className="rounded"
+              />
+              <span>Upload results to GitHub Code Scanning</span>
+            </label>
+            {installationWarning && (
+              <p className="text-xs text-amber-600 mt-1">
+                {installationWarning}
+                {appInfo?.configured && appInfo.install_url && (
+                  <>{' '}
+                    <a href={appInfo.install_url} target="_blank" rel="noopener noreferrer" className="underline text-blue-600 hover:text-blue-700">
+                      Install the GitHub App
+                    </a>{' '}
+                    to enable uploads.
+                  </>
+                )}
+              </p>
+            )}
           </div>
           <button
             type="submit"
@@ -734,6 +818,19 @@ function PackagesTab({ projectId }: { projectId: string }) {
                     required
                     className="w-full border rounded px-3 py-2 text-sm"
                   />
+                  {parsedGitHub && branchError && (
+                    <p className="text-xs text-amber-600 mt-1">
+                      {branchError}
+                      {appInfo?.configured && appInfo.install_url && (
+                        <>{' '}
+                          <a href={appInfo.install_url} target="_blank" rel="noopener noreferrer" className="underline text-blue-600 hover:text-blue-700">
+                            Install the GitHub App
+                          </a>{' '}
+                          on <strong>{parsedGitHub.owner}</strong> to grant access.
+                        </>
+                      )}
+                    </p>
+                  )}
                 </div>
                 <div className="grid grid-cols-2 gap-3">
                   <div>
@@ -753,6 +850,9 @@ function PackagesTab({ projectId }: { projectId: string }) {
                     value={gitBranch}
                     onChange={setGitBranch}
                     labelClassName="block text-xs font-medium text-gray-500 mb-1"
+                    projectId={projectId}
+                    packageId={pkg.id}
+                    onDetectionResult={handleBranchDetection}
                   />
                 </div>
                 <div>
@@ -765,6 +865,30 @@ function PackagesTab({ projectId }: { projectId: string }) {
                     rows={2}
                     className="w-full border rounded px-3 py-2 text-sm"
                   />
+                </div>
+                <div>
+                  <label className="flex items-center gap-2 text-sm">
+                    <input
+                      type="checkbox"
+                      checked={sarifUploadEnabled}
+                      onChange={(e) => handleSarifToggle(e.target.checked)}
+                      className="rounded"
+                    />
+                    <span>Upload results to GitHub Code Scanning</span>
+                  </label>
+                  {installationWarning && (
+                    <p className="text-xs text-amber-600 mt-1">
+                      {installationWarning}
+                      {appInfo?.configured && appInfo.install_url && (
+                        <>{' '}
+                          <a href={appInfo.install_url} target="_blank" rel="noopener noreferrer" className="underline text-blue-600 hover:text-blue-700">
+                            Install the GitHub App
+                          </a>{' '}
+                          to enable uploads.
+                        </>
+                      )}
+                    </p>
+                  )}
                 </div>
                 <div className="flex gap-2">
                   <button
@@ -797,6 +921,13 @@ function PackagesTab({ projectId }: { projectId: string }) {
                     Branch: {pkg.git_branch}
                     {pkg.git_commit && ` · ${pkg.git_commit.slice(0, 8)}`}
                   </div>
+                  {pkg.github_owner && pkg.github_repo && (
+                    <div className="text-xs text-gray-400 mt-0.5">
+                      GitHub: {pkg.github_owner}/{pkg.github_repo}
+                      {pkg.installation_id > 0 && ' (App)'}
+                      {pkg.sarif_upload_enabled && ' · SARIF upload'}
+                    </div>
+                  )}
                   {pkg.analysis_prompt && (
                     <div className="text-xs text-gray-400 mt-0.5 italic">
                       Prompt: {pkg.analysis_prompt.length > 80 ? pkg.analysis_prompt.slice(0, 80) + "…" : pkg.analysis_prompt}
@@ -1895,69 +2026,62 @@ function FindingsTabInline({
 }
 
 function GitHubTabInline({ projectId }: { projectId: string }) {
-  const { data: ghConfig, isLoading } = useQuery<ProjectGitHubConfig>({
-    queryKey: ['project', projectId, 'github'],
-    queryFn: () => api.github.getConfig(projectId),
+  const { data: installations, isLoading } = useQuery({
+    queryKey: ['github-installations'],
+    queryFn: async () => {
+      const resp = await api.github.listInstallations();
+      return resp.installations ?? [];
+    },
   });
 
-  const { data: webhooks } = useQuery<GitHubWebhookDelivery[]>({
-    queryKey: ['project', projectId, 'github-webhooks'],
-    queryFn: () => api.github.listWebhooks(projectId),
+  const { data: appInfo } = useQuery({
+    queryKey: ['github-app-info'],
+    queryFn: () => api.github.appInfo(),
+    staleTime: 300_000,
   });
 
   if (isLoading) return <p className="text-sm text-gray-400">Loading…</p>;
 
-  if (!ghConfig?.github_owner) {
-    return (
-      <div className="text-sm text-gray-500">
-        <p>GitHub integration not configured.</p>
-        <Link href={`/projects/${projectId}?tab=github`} className="text-blue-600 hover:underline text-xs">
-          Configure on project page →
-        </Link>
-      </div>
-    );
-  }
-
   return (
     <div className="space-y-4">
-      <div className="text-sm space-y-1">
-        <p><span className="text-gray-500">Repository:</span> {ghConfig.github_owner}/{ghConfig.github_repo}</p>
-        <p><span className="text-gray-500">Branch:</span> {ghConfig.default_branch || 'main'}</p>
-        {ghConfig.installation_id > 0 && (
-          <p><span className="text-gray-500">GitHub App:</span> Installation #{ghConfig.installation_id}</p>
-        )}
-        <p>
-          <span className="text-gray-500">SARIF upload:</span>{' '}
-          <span className={ghConfig.sarif_upload_enabled ? 'text-green-600' : 'text-gray-400'}>
-            {ghConfig.sarif_upload_enabled ? 'Enabled' : 'Disabled'}
-          </span>
-        </p>
-        <p>
-          <span className="text-gray-500">Webhooks:</span>{' '}
-          <span className={ghConfig.webhook_enabled ? 'text-green-600' : 'text-gray-400'}>
-            {ghConfig.webhook_enabled ? `Enabled (${ghConfig.webhook_events?.join(', ') || 'none'})` : 'Disabled'}
-          </span>
-        </p>
-      </div>
-
-      {webhooks && webhooks.length > 0 && (
-        <div>
-          <h4 className="text-xs font-medium text-gray-500 mb-2">Recent Deliveries</h4>
-          <div className="space-y-1">
-            {webhooks.slice(0, 5).map((w) => (
-              <div key={w.delivery_id} className="flex items-center gap-2 text-xs">
-                <span className={`w-2 h-2 rounded-full ${w.status === 'triggered' ? 'bg-green-500' : w.status === 'failed' ? 'bg-red-500' : 'bg-gray-400'}`} />
-                <span className="text-gray-600">{w.event_type}{w.action ? `/${w.action}` : ''}</span>
-                <span className="text-gray-400">{w.repo_full_name}</span>
-                <span className="text-gray-400">{new Date(w.created_at).toLocaleString()}</span>
-              </div>
-            ))}
-          </div>
+      {appInfo?.configured && appInfo.install_url && (
+        <div className="flex items-center justify-between">
+          <p className="text-sm text-gray-500">
+            Install the GitHub App to enable private repo access and SARIF uploads.
+          </p>
+          <a
+            href={appInfo.install_url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="bg-blue-600 text-white px-3 py-1.5 text-sm rounded hover:bg-blue-700 whitespace-nowrap"
+          >
+            Install GitHub App
+          </a>
         </div>
       )}
 
+      {!installations?.length ? (
+        <p className="text-sm text-gray-500">No GitHub App installations found.</p>
+      ) : (
+        <div className="border rounded divide-y">
+          {installations.map((inst) => (
+            <div key={inst.installation_id} className="px-3 py-2 flex items-center justify-between">
+              <div>
+                <span className="font-medium text-sm">{inst.account_login}</span>
+                <span className="text-xs text-gray-400 ml-2">{inst.account_type}</span>
+              </div>
+              <span className="text-xs text-green-600 bg-green-50 px-2 py-0.5 rounded">Active</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <p className="text-xs text-gray-400">
+        Installations are automatically linked to packages based on the repository owner.
+      </p>
+
       <Link href={`/projects/${projectId}?tab=github`} className="text-blue-600 hover:underline text-xs">
-        Manage GitHub settings →
+        View full GitHub settings →
       </Link>
     </div>
   );

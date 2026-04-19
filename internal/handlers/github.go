@@ -22,6 +22,27 @@ func (h *Handler) SetGitHubClient(ghClient *github.Client) {
 	h.ghClient = ghClient
 }
 
+// userCanUseInstallation checks whether the given user is authorized to use
+// the specified GitHub App installation. Admins can use any installation;
+// non-admins can only use installations they own or that are linked to
+// projects they admin.
+func (h *Handler) userCanUseInstallation(ctx context.Context, userID string, installationID int64) bool {
+	if UserHasRole(ctx, RoleAdmin) {
+		return true
+	}
+	installations, err := h.queries.ListInstallationsForUser(ctx, userID)
+	if err != nil {
+		log.Error().Err(err).Msg("Failed to list installations for authorization check")
+		return false
+	}
+	for _, inst := range installations {
+		if inst.InstallationID == installationID {
+			return true
+		}
+	}
+	return false
+}
+
 // GetGitHubStatus returns the GitHub App integration status (admin only).
 func (h *Handler) GetGitHubStatus(w http.ResponseWriter, r *http.Request) {
 	status := h.ghClient.Status(r.Context())
@@ -110,6 +131,22 @@ func (h *Handler) ClaimInstallation(w http.ResponseWriter, r *http.Request) {
 	// Sync installations from GitHub first to ensure this one exists.
 	if err := h.ghClient.SyncInstallations(r.Context()); err != nil {
 		log.Error().Err(err).Msg("Failed to sync installations before claim")
+	}
+
+	// Verify the installation exists and is not already claimed.
+	inst, err := h.queries.GetInstallationByID(r.Context(), installationID)
+	if err != nil {
+		respondError(w, http.StatusNotFound, "Installation not found")
+		return
+	}
+	if inst.InstalledByUserID != nil && *inst.InstalledByUserID != "" {
+		// Already claimed — only allow if the claimer is the current owner.
+		if *inst.InstalledByUserID != user.ID {
+			respondError(w, http.StatusForbidden, "Installation is already claimed by another user")
+			return
+		}
+		respondJSON(w, http.StatusOK, inst)
+		return
 	}
 
 	// Try to claim (only sets if not already claimed).
@@ -208,6 +245,19 @@ func (h *Handler) UpdateProjectGitHubConfig(w http.ResponseWriter, r *http.Reque
 		req.WebhookEvents = []string{}
 	}
 
+	// Verify the user is authorized to use this installation.
+	if req.InstallationID != 0 {
+		user := GetUserFromContext(r.Context())
+		if user == nil {
+			respondError(w, http.StatusUnauthorized, "Not authenticated")
+			return
+		}
+		if !h.userCanUseInstallation(r.Context(), user.ID, req.InstallationID) {
+			respondError(w, http.StatusForbidden, "You are not authorized to use this GitHub App installation")
+			return
+		}
+	}
+
 	if err := h.queries.UpsertProjectGitHubConfig(r.Context(), projectID, req.GitHubOwner, req.GitHubRepo, req.DefaultBranch, req.InstallationID, req.SARIFUploadEnabled, req.WebhookEnabled, req.WebhookEvents, req.WebhookAgentModel, req.WebhookProviderID); err != nil {
 		log.Error().Err(err).Str("project_id", projectID).Msg("Failed to save project GitHub config")
 		respondError(w, http.StatusInternalServerError, "Failed to save GitHub config")
@@ -252,6 +302,65 @@ func (h *Handler) ListPackageBranches(w http.ResponseWriter, r *http.Request) {
 	branches, err := h.ghClient.ListBranches(r.Context(), pkg.InstallationID, pkg.GitHubOwner, pkg.GitHubRepo)
 	if err != nil {
 		log.Error().Err(err).Str("package_id", pkgID).Msg("Failed to list branches")
+		respondError(w, http.StatusBadGateway, "Failed to list branches from GitHub")
+		return
+	}
+	respondJSON(w, http.StatusOK, branches)
+}
+
+// ListRepoBranches lists branches for a GitHub repo by owner/repo.
+// It finds the appropriate installation automatically, scoped to
+// installations the current user is authorized to use.
+// GET /api/v1/github/branches?owner=X&repo=Y
+func (h *Handler) ListRepoBranches(w http.ResponseWriter, r *http.Request) {
+	if h.ghClient == nil || !h.ghClient.Configured() {
+		respondError(w, http.StatusBadRequest, "GitHub App is not configured")
+		return
+	}
+
+	owner := r.URL.Query().Get("owner")
+	repo := r.URL.Query().Get("repo")
+	if owner == "" || repo == "" {
+		respondError(w, http.StatusBadRequest, "owner and repo query parameters are required")
+		return
+	}
+
+	user := GetUserFromContext(r.Context())
+	if user == nil {
+		respondError(w, http.StatusUnauthorized, "Not authenticated")
+		return
+	}
+
+	// Look up installations the user is authorized to access, filtered by owner.
+	var installations []models.GitHubAppInstallation
+	var err error
+	if UserHasRole(r.Context(), RoleAdmin) {
+		installations, err = h.queries.ListGitHubInstallations(r.Context())
+	} else {
+		installations, err = h.queries.ListInstallationsForUser(r.Context(), user.ID)
+	}
+	if err != nil {
+		log.Error().Err(err).Msg("Failed to list installations for branch lookup")
+		respondError(w, http.StatusInternalServerError, "Failed to look up installations")
+		return
+	}
+
+	// Find the installation matching this owner.
+	var matchedInstallation *models.GitHubAppInstallation
+	for i := range installations {
+		if strings.EqualFold(installations[i].AccountLogin, owner) {
+			matchedInstallation = &installations[i]
+			break
+		}
+	}
+	if matchedInstallation == nil {
+		respondError(w, http.StatusNotFound, "No GitHub App installation found for this repository owner")
+		return
+	}
+
+	branches, err := h.ghClient.ListBranches(r.Context(), matchedInstallation.InstallationID, owner, repo)
+	if err != nil {
+		log.Error().Err(err).Str("owner", owner).Str("repo", repo).Msg("Failed to list branches via installation")
 		respondError(w, http.StatusBadGateway, "Failed to list branches from GitHub")
 		return
 	}

@@ -299,6 +299,7 @@ func New(cfg *config.Config, pool *pgxpool.Pool, store *storage.Store) (*chi.Mux
 			r.Get("/github/installations", h.ListGitHubInstallations)
 			r.Post("/github/installations/{installationID}/claim", h.ClaimInstallation)
 			r.Get("/github/app-info", h.GetGitHubAppInfo)
+			r.Get("/github/branches", h.ListRepoBranches)
 
 			// Dashboard stats
 			r.Get("/dashboard/stats", h.DashboardStats)

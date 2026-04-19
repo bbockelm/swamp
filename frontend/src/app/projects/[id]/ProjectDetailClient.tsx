@@ -1,7 +1,7 @@
 'use client';
 
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { api, type SoftwarePackage, type Analysis, type Group, type Project, type ProjectGitHubConfig, type GitHubWebhookDelivery } from '@/lib/api';
+import { api, type SoftwarePackage, type Analysis, type Group, type Project, type GitHubWebhookDelivery } from '@/lib/api';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useState, useMemo, useCallback } from 'react';
 import Link from 'next/link';
@@ -868,324 +868,136 @@ function FindingsTab({
 function GitHubTab({ projectId }: { projectId: string }) {
   const queryClient = useQueryClient();
 
-  const { data: ghConfig, isLoading: configLoading } = useQuery<ProjectGitHubConfig>({
-    queryKey: ['project', projectId, 'github'],
-    queryFn: () => api.github.getConfig(projectId),
-  });
-
-  const { data: installations } = useQuery({
-    queryKey: ['github-installations-all'],
+  const { data: installations, isLoading } = useQuery({
+    queryKey: ['github-installations'],
     queryFn: async () => {
       const resp = await api.github.listInstallations();
       return resp.installations ?? [];
     },
   });
 
+  const { data: appInfo } = useQuery({
+    queryKey: ['github-app-info'],
+    queryFn: () => api.github.appInfo(),
+    staleTime: 300_000,
+  });
+
+  const claimMut = useMutation({
+    mutationFn: (installationId: number) => api.github.claimInstallation(installationId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['github-installations'] });
+    },
+  });
+
+  if (isLoading) return <p className="text-sm text-gray-500">Loading…</p>;
+
+  return (
+    <div className="space-y-6">
+      {/* Install link */}
+      {appInfo?.configured && appInfo.install_url && (
+        <div className="bg-white p-6 rounded-lg border">
+          <div className="flex items-center justify-between">
+            <div>
+              <h2 className="text-lg font-semibold">GitHub App</h2>
+              <p className="text-sm text-gray-500 mt-1">
+                Install the GitHub App on your organizations to enable private repo access, branch detection, and SARIF uploads.
+              </p>
+            </div>
+            <a
+              href={appInfo.install_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 text-sm whitespace-nowrap"
+            >
+              Install GitHub App
+            </a>
+          </div>
+        </div>
+      )}
+
+      {/* Installations list */}
+      <div className="bg-white p-6 rounded-lg border">
+        <h2 className="text-lg font-semibold mb-4">Your Installations</h2>
+        {!installations?.length ? (
+          <p className="text-sm text-gray-500">
+            No GitHub App installations found. Install the app on a GitHub organization or account to get started.
+          </p>
+        ) : (
+          <div className="border rounded divide-y">
+            {installations.map((inst) => (
+              <div key={inst.installation_id} className="px-4 py-3 flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="w-8 h-8 bg-gray-100 rounded-full flex items-center justify-center">
+                    <svg className="w-4 h-4 text-gray-500" fill="currentColor" viewBox="0 0 16 16">
+                      {inst.account_type === 'Organization' ? (
+                        <path fillRule="evenodd" d="M1.5 14.25c0 .138.112.25.25.25H4v-1.25a.75.75 0 01.75-.75h2.5a.75.75 0 01.75.75v1.25h2.25a.25.25 0 00.25-.25V1.75a.25.25 0 00-.25-.25h-8.5a.25.25 0 00-.25.25v12.5zM1.75 16A1.75 1.75 0 010 14.25V1.75C0 .784.784 0 1.75 0h8.5C11.216 0 12 .784 12 1.75v12.5c0 .085-.006.168-.018.25h2.268a.25.25 0 00.25-.25V8.285a.25.25 0 00-.111-.208l-1.055-.703a.75.75 0 11.832-1.248l1.055.703c.487.325.779.871.779 1.456v5.965A1.75 1.75 0 0114.25 16h-3.5a.75.75 0 01-.197-.026c-.099.017-.2.026-.303.026h-3a.75.75 0 01-.75-.75V14h-1v1.25a.75.75 0 01-.75.75h-3zM3 3.75A.75.75 0 013.75 3h.5a.75.75 0 010 1.5h-.5A.75.75 0 013 3.75zM3.75 6a.75.75 0 000 1.5h.5a.75.75 0 000-1.5h-.5zM3 9.75A.75.75 0 013.75 9h.5a.75.75 0 010 1.5h-.5A.75.75 0 013 9.75zM7.75 9a.75.75 0 000 1.5h.5a.75.75 0 000-1.5h-.5zM7 6.75A.75.75 0 017.75 6h.5a.75.75 0 010 1.5h-.5A.75.75 0 017 6.75zM7.75 3a.75.75 0 000 1.5h.5a.75.75 0 000-1.5h-.5z" />
+                      ) : (
+                        <path fillRule="evenodd" d="M10.5 5a2.5 2.5 0 11-5 0 2.5 2.5 0 015 0zm.061 3.073a4 4 0 10-5.123 0 6.004 6.004 0 00-3.431 5.142.75.75 0 001.498.07 4.5 4.5 0 018.99 0 .75.75 0 101.498-.07 6.005 6.005 0 00-3.432-5.142z" />
+                      )}
+                    </svg>
+                  </div>
+                  <div>
+                    <p className="font-medium text-sm">{inst.account_login}</p>
+                    <p className="text-xs text-gray-400">
+                      {inst.account_type} · Installation #{inst.installation_id}
+                    </p>
+                  </div>
+                </div>
+                <span className="text-xs text-green-600 bg-green-50 px-2 py-1 rounded">Active</span>
+              </div>
+            ))}
+          </div>
+        )}
+        <p className="text-xs text-gray-400 mt-3">
+          Installations are automatically linked to packages based on the repository owner. Configure GitHub settings on each package.
+        </p>
+      </div>
+
+      {/* Webhook deliveries */}
+      <WebhookDeliveries projectId={projectId} />
+    </div>
+  );
+}
+
+function WebhookDeliveries({ projectId }: { projectId: string }) {
   const { data: webhooks } = useQuery<GitHubWebhookDelivery[]>({
     queryKey: ['project', projectId, 'github-webhooks'],
     queryFn: () => api.github.listWebhooks(projectId),
   });
 
-  const { data: availableProviders } = useQuery({
-    queryKey: ['available-providers', projectId],
-    queryFn: () => api.availableProviders(projectId),
-    staleTime: 60_000,
-  });
-
-  const [owner, setOwner] = useState('');
-  const [repo, setRepo] = useState('');
-  const [branch, setBranch] = useState('main');
-  const [installationId, setInstallationId] = useState<number>(0);
-  const [sarifUpload, setSarifUpload] = useState(false);
-  const [webhookEnabled, setWebhookEnabled] = useState(false);
-  const [webhookEvents, setWebhookEvents] = useState<string[]>(['push']);
-  const [webhookAgentModel, setWebhookAgentModel] = useState('');
-  const [webhookProviderId, setWebhookProviderId] = useState<string>('');
-  const [formInit, setFormInit] = useState(false);
-
-  // Find the selected provider to determine its source for model discovery.
-  const selectedProvider = availableProviders?.find(p => p.id === webhookProviderId);
-
-  // Discover models for the selected provider.
-  const { data: providerModels } = useQuery({
-    queryKey: ['provider-models', projectId, webhookProviderId, selectedProvider?.source],
-    queryFn: () => api.discoverAvailableProviderModels(projectId, selectedProvider!.source, webhookProviderId),
-    enabled: !!webhookProviderId && !!selectedProvider?.source,
-    staleTime: 120_000,
-  });
-
-  // Initialize form from loaded config.
-  if (ghConfig && !formInit) {
-    if (ghConfig.github_owner) setOwner(ghConfig.github_owner);
-    if (ghConfig.github_repo) setRepo(ghConfig.github_repo);
-    if (ghConfig.default_branch) setBranch(ghConfig.default_branch);
-    if (ghConfig.installation_id) setInstallationId(ghConfig.installation_id);
-    setSarifUpload(ghConfig.sarif_upload_enabled ?? false);
-    setWebhookEnabled(ghConfig.webhook_enabled ?? false);
-    if (ghConfig.webhook_events?.length) setWebhookEvents(ghConfig.webhook_events);
-    if (ghConfig.webhook_agent_model) setWebhookAgentModel(ghConfig.webhook_agent_model);
-    if (ghConfig.webhook_provider_id) setWebhookProviderId(ghConfig.webhook_provider_id);
-    setFormInit(true);
-  }
-
-  const saveMut = useMutation({
-    mutationFn: () =>
-      api.github.updateConfig(projectId, {
-        github_owner: owner,
-        github_repo: repo,
-        default_branch: branch,
-        installation_id: installationId,
-        sarif_upload_enabled: sarifUpload,
-        webhook_enabled: webhookEnabled,
-        webhook_events: webhookEvents,
-        webhook_agent_model: webhookAgentModel,
-        webhook_provider_id: webhookProviderId || undefined,
-      }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['project', projectId, 'github'] });
-    },
-  });
-
-  const deleteMut = useMutation({
-    mutationFn: () => api.github.deleteConfig(projectId),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['project', projectId, 'github'] });
-      setOwner('');
-      setRepo('');
-      setBranch('main');
-      setInstallationId(0);
-      setSarifUpload(false);
-      setWebhookEnabled(false);
-      setWebhookEvents(['push']);
-      setWebhookAgentModel('');
-      setWebhookProviderId('');
-      setFormInit(false);
-    },
-  });
-
-  const allEvents = ['push', 'pull_request', 'release'];
-
-  if (configLoading) return <p className="text-sm text-gray-500">Loading...</p>;
+  if (!webhooks?.length) return null;
 
   return (
-    <div className="space-y-6">
-      {/* Config form */}
-      <div className="bg-white p-6 rounded-lg border space-y-4">
-        <h2 className="text-lg font-semibold">GitHub Repository</h2>
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            saveMut.mutate();
-          }}
-          className="space-y-4"
-        >
-          <div className="grid grid-cols-2 gap-4">
+    <div className="bg-white p-6 rounded-lg border space-y-4">
+      <h2 className="text-lg font-semibold">Recent Webhook Deliveries</h2>
+      <div className="border rounded divide-y max-h-96 overflow-y-auto">
+        {webhooks.map((d) => (
+          <div key={d.id} className="px-3 py-2 text-sm flex items-center justify-between">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Owner</label>
-              <input
-                type="text"
-                value={owner}
-                onChange={(e) => setOwner(e.target.value)}
-                placeholder="e.g. my-org"
-                className="w-full border rounded px-3 py-2 text-sm"
-              />
+              <span className="font-medium">{d.event_type}</span>
+              {d.action && <span className="text-gray-500 ml-1">({d.action})</span>}
+              <span className="text-gray-400 ml-2">{d.sender_login}</span>
+              {d.ref && <span className="text-gray-400 ml-2">{d.ref}</span>}
             </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Repository</label>
-              <input
-                type="text"
-                value={repo}
-                onChange={(e) => setRepo(e.target.value)}
-                placeholder="e.g. my-app"
-                className="w-full border rounded px-3 py-2 text-sm"
-              />
-            </div>
-          </div>
-
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Default Branch</label>
-              <input
-                type="text"
-                value={branch}
-                onChange={(e) => setBranch(e.target.value)}
-                className="w-full border rounded px-3 py-2 text-sm"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Installation</label>
-              <select
-                value={installationId}
-                onChange={(e) => setInstallationId(Number(e.target.value))}
-                className="w-full border rounded px-3 py-2 text-sm"
+            <div className="flex items-center gap-2">
+              <span
+                className={`text-xs px-2 py-0.5 rounded ${
+                  d.status === 'processed'
+                    ? 'bg-green-100 text-green-700'
+                    : d.status === 'error'
+                    ? 'bg-red-100 text-red-700'
+                    : 'bg-gray-100 text-gray-600'
+                }`}
               >
-                <option value={0}>None (public repos only)</option>
-                {installations?.map((inst) => (
-                  <option key={inst.installation_id} value={inst.installation_id}>
-                    {inst.account_login} ({inst.account_type})
-                  </option>
-                ))}
-              </select>
-            </div>
-          </div>
-
-          <div className="space-y-2">
-            <label className="flex items-center gap-2 text-sm">
-              <input
-                type="checkbox"
-                checked={sarifUpload}
-                onChange={(e) => setSarifUpload(e.target.checked)}
-                className="rounded"
-              />
-              <span>Upload SARIF results to GitHub Code Scanning</span>
-            </label>
-          </div>
-
-          <div className="space-y-2">
-            <label className="flex items-center gap-2 text-sm">
-              <input
-                type="checkbox"
-                checked={webhookEnabled}
-                onChange={(e) => setWebhookEnabled(e.target.checked)}
-                className="rounded"
-              />
-              <span>Enable webhook-triggered analyses</span>
-            </label>
-            {webhookEnabled && (
-              <div className="ml-6 space-y-3">
-                <div className="space-y-1">
-                  <p className="text-xs text-gray-500">Trigger analysis on these events:</p>
-                  {allEvents.map((evt) => (
-                    <label key={evt} className="flex items-center gap-2 text-sm">
-                      <input
-                        type="checkbox"
-                        checked={webhookEvents.includes(evt)}
-                        onChange={(e) => {
-                          if (e.target.checked) {
-                            setWebhookEvents([...webhookEvents, evt]);
-                          } else {
-                            setWebhookEvents(webhookEvents.filter((v) => v !== evt));
-                          }
-                        }}
-                        className="rounded"
-                      />
-                      <span>{evt}</span>
-                    </label>
-                  ))}
-                </div>
-                {availableProviders && availableProviders.length > 0 && (
-                  <div className="space-y-2 border-t pt-3">
-                    <p className="text-xs text-gray-500">Provider & model for webhook-triggered analyses:</p>
-                    <div className="grid grid-cols-2 gap-3">
-                      <div>
-                        <label className="block text-xs font-medium text-gray-600 mb-1">Provider</label>
-                        <select
-                          value={webhookProviderId}
-                          onChange={(e) => setWebhookProviderId(e.target.value)}
-                          className="w-full border rounded px-2 py-1.5 text-sm"
-                        >
-                          <option value="">Default (first available)</option>
-                          {availableProviders.map((p) => (
-                            <option key={`${p.source}:${p.id}`} value={p.id}>
-                              {p.label} ({p.api_schema})
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-                      <div>
-                        <label className="block text-xs font-medium text-gray-600 mb-1">Model</label>
-                        <select
-                          value={webhookAgentModel}
-                          onChange={(e) => setWebhookAgentModel(e.target.value)}
-                          className="w-full border rounded px-2 py-1.5 text-sm"
-                        >
-                          <option value="">Provider default</option>
-                          {providerModels?.map((m) => (
-                            <option key={m.id} value={m.id}>
-                              {m.display_name || m.id}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-
-          <div className="flex items-center gap-3">
-            <button
-              type="submit"
-              disabled={saveMut.isPending || !owner || !repo}
-              className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 disabled:opacity-50 text-sm"
-            >
-              {saveMut.isPending ? 'Saving...' : 'Save'}
-            </button>
-            {saveMut.isSuccess && <span className="text-green-600 text-sm">Saved!</span>}
-            {saveMut.isError && (
-              <span className="text-red-600 text-sm">
-                Error: {(saveMut.error as Error).message}
+                {d.status}
               </span>
-            )}
-          </div>
-        </form>
-
-        {ghConfig?.id && (
-          <div className="border-t pt-4 mt-4">
-            <button
-              onClick={() => {
-                if (confirm('Remove GitHub integration for this project?')) {
-                  deleteMut.mutate();
-                }
-              }}
-              disabled={deleteMut.isPending}
-              className="text-sm text-red-600 hover:text-red-800"
-            >
-              {deleteMut.isPending ? 'Removing...' : 'Remove GitHub Integration'}
-            </button>
-          </div>
-        )}
-      </div>
-
-      {/* Webhook deliveries */}
-      {webhookEnabled && (
-        <div className="bg-white p-6 rounded-lg border space-y-4">
-          <h2 className="text-lg font-semibold">Recent Webhook Deliveries</h2>
-          {!webhooks?.length ? (
-            <p className="text-sm text-gray-500">No webhook deliveries yet.</p>
-          ) : (
-            <div className="border rounded divide-y max-h-96 overflow-y-auto">
-              {webhooks.map((d) => (
-                <div key={d.id} className="px-3 py-2 text-sm flex items-center justify-between">
-                  <div>
-                    <span className="font-medium">{d.event_type}</span>
-                    {d.action && <span className="text-gray-500 ml-1">({d.action})</span>}
-                    <span className="text-gray-400 ml-2">{d.sender_login}</span>
-                    {d.ref && <span className="text-gray-400 ml-2">{d.ref}</span>}
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span
-                      className={`text-xs px-2 py-0.5 rounded ${
-                        d.status === 'processed'
-                          ? 'bg-green-100 text-green-700'
-                          : d.status === 'error'
-                          ? 'bg-red-100 text-red-700'
-                          : 'bg-gray-100 text-gray-600'
-                      }`}
-                    >
-                      {d.status}
-                    </span>
-                    <span className="text-xs text-gray-400">
-                      {new Date(d.created_at).toLocaleString()}
-                    </span>
-                  </div>
-                </div>
-              ))}
+              <span className="text-xs text-gray-400">
+                {new Date(d.created_at).toLocaleString()}
+              </span>
             </div>
-          )}
-        </div>
-      )}
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

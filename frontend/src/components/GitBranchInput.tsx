@@ -57,22 +57,40 @@ export function GitBranchInput({ gitUrl, value, onChange, labelClassName, projec
   }, []);
 
   // Try to fetch branches from the backend (supports private repos via installation tokens).
-  const fetchBranchesFromBackend = useCallback(async () => {
-    if (!projectId || !packageId) return false;
-    try {
-      const names = await api.packages.listBranches(projectId, packageId);
-      if (names && names.length > 0) {
-        setBranches(names);
-        // Use the first branch as the "default" heuristic (often main/master).
-        setDefaultBranch(names[0]);
-        if (!value || value === 'main' || value === 'master') {
-          onChange(names[0]);
+  const fetchBranchesFromBackend = useCallback(async (owner?: string, repo?: string) => {
+    // If we have a specific package, use the package-level endpoint.
+    if (projectId && packageId) {
+      try {
+        const names = await api.packages.listBranches(projectId, packageId);
+        if (names && names.length > 0) {
+          setBranches(names);
+          setDefaultBranch(names[0]);
+          if (!value || value === 'main' || value === 'master') {
+            onChange(names[0]);
+          }
+          onDetectionResultRef.current?.({ ok: true });
+          return true;
         }
-        onDetectionResultRef.current?.({ ok: true });
-        return true;
+      } catch {
+        // Fall through to owner/repo endpoint or public API.
       }
-    } catch {
-      // Fall through to public API.
+    }
+    // Try the owner/repo endpoint (finds installation automatically).
+    if (owner && repo) {
+      try {
+        const names = await api.github.listBranches(owner, repo);
+        if (names && names.length > 0) {
+          setBranches(names);
+          setDefaultBranch(names[0]);
+          if (!value || value === 'main' || value === 'master') {
+            onChange(names[0]);
+          }
+          onDetectionResultRef.current?.({ ok: true });
+          return true;
+        }
+      } catch {
+        // Fall through to public API.
+      }
     }
     return false;
   }, [projectId, packageId, value, onChange]);
@@ -82,7 +100,7 @@ export function GitBranchInput({ gitUrl, value, onChange, labelClassName, projec
     setLoading(true);
     try {
       // Try backend API first for private repo support.
-      const fromBackend = await fetchBranchesFromBackend();
+      const fromBackend = await fetchBranchesFromBackend(owner, repo);
       if (fromBackend) return;
 
       // Fall back to public GitHub API.

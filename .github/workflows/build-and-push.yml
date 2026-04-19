@@ -4,6 +4,8 @@ on:
   push:
     branches:
       - main
+    tags:
+      - "v*"
   workflow_dispatch:
 
 env:
@@ -20,6 +22,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -31,18 +35,28 @@ jobs:
           username: ${{ secrets.REGISTRY_USERNAME }}
           password: ${{ secrets.REGISTRY_PASSWORD }}
 
-      - name: Generate image tag and version
+      - name: Generate image tags and version
         id: tag
         run: |
-          TIMESTAMP=$(date +%s)
-          TAG="dev-${TIMESTAMP}"
-          echo "tag=${TAG}" >> $GITHUB_OUTPUT
-          echo "Image will be tagged as: ${TAG}"
-          # Use git tag if on an exact tag, otherwise use the tag name
-          GIT_VERSION=$(git describe --tags --always --dirty 2>/dev/null || echo "dev")
           GIT_COMMIT=$(git rev-parse --short HEAD)
-          echo "version=${GIT_VERSION}" >> $GITHUB_OUTPUT
           echo "commit=${GIT_COMMIT}" >> $GITHUB_OUTPUT
+
+          TAGS=""
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            # Tag push: use the version tag (e.g. v0.1.0) and latest
+            VERSION="${GITHUB_REF#refs/tags/}"
+            TAGS="${REGISTRY}/${IMAGE_NAME}:${VERSION}"
+            TAGS="${TAGS},${REGISTRY}/${IMAGE_NAME}:latest"
+            echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          else
+            # Branch push: use dev-<timestamp>
+            TIMESTAMP=$(date +%s)
+            TAGS="${REGISTRY}/${IMAGE_NAME}:dev-${TIMESTAMP}"
+            GIT_VERSION=$(git describe --tags --always --dirty 2>/dev/null || echo "dev")
+            echo "version=${GIT_VERSION}" >> $GITHUB_OUTPUT
+          fi
+          echo "tags=${TAGS}" >> $GITHUB_OUTPUT
+          echo "Image tags: ${TAGS}"
 
       - name: Build and push image
         uses: docker/build-push-action@v5
@@ -50,7 +64,7 @@ jobs:
           context: .
           file: ./Dockerfile
           push: true
-          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.tag.outputs.tag }}
+          tags: ${{ steps.tag.outputs.tags }}
           build-args: |
             VERSION=${{ steps.tag.outputs.version }}
             COMMIT=${{ steps.tag.outputs.commit }}

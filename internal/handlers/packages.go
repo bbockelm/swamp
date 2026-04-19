@@ -61,12 +61,17 @@ func (h *Handler) CreatePackage(w http.ResponseWriter, r *http.Request) {
 	}
 	// If we have a GitHub owner/repo but no installation ID, try to inherit
 	// from the project's GitHub config, then fall back to matching by owner
-	// in the installations table.
+	// in the installations table. Only use installations the user can access.
 	if pkg.GitHubOwner != "" && pkg.InstallationID == 0 {
+		user := GetUserFromContext(r.Context())
 		if ghCfg, err := h.queries.GetProjectGitHubConfig(r.Context(), projectID); err == nil && ghCfg.InstallationID != 0 {
-			pkg.InstallationID = ghCfg.InstallationID
+			if user != nil && h.userCanUseInstallation(r.Context(), user.ID, ghCfg.InstallationID) {
+				pkg.InstallationID = ghCfg.InstallationID
+			}
 		} else if inst, err := h.queries.GetInstallationByOwner(r.Context(), pkg.GitHubOwner); err == nil {
-			pkg.InstallationID = inst.InstallationID
+			if user != nil && h.userCanUseInstallation(r.Context(), user.ID, inst.InstallationID) {
+				pkg.InstallationID = inst.InstallationID
+			}
 		}
 	}
 	if err := h.queries.CreatePackage(r.Context(), &pkg); err != nil {
@@ -121,12 +126,18 @@ func (h *Handler) UpdatePackage(w http.ResponseWriter, r *http.Request) {
 			pkg.GitHubRepo = repo
 		}
 		// Auto-match installation if the URL changed and no explicit ID was provided.
+		// Only use installations the user can access.
 		if updates.InstallationID == nil && pkg.GitHubOwner != "" {
+			user := GetUserFromContext(r.Context())
 			projectID := chi.URLParam(r, "projectID")
 			if ghCfg, err := h.queries.GetProjectGitHubConfig(r.Context(), projectID); err == nil && ghCfg.InstallationID != 0 {
-				pkg.InstallationID = ghCfg.InstallationID
+				if user != nil && h.userCanUseInstallation(r.Context(), user.ID, ghCfg.InstallationID) {
+					pkg.InstallationID = ghCfg.InstallationID
+				}
 			} else if inst, err := h.queries.GetInstallationByOwner(r.Context(), pkg.GitHubOwner); err == nil {
-				pkg.InstallationID = inst.InstallationID
+				if user != nil && h.userCanUseInstallation(r.Context(), user.ID, inst.InstallationID) {
+					pkg.InstallationID = inst.InstallationID
+				}
 			}
 		}
 	}
@@ -146,6 +157,13 @@ func (h *Handler) UpdatePackage(w http.ResponseWriter, r *http.Request) {
 		pkg.GitHubRepo = *updates.GitHubRepo
 	}
 	if updates.InstallationID != nil {
+		if *updates.InstallationID != 0 {
+			user := GetUserFromContext(r.Context())
+			if user == nil || !h.userCanUseInstallation(r.Context(), user.ID, *updates.InstallationID) {
+				respondError(w, http.StatusForbidden, "You are not authorized to use this GitHub App installation")
+				return
+			}
+		}
 		pkg.InstallationID = *updates.InstallationID
 	}
 	if updates.SARIFUploadEnabled != nil {
