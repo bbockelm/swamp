@@ -1,9 +1,10 @@
 # --- Build frontend (static export) ---
 FROM node:22-alpine AS node-builder
-WORKDIR /build
+WORKDIR /build/frontend
 COPY frontend/package.json frontend/package-lock.json* ./
 RUN npm ci
 COPY frontend/ .
+COPY pricing/ /build/pricing/
 RUN npm run build
 
 # --- Build backend with embedded frontend ---
@@ -15,7 +16,8 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY cmd/ cmd/
 COPY internal/ internal/
-COPY --from=node-builder /build/out internal/frontend/dist/
+COPY pricing/ pricing/
+COPY --from=node-builder /build/frontend/out internal/frontend/dist/
 RUN CGO_ENABLED=0 GOOS=linux go build -tags embed_frontend \
     -ldflags "-X github.com/bbockelm/swamp/internal/version.Version=${VERSION} -X github.com/bbockelm/swamp/internal/version.Commit=${COMMIT}" \
     -o /swamp-server ./cmd/server
