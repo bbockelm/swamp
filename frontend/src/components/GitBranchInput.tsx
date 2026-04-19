@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useImperativeHandle, forwardRef } from 'react';
 import { api } from '@/lib/api';
 
 interface GitHubRepo {
@@ -19,6 +19,11 @@ function parseGitHub(url: string): { owner: string; repo: string } | null {
   return m ? { owner: m[1], repo: m[2] } : null;
 }
 
+export interface GitBranchInputHandle {
+  /** Re-trigger branch detection for the current URL. */
+  refetch: () => void;
+}
+
 interface Props {
   gitUrl: string;
   value: string;
@@ -32,7 +37,7 @@ interface Props {
   onDetectionResult?: (result: { ok: boolean; error?: string }) => void;
 }
 
-export function GitBranchInput({ gitUrl, value, onChange, labelClassName, projectId, packageId, onDetectionResult }: Props) {
+export const GitBranchInput = forwardRef<GitBranchInputHandle, Props>(function GitBranchInput({ gitUrl, value, onChange, labelClassName, projectId, packageId, onDetectionResult }, ref) {
   const [branches, setBranches] = useState<string[]>([]);
   const [defaultBranch, setDefaultBranch] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -44,6 +49,19 @@ export function GitBranchInput({ gitUrl, value, onChange, labelClassName, projec
   const prevUrlRef = useRef<string>('');
   const onDetectionResultRef = useRef(onDetectionResult);
   onDetectionResultRef.current = onDetectionResult;
+  const gitUrlRef = useRef(gitUrl);
+  gitUrlRef.current = gitUrl;
+  const fetchBranchesRef = useRef<(owner: string, repo: string) => void>(() => {});
+
+  useImperativeHandle(ref, () => ({
+    refetch() {
+      const gh = parseGitHub(gitUrlRef.current);
+      if (gh) {
+        prevUrlRef.current = ''; // force re-fetch
+        fetchBranchesRef.current(gh.owner, gh.repo);
+      }
+    },
+  }), []);
 
   // Close dropdown when clicking outside
   useEffect(() => {
@@ -143,6 +161,7 @@ export function GitBranchInput({ gitUrl, value, onChange, labelClassName, projec
       setLoading(false);
     }
   }, [value, onChange, fetchBranchesFromBackend]);
+  fetchBranchesRef.current = fetchBranches;
 
   useEffect(() => {
     const gh = parseGitHub(gitUrl);
@@ -243,4 +262,4 @@ export function GitBranchInput({ gitUrl, value, onChange, labelClassName, projec
       />
     </div>
   );
-}
+});

@@ -670,6 +670,84 @@ func (c *Client) UploadSARIFForPackage(ctx context.Context, pkg *models.Software
 	return c.UploadSARIFForProject(ctx, pkg.ProjectID, sarifData)
 }
 
+// RepoAccessResult describes whether the GitHub App can access a specific repo.
+type RepoAccessResult struct {
+	// HasInstallation is true if an installation exists for the repo owner.
+	HasInstallation bool
+	// Accessible is true if the installation can actually read the repo.
+	Accessible bool
+	// DefaultBranch is set when the repo is accessible.
+	DefaultBranch string
+	// Error is a user-safe message when access check fails.
+	Error string
+}
+
+// CheckRepoAccess verifies whether any known installation can access the given
+// repository. This does NOT filter by user — installations are org-scoped and
+// usable by anyone who can reach the repo through the app.
+func (c *Client) CheckRepoAccess(ctx context.Context, owner, repo string) *RepoAccessResult {
+	if c == nil || !c.Configured() {
+		return &RepoAccessResult{Error: "GitHub App is not configured"}
+	}
+
+	inst, err := c.queries.GetInstallationByOwner(ctx, owner)
+	if err != nil || inst == nil {
+		return &RepoAccessResult{
+			HasInstallation: false,
+			Error:           fmt.Sprintf("No GitHub App installation found for %q", owner),
+		}
+	}
+
+	token, err := c.GetInstallationToken(ctx, inst.InstallationID)
+	if err != nil {
+		log.Warn().Err(err).Str("owner", owner).Int64("installation_id", inst.InstallationID).
+			Msg("Failed to get installation token for repo access check")
+		return &RepoAccessResult{
+			HasInstallation: true,
+			Error:           "GitHub App is installed but could not authenticate. The installation may need to be re-authorized.",
+		}
+	}
+
+	url := fmt.Sprintf("%s/repos/%s/%s", c.apiURL, owner, repo)
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return &RepoAccessResult{HasInstallation: true, Error: "internal error"}
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return &RepoAccessResult{HasInstallation: true, Error: "Failed to reach GitHub API"}
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, _ := io.ReadAll(resp.Body)
+
+	if resp.StatusCode == 200 {
+		var repoInfo struct {
+			DefaultBranch string `json:"default_branch"`
+		}
+		_ = json.Unmarshal(body, &repoInfo)
+		return &RepoAccessResult{
+			HasInstallation: true,
+			Accessible:      true,
+			DefaultBranch:   repoInfo.DefaultBranch,
+		}
+	}
+	if resp.StatusCode == 404 || resp.StatusCode == 403 {
+		return &RepoAccessResult{
+			HasInstallation: true,
+			Accessible:      false,
+			Error:           "GitHub App is installed but does not have access to this repository. Ask the organization admin to grant the app access.",
+		}
+	}
+	return &RepoAccessResult{
+		HasInstallation: true,
+		Error:           fmt.Sprintf("GitHub API returned unexpected status %d", resp.StatusCode),
+	}
+}
+
 // extractCommitSHA attempts to find a git commit SHA in the SARIF data.
 func extractCommitSHA(sarifData []byte) string {
 	var sarif struct {

@@ -401,6 +401,14 @@ export interface GitHubAppInfo {
   install_url?: string;
 }
 
+export interface GitHubRepoAccessResult {
+  has_installation: boolean;
+  accessible: boolean;
+  default_branch?: string;
+  error?: string;
+  install_url?: string;
+}
+
 export interface GitHubStatus {
   configured: boolean;
   app_id?: number;
@@ -946,6 +954,8 @@ export const api = {
       fetchJSON(`${BASE}/github/app-info`),
     listBranches: (owner: string, repo: string): Promise<string[]> =>
       fetchJSON(`${BASE}/github/branches?owner=${encodeURIComponent(owner)}&repo=${encodeURIComponent(repo)}`),
+    checkRepoAccess: (owner: string, repo: string): Promise<GitHubRepoAccessResult> =>
+      fetchJSON(`${BASE}/github/check-repo-access?owner=${encodeURIComponent(owner)}&repo=${encodeURIComponent(repo)}`),
     getConfig: (projectId: string): Promise<ProjectGitHubConfig> =>
       fetchJSON(`${BASE}/projects/${projectId}/github`),
     updateConfig: (

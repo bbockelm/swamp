@@ -421,52 +421,6 @@ func (e *Executor) run(analysis *models.Analysis, packages []models.SoftwarePack
 	// Log upload and room cleanup handled by deferred uploadOutputDir + CloseRoom.
 }
 
-// tryUploadSARIFToGitHub uploads SARIF results to GitHub if the project or
-// individual packages have SARIF upload enabled via the GitHub App integration.
-func (e *Executor) tryUploadSARIFToGitHub(ctx context.Context, analysis *models.Analysis, packages []models.SoftwarePackage, sarifPath string) {
-	if e.ghInteg == nil || analysis.ProjectID == "" {
-		return
-	}
-	sarifData, err := os.ReadFile(sarifPath)
-	if err != nil {
-		return // No SARIF file — nothing to upload.
-	}
-
-	// Try per-package SARIF upload first. If any package has its own
-	// GitHub config with SARIF enabled, upload using that.
-	uploaded := false
-	for i := range packages {
-		pkg := &packages[i]
-		if pkg.GitHubOwner != "" && pkg.GitHubRepo != "" && pkg.InstallationID != 0 && pkg.SARIFUploadEnabled {
-			alertsURL, uploadErr := e.ghInteg.UploadSARIFForPackage(ctx, pkg, sarifData)
-			if uploadErr != nil {
-				log.Warn().Err(uploadErr).Str("analysis_id", analysis.ID).Str("package_id", pkg.ID).Msg("Failed to upload SARIF to GitHub for package")
-			} else if alertsURL != "" {
-				log.Info().Str("analysis_id", analysis.ID).Str("package_id", pkg.ID).Msg("SARIF uploaded to GitHub Code Scanning for package")
-				e.hub.Broadcast(analysis.ID, []byte("[system] SARIF results uploaded to GitHub for package: "+pkg.Name))
-				if setErr := e.queries.SetAnalysisSARIFUploadURL(ctx, analysis.ID, alertsURL); setErr != nil {
-					log.Warn().Err(setErr).Str("analysis_id", analysis.ID).Msg("Failed to record SARIF upload URL")
-				}
-				uploaded = true
-			}
-		}
-	}
-
-	// Fall back to project-level SARIF upload if no package-level upload occurred.
-	if !uploaded {
-		alertsURL, uploadErr := e.ghInteg.UploadSARIFForProject(ctx, analysis.ProjectID, sarifData)
-		if uploadErr != nil {
-			log.Warn().Err(uploadErr).Str("analysis_id", analysis.ID).Msg("Failed to upload SARIF to GitHub")
-		} else if alertsURL != "" {
-			log.Info().Str("analysis_id", analysis.ID).Msg("SARIF uploaded to GitHub Code Scanning")
-			e.hub.Broadcast(analysis.ID, []byte("[system] SARIF results uploaded to GitHub"))
-			if setErr := e.queries.SetAnalysisSARIFUploadURL(ctx, analysis.ID, alertsURL); setErr != nil {
-				log.Warn().Err(setErr).Str("analysis_id", analysis.ID).Msg("Failed to record SARIF upload URL")
-			}
-		}
-	}
-}
-
 // runAnthropicPhases runs both analysis phases using the Anthropic/Claude backend.
 // Used directly when provider is "anthropic" and also as a fallback when the
 // external LLM fails and Fallback == "anthropic".

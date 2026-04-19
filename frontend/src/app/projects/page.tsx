@@ -20,7 +20,7 @@ import { AnalysisStatus } from "@/components/AnalysisStatus";
 import { Pagination, paginate } from "@/components/Pagination";
 import { SARIFViewer } from "@/components/SARIFViewer";
 import { MarkdownReport } from "@/components/MarkdownReport";
-import { GitBranchInput } from "@/components/GitBranchInput";
+import { GitBranchInput, type GitBranchInputHandle } from "@/components/GitBranchInput";
 import { FindingsTable } from "@/components/FindingsTable";
 import { StreamLine, extractStreamMessage } from "@/lib/stream-utils";
 
@@ -551,15 +551,7 @@ function PackagesTab({ projectId }: { projectId: string }) {
   const [sarifUploadEnabled, setSarifUploadEnabled] = useState(false);
   const [branchError, setBranchError] = useState<string | null>(null);
   const [installationWarning, setInstallationWarning] = useState<string | null>(null);
-
-  const handleBranchDetection = useCallback((result: { ok: boolean; error?: string }) => {
-    setBranchError(result.ok ? null : (result.error ?? 'Could not detect branches.'));
-  }, []);
-
-  const { data: appInfo } = useQuery({
-    queryKey: ['github', 'app-info'],
-    queryFn: () => api.github.appInfo(),
-  });
+  const [accessInstallURL, setAccessInstallURL] = useState<string | null>(null);
 
   // Parse owner/repo from current gitUrl for warning messages.
   const parsedGitHub = useMemo(() => {
@@ -567,21 +559,70 @@ function PackagesTab({ projectId }: { projectId: string }) {
     return m ? { owner: m[1], repo: m[2] } : null;
   }, [gitUrl]);
 
+  const handleBranchDetection = useCallback((result: { ok: boolean; error?: string }) => {
+    if (result.ok) {
+      setBranchError(null);
+      return;
+    }
+    if (parsedGitHub) {
+      api.github.checkRepoAccess(parsedGitHub.owner, parsedGitHub.repo).then((access) => {
+        if (access.accessible) {
+          setBranchError(result.error ?? 'Could not detect branches.');
+        } else if (!access.has_installation) {
+          setBranchError('Could not access this repository — it may be private.');
+          setAccessInstallURL(access.install_url ?? null);
+        } else {
+          setBranchError(access.error ?? 'GitHub App does not have access to this repository.');
+          setAccessInstallURL(null);
+        }
+      }).catch(() => {
+        setBranchError(result.error ?? 'Could not detect branches.');
+      });
+    } else {
+      setBranchError(result.error ?? 'Could not detect branches.');
+    }
+  }, [parsedGitHub]);
+
   const handleSarifToggle = useCallback(async (checked: boolean) => {
     setSarifUploadEnabled(checked);
     setInstallationWarning(null);
+    setAccessInstallURL(null);
     if (!checked || !parsedGitHub) return;
     try {
-      const resp = await api.github.listInstallations(parsedGitHub.owner);
-      if (!resp.installations || resp.installations.length === 0) {
+      const access = await api.github.checkRepoAccess(parsedGitHub.owner, parsedGitHub.repo);
+      if (!access.has_installation) {
         setInstallationWarning(
           `No GitHub App installation found for "${parsedGitHub.owner}". Results won't be uploaded until the app is installed.`
+        );
+        setAccessInstallURL(access.install_url ?? null);
+      } else if (!access.accessible) {
+        setInstallationWarning(
+          access.error ?? `GitHub App does not have access to this repository.`
         );
       }
     } catch {
       // If the probe fails, don't block — the user can still enable it.
     }
   }, [parsedGitHub]);
+
+  // Re-check repo access when the user returns from the GitHub App install page.
+  const branchInputRef = useRef<GitBranchInputHandle>(null);
+  useEffect(() => {
+    if (!parsedGitHub || (!branchError && !installationWarning)) return;
+    const onVisible = () => {
+      if (document.visibilityState !== 'visible') return;
+      api.github.checkRepoAccess(parsedGitHub.owner, parsedGitHub.repo).then((access) => {
+        if (access.accessible) {
+          setBranchError(null);
+          setInstallationWarning(null);
+          setAccessInstallURL(null);
+          branchInputRef.current?.refetch();
+        }
+      }).catch(() => { /* ignore */ });
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => document.removeEventListener('visibilitychange', onVisible);
+  }, [parsedGitHub, branchError, installationWarning]);
 
   const { data: packages } = useQuery({
     queryKey: ["packages", projectId],
@@ -708,9 +749,9 @@ function PackagesTab({ projectId }: { projectId: string }) {
             {parsedGitHub && branchError && (
               <p className="text-xs text-amber-600 mt-1">
                 {branchError}
-                {appInfo?.configured && appInfo.install_url && (
+                {accessInstallURL && (
                   <>{' '}
-                    <a href={appInfo.install_url} target="_blank" rel="noopener noreferrer" className="underline text-blue-600 hover:text-blue-700">
+                    <a href={accessInstallURL} target="_blank" rel="noopener noreferrer" className="underline text-blue-600 hover:text-blue-700">
                       Install the GitHub App
                     </a>{' '}
                     on <strong>{parsedGitHub.owner}</strong> to grant access.
@@ -733,6 +774,7 @@ function PackagesTab({ projectId }: { projectId: string }) {
               />
             </div>
             <GitBranchInput
+              ref={branchInputRef}
               gitUrl={gitUrl}
               value={gitBranch}
               onChange={setGitBranch}
@@ -765,9 +807,9 @@ function PackagesTab({ projectId }: { projectId: string }) {
             {installationWarning && (
               <p className="text-xs text-amber-600 mt-1">
                 {installationWarning}
-                {appInfo?.configured && appInfo.install_url && (
+                {accessInstallURL && (
                   <>{' '}
-                    <a href={appInfo.install_url} target="_blank" rel="noopener noreferrer" className="underline text-blue-600 hover:text-blue-700">
+                    <a href={accessInstallURL} target="_blank" rel="noopener noreferrer" className="underline text-blue-600 hover:text-blue-700">
                       Install the GitHub App
                     </a>{' '}
                     to enable uploads.
@@ -821,9 +863,9 @@ function PackagesTab({ projectId }: { projectId: string }) {
                   {parsedGitHub && branchError && (
                     <p className="text-xs text-amber-600 mt-1">
                       {branchError}
-                      {appInfo?.configured && appInfo.install_url && (
+                      {accessInstallURL && (
                         <>{' '}
-                          <a href={appInfo.install_url} target="_blank" rel="noopener noreferrer" className="underline text-blue-600 hover:text-blue-700">
+                          <a href={accessInstallURL} target="_blank" rel="noopener noreferrer" className="underline text-blue-600 hover:text-blue-700">
                             Install the GitHub App
                           </a>{' '}
                           on <strong>{parsedGitHub.owner}</strong> to grant access.
@@ -846,6 +888,7 @@ function PackagesTab({ projectId }: { projectId: string }) {
                     />
                   </div>
                   <GitBranchInput
+                    ref={branchInputRef}
                     gitUrl={gitUrl}
                     value={gitBranch}
                     onChange={setGitBranch}
@@ -879,9 +922,9 @@ function PackagesTab({ projectId }: { projectId: string }) {
                   {installationWarning && (
                     <p className="text-xs text-amber-600 mt-1">
                       {installationWarning}
-                      {appInfo?.configured && appInfo.install_url && (
+                      {accessInstallURL && (
                         <>{' '}
-                          <a href={appInfo.install_url} target="_blank" rel="noopener noreferrer" className="underline text-blue-600 hover:text-blue-700">
+                          <a href={accessInstallURL} target="_blank" rel="noopener noreferrer" className="underline text-blue-600 hover:text-blue-700">
                             Install the GitHub App
                           </a>{' '}
                           to enable uploads.

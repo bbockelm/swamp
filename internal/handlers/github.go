@@ -309,8 +309,9 @@ func (h *Handler) ListPackageBranches(w http.ResponseWriter, r *http.Request) {
 }
 
 // ListRepoBranches lists branches for a GitHub repo by owner/repo.
-// It finds the appropriate installation automatically, scoped to
-// installations the current user is authorized to use.
+// It finds the appropriate installation automatically. Any installation
+// for the given owner is usable because GitHub App installations are
+// org-scoped — access is determined by the org admin, not the SWAMP user.
 // GET /api/v1/github/branches?owner=X&repo=Y
 func (h *Handler) ListRepoBranches(w http.ResponseWriter, r *http.Request) {
 	if h.ghClient == nil || !h.ghClient.Configured() {
@@ -325,46 +326,61 @@ func (h *Handler) ListRepoBranches(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	user := GetUserFromContext(r.Context())
-	if user == nil {
-		respondError(w, http.StatusUnauthorized, "Not authenticated")
-		return
-	}
-
-	// Look up installations the user is authorized to access, filtered by owner.
-	var installations []models.GitHubAppInstallation
-	var err error
-	if UserHasRole(r.Context(), RoleAdmin) {
-		installations, err = h.queries.ListGitHubInstallations(r.Context())
-	} else {
-		installations, err = h.queries.ListInstallationsForUser(r.Context(), user.ID)
-	}
-	if err != nil {
-		log.Error().Err(err).Msg("Failed to list installations for branch lookup")
-		respondError(w, http.StatusInternalServerError, "Failed to look up installations")
-		return
-	}
-
-	// Find the installation matching this owner.
-	var matchedInstallation *models.GitHubAppInstallation
-	for i := range installations {
-		if strings.EqualFold(installations[i].AccountLogin, owner) {
-			matchedInstallation = &installations[i]
-			break
-		}
-	}
-	if matchedInstallation == nil {
+	// Look up installation by owner (org-scoped, not user-scoped).
+	inst, err := h.queries.GetInstallationByOwner(r.Context(), owner)
+	if err != nil || inst == nil {
 		respondError(w, http.StatusNotFound, "No GitHub App installation found for this repository owner")
 		return
 	}
 
-	branches, err := h.ghClient.ListBranches(r.Context(), matchedInstallation.InstallationID, owner, repo)
+	branches, err := h.ghClient.ListBranches(r.Context(), inst.InstallationID, owner, repo)
 	if err != nil {
 		log.Error().Err(err).Str("owner", owner).Str("repo", repo).Msg("Failed to list branches via installation")
 		respondError(w, http.StatusBadGateway, "Failed to list branches from GitHub")
 		return
 	}
 	respondJSON(w, http.StatusOK, branches)
+}
+
+// CheckRepoAccess verifies whether the GitHub App can access a specific
+// repository. This checks ALL installations (not filtered by user) because
+// installations are org-scoped. The response does not reveal who installed
+// the app or the installation ID.
+// GET /api/v1/github/check-repo-access?owner=X&repo=Y
+func (h *Handler) CheckRepoAccess(w http.ResponseWriter, r *http.Request) {
+	type response struct {
+		HasInstallation bool   `json:"has_installation"`
+		Accessible      bool   `json:"accessible"`
+		DefaultBranch   string `json:"default_branch,omitempty"`
+		Error           string `json:"error,omitempty"`
+		InstallURL      string `json:"install_url,omitempty"`
+	}
+
+	if h.ghClient == nil || !h.ghClient.Configured() {
+		respondJSON(w, http.StatusOK, response{Error: "GitHub App is not configured"})
+		return
+	}
+
+	owner := r.URL.Query().Get("owner")
+	repo := r.URL.Query().Get("repo")
+	if owner == "" || repo == "" {
+		respondError(w, http.StatusBadRequest, "owner and repo query parameters are required")
+		return
+	}
+
+	result := h.ghClient.CheckRepoAccess(r.Context(), owner, repo)
+
+	resp := response{
+		HasInstallation: result.HasInstallation,
+		Accessible:      result.Accessible,
+		DefaultBranch:   result.DefaultBranch,
+		Error:           result.Error,
+	}
+	// Include install URL when there's no installation for this owner.
+	if !result.HasInstallation {
+		resp.InstallURL = h.ghClient.InstallURL(r.Context())
+	}
+	respondJSON(w, http.StatusOK, resp)
 }
 
 // ListWebhookDeliveries returns webhook delivery logs for a project.
