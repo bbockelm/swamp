@@ -225,9 +225,11 @@ func BuildMultiPackagePrompt(packages []models.SoftwarePackage, analysisPrompt s
 2. Identify security vulnerabilities (see OWASP Top 10, CWE categories, dependency vulnerabilities, secrets, auth issues, crypto weaknesses).
 3. For each vulnerability, provide severity, CWE ID, file location, description, and recommended fix.
 4. Output findings:
-   a. SARIF file at output/results.sarif (SARIF 2.1.0)
-   b. Markdown summary at output/report.md
+   a. One SARIF file PER PACKAGE at output/<package_name>.sarif (SARIF 2.1.0). Use the package name exactly as listed above (lowercase, no spaces). Each SARIF file should contain ONLY findings from that specific package's repository.
+   b. A combined Markdown summary at output/report.md covering all packages
    c. Analyst notes at output/notes.md (key observations, areas needing deeper review, what you focused on vs skipped)
+
+IMPORTANT: Do NOT put all findings in a single results.sarif. Each package MUST have its own separate .sarif file named after the package.
 
 Focus on finding NEW and DIFFERENT issues not already listed in the prior findings above.
 Be thorough but precise. Only report genuine vulnerabilities.`)

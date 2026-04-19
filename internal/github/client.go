@@ -362,6 +362,45 @@ func (c *Client) GetRepositoryDefaultBranch(ctx context.Context, installationID 
 	return result.DefaultBranch, nil
 }
 
+// ListBranches lists branches for a repository using installation auth.
+func (c *Client) ListBranches(ctx context.Context, installationID int64, owner, repo string) ([]string, error) {
+	token, err := c.GetInstallationToken(ctx, installationID)
+	if err != nil {
+		return nil, err
+	}
+
+	apiURL := fmt.Sprintf("%s/repos/%s/%s/branches?per_page=100", c.apiURL, owner, repo)
+	req, err := http.NewRequestWithContext(ctx, "GET", apiURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("list branches returned %d: %s", resp.StatusCode, string(body))
+	}
+
+	var branches []struct {
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal(body, &branches); err != nil {
+		return nil, err
+	}
+	names := make([]string, len(branches))
+	for i, b := range branches {
+		names[i] = b.Name
+	}
+	return names, nil
+}
+
 // Status returns the GitHub integration status for the admin dashboard.
 func (c *Client) Status(ctx context.Context) *models.GitHubStatus {
 	if c == nil || !c.Configured() {
@@ -402,6 +441,28 @@ func (c *Client) CloneCredential(ctx context.Context, projectID string) (*models
 	}, nil
 }
 
+// CloneCredentialForPackage returns a clone credential using a package's
+// own GitHub config fields. Falls back to project-level config.
+func (c *Client) CloneCredentialForPackage(ctx context.Context, pkg *models.SoftwarePackage) (*models.GitCloneCredential, error) {
+	if c == nil || !c.Configured() {
+		return nil, nil
+	}
+	// Use package-level GitHub config if present.
+	if pkg.GitHubOwner != "" && pkg.GitHubRepo != "" && pkg.InstallationID != 0 {
+		token, err := c.GetInstallationToken(ctx, pkg.InstallationID)
+		if err != nil {
+			return nil, fmt.Errorf("getting installation token for package: %w", err)
+		}
+		return &models.GitCloneCredential{
+			CloneURL: fmt.Sprintf("https://github.com/%s/%s.git", pkg.GitHubOwner, pkg.GitHubRepo),
+			Token:    token,
+			Branch:   pkg.GitBranch,
+		}, nil
+	}
+	// Fall back to project-level config.
+	return c.CloneCredential(ctx, pkg.ProjectID)
+}
+
 // UploadSARIFForProject implements agent.GitHubIntegration.
 // It checks the project's GitHub config and uploads SARIF if enabled.
 // Returns the Code Scanning URL if the upload succeeded, or "" if skipped.
@@ -423,6 +484,25 @@ func (c *Client) UploadSARIFForProject(ctx context.Context, projectID string, sa
 
 	return c.UploadSARIF(ctx, ghCfg.InstallationID, ghCfg.GitHubOwner, ghCfg.GitHubRepo,
 		commitSHA, ghCfg.DefaultBranch, sarifData)
+}
+
+// UploadSARIFForPackage uploads SARIF to GitHub Code Scanning using a
+// package's own GitHub config. Falls back to project-level config.
+func (c *Client) UploadSARIFForPackage(ctx context.Context, pkg *models.SoftwarePackage, sarifData []byte) (string, error) {
+	if c == nil || !c.Configured() {
+		return "", nil
+	}
+	// Use package-level GitHub config if present.
+	if pkg.GitHubOwner != "" && pkg.GitHubRepo != "" && pkg.InstallationID != 0 && pkg.SARIFUploadEnabled {
+		commitSHA := extractCommitSHA(sarifData)
+		if commitSHA == "" {
+			commitSHA = "HEAD"
+		}
+		return c.UploadSARIF(ctx, pkg.InstallationID, pkg.GitHubOwner, pkg.GitHubRepo,
+			commitSHA, pkg.GitBranch, sarifData)
+	}
+	// Fall back to project-level.
+	return c.UploadSARIFForProject(ctx, pkg.ProjectID, sarifData)
 }
 
 // extractCommitSHA attempts to find a git commit SHA in the SARIF data.

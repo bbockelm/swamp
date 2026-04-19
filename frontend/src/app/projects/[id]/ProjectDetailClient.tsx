@@ -74,7 +74,7 @@ export default function ProjectDetailClient() {
     { key: 'packages', label: 'Packages' },
     { key: 'analyses', label: 'Analyses' },
     { key: 'findings', label: 'Findings' },
-    ...(isAdmin ? [{ key: 'api-keys' as Tab, label: 'API Keys' }] : []),
+    ...(isAdmin ? [{ key: 'api-keys' as Tab, label: 'LLMs' }] : []),
     ...(canEdit ? [{ key: 'github' as Tab, label: 'GitHub' }] : []),
     ...(canEdit ? [{ key: 'settings' as Tab, label: 'Settings' }] : []),
   ];
@@ -166,6 +166,7 @@ function PackagesTab({
   const [gitUrl, setGitUrl] = useState('');
   const [gitBranch, setGitBranch] = useState('main');
   const [analysisPrompt, setAnalysisPrompt] = useState('');
+  const [sarifUploadEnabled, setSarifUploadEnabled] = useState(false);
 
   const createMutation = useMutation({
     mutationFn: () =>
@@ -174,6 +175,7 @@ function PackagesTab({
         git_url: gitUrl,
         git_branch: gitBranch,
         analysis_prompt: analysisPrompt,
+        sarif_upload_enabled: sarifUploadEnabled,
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['packages', projectId] });
@@ -182,6 +184,7 @@ function PackagesTab({
       setGitUrl('');
       setGitBranch('main');
       setAnalysisPrompt('');
+      setSarifUploadEnabled(false);
     },
   });
 
@@ -192,6 +195,7 @@ function PackagesTab({
         git_url: gitUrl,
         git_branch: gitBranch,
         analysis_prompt: analysisPrompt,
+        sarif_upload_enabled: sarifUploadEnabled,
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['packages', projectId] });
@@ -212,6 +216,7 @@ function PackagesTab({
     setGitUrl(pkg.git_url);
     setGitBranch(pkg.git_branch);
     setAnalysisPrompt(pkg.analysis_prompt || '');
+    setSarifUploadEnabled(pkg.sarif_upload_enabled ?? false);
     setAdding(false);
   };
 
@@ -221,6 +226,7 @@ function PackagesTab({
     setGitUrl('');
     setGitBranch('main');
     setAnalysisPrompt('');
+    setSarifUploadEnabled(false);
   };
 
   return (
@@ -229,7 +235,7 @@ function PackagesTab({
         <h2 className="text-lg font-semibold">Software Packages</h2>
         {canEdit && (
           <button
-            onClick={() => { setAdding(true); setEditingId(null); setName(''); setGitUrl(''); setGitBranch('main'); setAnalysisPrompt(''); }}
+            onClick={() => { setAdding(true); setEditingId(null); setName(''); setGitUrl(''); setGitBranch('main'); setAnalysisPrompt(''); setSarifUploadEnabled(false); }}
             className="bg-blue-600 text-white px-3 py-1.5 text-sm rounded hover:bg-blue-700"
           >
             Add Package
@@ -290,6 +296,15 @@ function PackagesTab({
               placeholder="Focus on authentication and SQL injection..."
             />
           </div>
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={sarifUploadEnabled}
+              onChange={(e) => setSarifUploadEnabled(e.target.checked)}
+              className="rounded"
+            />
+            <span>Upload SARIF results to GitHub Code Scanning</span>
+          </label>
           <div className="flex gap-2">
             <button
               type="submit"
@@ -354,6 +369,8 @@ function PackagesTab({
                     gitUrl={gitUrl}
                     value={gitBranch}
                     onChange={setGitBranch}
+                    projectId={projectId}
+                    packageId={pkg.id}
                   />
                 </div>
                 <div>
@@ -367,6 +384,15 @@ function PackagesTab({
                     className="w-full border rounded px-3 py-2 text-sm"
                   />
                 </div>
+                <label className="flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={sarifUploadEnabled}
+                    onChange={(e) => setSarifUploadEnabled(e.target.checked)}
+                    className="rounded"
+                  />
+                  <span>Upload SARIF results to GitHub Code Scanning</span>
+                </label>
                 <div className="flex gap-2">
                   <button
                     type="submit"
@@ -396,6 +422,13 @@ function PackagesTab({
                     Branch: {pkg.git_branch}
                     {pkg.git_commit && ` · ${pkg.git_commit.slice(0, 8)}`}
                   </p>
+                  {pkg.github_owner && pkg.github_repo && (
+                    <p className="text-xs text-gray-400">
+                      GitHub: {pkg.github_owner}/{pkg.github_repo}
+                      {pkg.installation_id > 0 && ' (App)'}
+                      {pkg.sarif_upload_enabled && ' · SARIF upload'}
+                    </p>
+                  )}
                   {pkg.analysis_prompt && (
                     <p className="text-xs text-gray-400 mt-1 italic">
                       Prompt: {pkg.analysis_prompt.length > 80 ? pkg.analysis_prompt.slice(0, 80) + '…' : pkg.analysis_prompt}
@@ -758,6 +791,17 @@ function GitHubTab({ projectId }: { projectId: string }) {
   const [webhookProviderId, setWebhookProviderId] = useState<string>('');
   const [formInit, setFormInit] = useState(false);
 
+  // Find the selected provider to determine its source for model discovery.
+  const selectedProvider = availableProviders?.find(p => p.id === webhookProviderId);
+
+  // Discover models for the selected provider.
+  const { data: providerModels } = useQuery({
+    queryKey: ['provider-models', projectId, webhookProviderId, selectedProvider?.source],
+    queryFn: () => api.discoverAvailableProviderModels(projectId, selectedProvider!.source, webhookProviderId),
+    enabled: !!webhookProviderId && !!selectedProvider?.source,
+    staleTime: 120_000,
+  });
+
   // Initialize form from loaded config.
   if (ghConfig && !formInit) {
     if (ghConfig.github_owner) setOwner(ghConfig.github_owner);
@@ -938,13 +982,18 @@ function GitHubTab({ projectId }: { projectId: string }) {
                       </div>
                       <div>
                         <label className="block text-xs font-medium text-gray-600 mb-1">Model</label>
-                        <input
-                          type="text"
+                        <select
                           value={webhookAgentModel}
                           onChange={(e) => setWebhookAgentModel(e.target.value)}
-                          placeholder="Provider default"
                           className="w-full border rounded px-2 py-1.5 text-sm"
-                        />
+                        >
+                          <option value="">Provider default</option>
+                          {providerModels?.map((m) => (
+                            <option key={m.id} value={m.id}>
+                              {m.display_name || m.id}
+                            </option>
+                          ))}
+                        </select>
                       </div>
                     </div>
                   </div>
@@ -1328,7 +1377,7 @@ function ProviderKeysTab({ projectId }: { projectId: string }) {
     <div>
       <div className="flex items-center justify-between mb-4">
         <div>
-          <h2 className="text-lg font-semibold">Provider API Keys</h2>
+          <h2 className="text-lg font-semibold">LLM Providers</h2>
           <p className="text-sm text-gray-500">
             API keys are encrypted at rest. Only the last 4 characters are ever displayed.
           </p>

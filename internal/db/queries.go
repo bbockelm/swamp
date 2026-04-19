@@ -755,18 +755,23 @@ func (q *Queries) UserCanAccessProject(ctx context.Context, userID, projectID, l
 
 func (q *Queries) CreatePackage(ctx context.Context, pkg *models.SoftwarePackage) error {
 	return q.pool.QueryRow(ctx, `
-		INSERT INTO software_packages (project_id, name, git_url, git_branch, git_commit, analysis_prompt)
-		VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, created_at, updated_at`,
-		pkg.ProjectID, pkg.Name, pkg.GitURL, pkg.GitBranch, pkg.GitCommit, pkg.AnalysisPrompt).Scan(&pkg.ID, &pkg.CreatedAt, &pkg.UpdatedAt)
+		INSERT INTO software_packages (project_id, name, git_url, git_branch, git_commit, analysis_prompt,
+		       github_owner, github_repo, installation_id, sarif_upload_enabled)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id, created_at, updated_at`,
+		pkg.ProjectID, pkg.Name, pkg.GitURL, pkg.GitBranch, pkg.GitCommit, pkg.AnalysisPrompt,
+		pkg.GitHubOwner, pkg.GitHubRepo, pkg.InstallationID, pkg.SARIFUploadEnabled).Scan(&pkg.ID, &pkg.CreatedAt, &pkg.UpdatedAt)
 }
 
 func (q *Queries) GetPackage(ctx context.Context, id string) (*models.SoftwarePackage, error) {
 	var pkg models.SoftwarePackage
 	err := q.pool.QueryRow(ctx, `
-		SELECT id, project_id, name, git_url, git_branch, git_commit, analysis_prompt, created_at, updated_at
+		SELECT id, project_id, name, git_url, git_branch, git_commit, analysis_prompt,
+		       github_owner, github_repo, installation_id, sarif_upload_enabled,
+		       created_at, updated_at
 		FROM software_packages WHERE id=$1`, id).Scan(
 		&pkg.ID, &pkg.ProjectID, &pkg.Name, &pkg.GitURL, &pkg.GitBranch, &pkg.GitCommit,
-		&pkg.AnalysisPrompt, &pkg.CreatedAt, &pkg.UpdatedAt)
+		&pkg.AnalysisPrompt, &pkg.GitHubOwner, &pkg.GitHubRepo, &pkg.InstallationID,
+		&pkg.SARIFUploadEnabled, &pkg.CreatedAt, &pkg.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -776,8 +781,10 @@ func (q *Queries) GetPackage(ctx context.Context, id string) (*models.SoftwarePa
 func (q *Queries) UpdatePackage(ctx context.Context, pkg *models.SoftwarePackage) error {
 	_, err := q.pool.Exec(ctx, `
 		UPDATE software_packages SET name=$2, git_url=$3, git_branch=$4, git_commit=$5,
-		       analysis_prompt=$6, updated_at=NOW()
-		WHERE id=$1`, pkg.ID, pkg.Name, pkg.GitURL, pkg.GitBranch, pkg.GitCommit, pkg.AnalysisPrompt)
+		       analysis_prompt=$6, github_owner=$7, github_repo=$8, installation_id=$9,
+		       sarif_upload_enabled=$10, updated_at=NOW()
+		WHERE id=$1`, pkg.ID, pkg.Name, pkg.GitURL, pkg.GitBranch, pkg.GitCommit, pkg.AnalysisPrompt,
+		pkg.GitHubOwner, pkg.GitHubRepo, pkg.InstallationID, pkg.SARIFUploadEnabled)
 	return err
 }
 
@@ -786,9 +793,39 @@ func (q *Queries) DeletePackage(ctx context.Context, id string) error {
 	return err
 }
 
+// FindPackagesByGitHubRepo returns all packages whose GitHub owner/repo match.
+// Used by the webhook handler to find which packages are affected by a push.
+func (q *Queries) FindPackagesByGitHubRepo(ctx context.Context, owner, repo string) ([]models.SoftwarePackage, error) {
+	rows, err := q.pool.Query(ctx, `
+		SELECT id, project_id, name, git_url, git_branch, git_commit, analysis_prompt,
+		       github_owner, github_repo, installation_id, sarif_upload_enabled,
+		       created_at, updated_at
+		FROM software_packages
+		WHERE lower(github_owner) = lower($1) AND lower(github_repo) = lower($2)
+		ORDER BY name`, owner, repo)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var pkgs []models.SoftwarePackage
+	for rows.Next() {
+		var pkg models.SoftwarePackage
+		if err := rows.Scan(&pkg.ID, &pkg.ProjectID, &pkg.Name, &pkg.GitURL, &pkg.GitBranch,
+			&pkg.GitCommit, &pkg.AnalysisPrompt, &pkg.GitHubOwner, &pkg.GitHubRepo,
+			&pkg.InstallationID, &pkg.SARIFUploadEnabled,
+			&pkg.CreatedAt, &pkg.UpdatedAt); err != nil {
+			return nil, err
+		}
+		pkgs = append(pkgs, pkg)
+	}
+	return pkgs, nil
+}
+
 func (q *Queries) ListProjectPackages(ctx context.Context, projectID string) ([]models.SoftwarePackage, error) {
 	rows, err := q.pool.Query(ctx, `
-		SELECT id, project_id, name, git_url, git_branch, git_commit, analysis_prompt, created_at, updated_at
+		SELECT id, project_id, name, git_url, git_branch, git_commit, analysis_prompt,
+		       github_owner, github_repo, installation_id, sarif_upload_enabled,
+		       created_at, updated_at
 		FROM software_packages WHERE project_id=$1 ORDER BY name`, projectID)
 	if err != nil {
 		return nil, err
@@ -798,7 +835,9 @@ func (q *Queries) ListProjectPackages(ctx context.Context, projectID string) ([]
 	for rows.Next() {
 		var pkg models.SoftwarePackage
 		if err := rows.Scan(&pkg.ID, &pkg.ProjectID, &pkg.Name, &pkg.GitURL, &pkg.GitBranch,
-			&pkg.GitCommit, &pkg.AnalysisPrompt, &pkg.CreatedAt, &pkg.UpdatedAt); err != nil {
+			&pkg.GitCommit, &pkg.AnalysisPrompt, &pkg.GitHubOwner, &pkg.GitHubRepo,
+			&pkg.InstallationID, &pkg.SARIFUploadEnabled,
+			&pkg.CreatedAt, &pkg.UpdatedAt); err != nil {
 			return nil, err
 		}
 		pkgs = append(pkgs, pkg)
@@ -813,7 +852,7 @@ func (q *Queries) ListProjectPackages(ctx context.Context, projectID string) ([]
 func (q *Queries) CreateAnalysis(ctx context.Context, a *models.Analysis) error {
 	return q.pool.QueryRow(ctx, `
 		INSERT INTO analyses (project_id, triggered_by, status, agent_model, agent_config, environment, encrypted_dek, dek_nonce, custom_prompt, git_branch, trigger_event, trigger_meta)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING id, created_at, updated_at`,
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, COALESCE($12, '{}')) RETURNING id, created_at, updated_at`,
 		a.ProjectID, a.TriggeredBy, a.Status, a.AgentModel, a.AgentConfig, a.Environment,
 		a.EncryptedDEK, a.DEKNonce, a.CustomPrompt, a.GitBranch, a.TriggerEvent, a.TriggerMeta).Scan(&a.ID, &a.CreatedAt, &a.UpdatedAt)
 }
@@ -1009,7 +1048,8 @@ func (q *Queries) AddAnalysisPackage(ctx context.Context, analysisID, packageID 
 func (q *Queries) ListAnalysisPackages(ctx context.Context, analysisID string) ([]models.SoftwarePackage, error) {
 	rows, err := q.pool.Query(ctx, `
 		SELECT sp.id, sp.project_id, sp.name, sp.git_url, sp.git_branch, sp.git_commit,
-		       sp.analysis_prompt, sp.created_at, sp.updated_at
+		       sp.analysis_prompt, sp.github_owner, sp.github_repo, sp.installation_id,
+		       sp.sarif_upload_enabled, sp.created_at, sp.updated_at
 		FROM software_packages sp
 		JOIN analysis_packages ap ON ap.package_id = sp.id
 		WHERE ap.analysis_id=$1 ORDER BY sp.name`, analysisID)
@@ -1021,7 +1061,9 @@ func (q *Queries) ListAnalysisPackages(ctx context.Context, analysisID string) (
 	for rows.Next() {
 		var pkg models.SoftwarePackage
 		if err := rows.Scan(&pkg.ID, &pkg.ProjectID, &pkg.Name, &pkg.GitURL, &pkg.GitBranch,
-			&pkg.GitCommit, &pkg.AnalysisPrompt, &pkg.CreatedAt, &pkg.UpdatedAt); err != nil {
+			&pkg.GitCommit, &pkg.AnalysisPrompt, &pkg.GitHubOwner, &pkg.GitHubRepo,
+			&pkg.InstallationID, &pkg.SARIFUploadEnabled,
+			&pkg.CreatedAt, &pkg.UpdatedAt); err != nil {
 			return nil, err
 		}
 		pkgs = append(pkgs, pkg)
@@ -1062,10 +1104,18 @@ func (q *Queries) UpdateAnalysisResultMetadata(ctx context.Context, id, summary 
 	return err
 }
 
+// SetResultSARIFUploadURL records the GitHub Code Scanning alerts URL on a result.
+func (q *Queries) SetResultSARIFUploadURL(ctx context.Context, resultID, url string) error {
+	_, err := q.pool.Exec(ctx, `
+		UPDATE analysis_results SET sarif_upload_url = $2 WHERE id = $1`, resultID, url)
+	return err
+}
+
 func (q *Queries) ListAnalysisResults(ctx context.Context, analysisID string) ([]models.AnalysisResult, error) {
 	rows, err := q.pool.Query(ctx, `
 		SELECT id, analysis_id, package_id, result_type, s3_key, filename,
-		       content_type, file_size, summary, finding_count, severity_counts, created_at
+		       content_type, file_size, summary, finding_count, severity_counts,
+		       sarif_upload_url, created_at
 		FROM analysis_results WHERE analysis_id=$1 ORDER BY created_at`, analysisID)
 	if err != nil {
 		return nil, err
@@ -1075,7 +1125,8 @@ func (q *Queries) ListAnalysisResults(ctx context.Context, analysisID string) ([
 	for rows.Next() {
 		var r models.AnalysisResult
 		if err := rows.Scan(&r.ID, &r.AnalysisID, &r.PackageID, &r.ResultType, &r.S3Key, &r.Filename,
-			&r.ContentType, &r.FileSize, &r.Summary, &r.FindingCount, &r.SeverityCounts, &r.CreatedAt); err != nil {
+			&r.ContentType, &r.FileSize, &r.Summary, &r.FindingCount, &r.SeverityCounts,
+			&r.SARIFUploadURL, &r.CreatedAt); err != nil {
 			return nil, err
 		}
 		results = append(results, r)
@@ -1087,10 +1138,12 @@ func (q *Queries) GetAnalysisResult(ctx context.Context, id string) (*models.Ana
 	var r models.AnalysisResult
 	err := q.pool.QueryRow(ctx, `
 		SELECT id, analysis_id, package_id, result_type, s3_key, filename,
-		       content_type, file_size, summary, finding_count, severity_counts, created_at
+		       content_type, file_size, summary, finding_count, severity_counts,
+		       sarif_upload_url, created_at
 		FROM analysis_results WHERE id=$1`, id).Scan(
 		&r.ID, &r.AnalysisID, &r.PackageID, &r.ResultType, &r.S3Key, &r.Filename,
-		&r.ContentType, &r.FileSize, &r.Summary, &r.FindingCount, &r.SeverityCounts, &r.CreatedAt)
+		&r.ContentType, &r.FileSize, &r.Summary, &r.FindingCount, &r.SeverityCounts,
+		&r.SARIFUploadURL, &r.CreatedAt)
 	if err != nil {
 		return nil, err
 	}

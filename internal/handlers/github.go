@@ -112,6 +112,32 @@ func (h *Handler) DeleteProjectGitHubConfig(w http.ResponseWriter, r *http.Reque
 	respondJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 }
 
+// ListPackageBranches lists branches for a package's GitHub repository,
+// using the GitHub App installation token for private repo access.
+func (h *Handler) ListPackageBranches(w http.ResponseWriter, r *http.Request) {
+	if h.ghClient == nil || !h.ghClient.Configured() {
+		respondError(w, http.StatusBadRequest, "GitHub App is not configured")
+		return
+	}
+	pkgID := chi.URLParam(r, "packageID")
+	pkg, err := h.queries.GetPackage(r.Context(), pkgID)
+	if err != nil {
+		respondError(w, http.StatusNotFound, "Package not found")
+		return
+	}
+	if pkg.GitHubOwner == "" || pkg.GitHubRepo == "" || pkg.InstallationID == 0 {
+		respondError(w, http.StatusBadRequest, "Package has no GitHub App integration configured")
+		return
+	}
+	branches, err := h.ghClient.ListBranches(r.Context(), pkg.InstallationID, pkg.GitHubOwner, pkg.GitHubRepo)
+	if err != nil {
+		log.Error().Err(err).Str("package_id", pkgID).Msg("Failed to list branches")
+		respondError(w, http.StatusBadGateway, "Failed to list branches from GitHub")
+		return
+	}
+	respondJSON(w, http.StatusOK, branches)
+}
+
 // ListWebhookDeliveries returns webhook delivery logs for a project.
 func (h *Handler) ListWebhookDeliveries(w http.ResponseWriter, r *http.Request) {
 	projectID := chi.URLParam(r, "projectID")

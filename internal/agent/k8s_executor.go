@@ -231,8 +231,8 @@ func (e *K8sExecutor) launchJob(analysis *models.Analysis, packages []models.Sof
 	// worker can pre-clone the repo in its own Go code. The AI agent never
 	// sees the credential.
 	var gitCloneCred *models.GitCloneCredential
-	if e.ghInteg != nil && analysis.ProjectID != "" {
-		cred, err := e.ghInteg.CloneCredential(ctx, analysis.ProjectID)
+	if e.ghInteg != nil && len(packages) == 1 {
+		cred, err := e.ghInteg.CloneCredentialForPackage(ctx, &packages[0])
 		if err != nil {
 			log.Warn().Err(err).Str("analysis_id", analysis.ID).Msg("Failed to resolve GitHub clone credential")
 		} else if cred != nil {

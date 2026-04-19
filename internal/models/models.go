@@ -137,15 +137,19 @@ type Project struct {
 
 // SoftwarePackage is a Git repository registered for analysis.
 type SoftwarePackage struct {
-	ID             string    `json:"id"`
-	ProjectID      string    `json:"project_id"`
-	Name           string    `json:"name"`
-	GitURL         string    `json:"git_url"`
-	GitBranch      string    `json:"git_branch"`
-	GitCommit      string    `json:"git_commit"`
-	AnalysisPrompt string    `json:"analysis_prompt"`
-	CreatedAt      time.Time `json:"created_at"`
-	UpdatedAt      time.Time `json:"updated_at"`
+	ID                 string    `json:"id"`
+	ProjectID          string    `json:"project_id"`
+	Name               string    `json:"name"`
+	GitURL             string    `json:"git_url"`
+	GitBranch          string    `json:"git_branch"`
+	GitCommit          string    `json:"git_commit"`
+	AnalysisPrompt     string    `json:"analysis_prompt"`
+	GitHubOwner        string    `json:"github_owner"`
+	GitHubRepo         string    `json:"github_repo"`
+	InstallationID     int64     `json:"installation_id"`
+	SARIFUploadEnabled bool      `json:"sarif_upload_enabled"`
+	CreatedAt          time.Time `json:"created_at"`
+	UpdatedAt          time.Time `json:"updated_at"`
 }
 
 // Analysis represents a security analysis run.
@@ -195,6 +199,7 @@ type AnalysisResult struct {
 	Summary        string          `json:"summary"`
 	FindingCount   int             `json:"finding_count"`
 	SeverityCounts json.RawMessage `json:"severity_counts"`
+	SARIFUploadURL string          `json:"sarif_upload_url,omitempty"`
 	CreatedAt      time.Time       `json:"created_at"`
 }
 

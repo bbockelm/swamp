@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/rs/zerolog/log"
@@ -72,7 +73,13 @@ func (h *Handler) RestoreBackup(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusServiceUnavailable, "Backup service not configured")
 		return
 	}
-	if err := h.backupSvc.RestoreFromBackup(r.Context(), backupID); err != nil {
+	// Use a detached context with a generous timeout so the restore survives
+	// if the HTTP connection drops. Restore involves a DB wipe + S3
+	// re-encryption of many objects and can take minutes; a canceled request
+	// context would leave the system in a partially restored state.
+	restoreCtx, restoreCancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	defer restoreCancel()
+	if err := h.backupSvc.RestoreFromBackup(restoreCtx, backupID); err != nil {
 		respondError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -99,7 +106,9 @@ func (h *Handler) UploadRestore(w http.ResponseWriter, r *http.Request) {
 	encrypted := r.FormValue("encrypted") != "false"
 	decryptKey := r.FormValue("decrypt_key")
 	filename := fileHeader.Filename
-	if err := h.backupSvc.RestoreFromUpload(r.Context(), data, encrypted, filename, decryptKey); err != nil {
+	restoreCtx, restoreCancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	defer restoreCancel()
+	if err := h.backupSvc.RestoreFromUpload(restoreCtx, data, encrypted, filename, decryptKey); err != nil {
 		respondError(w, http.StatusInternalServerError, err.Error())
 		return
 	}

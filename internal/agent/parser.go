@@ -56,9 +56,18 @@ type ParseOutput struct {
 
 // ParseOutputDir scans the output directory for analysis artifacts and
 // builds AnalysisResult records for each one. Also extracts individual
-// SARIF findings for the findings table.
-func ParseOutputDir(outputDir, analysisID, projectID string) (*ParseOutput, error) {
+// SARIF findings for the findings table. When packages are provided,
+// SARIF files named after a package (e.g. "mypackage.sarif") are
+// associated with that package's ID.
+func ParseOutputDir(outputDir, analysisID, projectID string, packages []models.SoftwarePackage) (*ParseOutput, error) {
 	out := &ParseOutput{}
+
+	// Build a lookup from lowercase package name → package ID for matching
+	// per-package SARIF files.
+	pkgNameToID := make(map[string]string, len(packages))
+	for _, pkg := range packages {
+		pkgNameToID[strings.ToLower(pkg.Name)] = pkg.ID
+	}
 
 	// Read the resolved git commit SHA if the agent recorded it.
 	if shaBytes, err := os.ReadFile(filepath.Join(outputDir, "git_sha.txt")); err == nil {
@@ -135,6 +144,11 @@ func ParseOutputDir(outputDir, analysisID, projectID string) (*ParseOutput, erro
 			// Extract individual findings for the findings table.
 			findings := extractFindings(fullPath, analysisID, projectID)
 			out.Findings = append(out.Findings, findings...)
+			// Try to match per-package SARIF files (e.g. "mypackage.sarif").
+			baseName := strings.TrimSuffix(name, ".sarif")
+			if pkgID, ok := pkgNameToID[strings.ToLower(baseName)]; ok {
+				result.PackageID = &pkgID
+			}
 
 		case name == "notes.md":
 			result.ResultType = "analysis_notes"

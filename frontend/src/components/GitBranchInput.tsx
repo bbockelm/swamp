@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { api } from '@/lib/api';
 
 interface GitHubRepo {
   default_branch: string;
@@ -24,9 +25,12 @@ interface Props {
   onChange: (branch: string) => void;
   /** Label CSS class override */
   labelClassName?: string;
+  /** When provided, uses the backend branch API (supports private repos). */
+  projectId?: string;
+  packageId?: string;
 }
 
-export function GitBranchInput({ gitUrl, value, onChange, labelClassName }: Props) {
+export function GitBranchInput({ gitUrl, value, onChange, labelClassName, projectId, packageId }: Props) {
   const [branches, setBranches] = useState<string[]>([]);
   const [defaultBranch, setDefaultBranch] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -48,11 +52,35 @@ export function GitBranchInput({ gitUrl, value, onChange, labelClassName }: Prop
     return () => document.removeEventListener('mousedown', handleClick);
   }, []);
 
+  // Try to fetch branches from the backend (supports private repos via installation tokens).
+  const fetchBranchesFromBackend = useCallback(async () => {
+    if (!projectId || !packageId) return false;
+    try {
+      const names = await api.packages.listBranches(projectId, packageId);
+      if (names && names.length > 0) {
+        setBranches(names);
+        // Use the first branch as the "default" heuristic (often main/master).
+        setDefaultBranch(names[0]);
+        if (!value || value === 'main' || value === 'master') {
+          onChange(names[0]);
+        }
+        return true;
+      }
+    } catch {
+      // Fall through to public API.
+    }
+    return false;
+  }, [projectId, packageId, value, onChange]);
+
   // Fetch branches when gitUrl changes to a valid GitHub URL
   const fetchBranches = useCallback(async (owner: string, repo: string) => {
     setLoading(true);
     try {
-      // Fetch repo info for default branch
+      // Try backend API first for private repo support.
+      const fromBackend = await fetchBranchesFromBackend();
+      if (fromBackend) return;
+
+      // Fall back to public GitHub API.
       const repoResp = await fetch(`https://api.github.com/repos/${owner}/${repo}`, {
         headers: { 'Accept': 'application/vnd.github.v3+json' },
       });
@@ -89,7 +117,7 @@ export function GitBranchInput({ gitUrl, value, onChange, labelClassName }: Prop
     } finally {
       setLoading(false);
     }
-  }, [value, onChange]);
+  }, [value, onChange, fetchBranchesFromBackend]);
 
   useEffect(() => {
     const gh = parseGitHub(gitUrl);

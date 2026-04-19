@@ -447,7 +447,12 @@ func (s *Service) createTarball(ctx context.Context, w io.Writer) error {
 			if plaintext, err := s.decryptS3Object(ctx, key, data, dekCache); err == nil {
 				data = plaintext
 			} else {
-				log.Warn().Err(err).Str("key", key).Msg("Could not decrypt object, backing up as-is")
+				// Skip objects that can't be decrypted. Including raw
+				// ciphertext would cause double-encryption on restore
+				// (reencryptAndUpload treats everything as plaintext),
+				// making the data permanently unrecoverable.
+				log.Warn().Err(err).Str("key", key).Msg("Skipping undecryptable object in backup")
+				continue
 			}
 		}
 

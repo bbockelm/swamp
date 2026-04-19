@@ -128,6 +128,10 @@ export interface SoftwarePackage {
   git_branch: string;
   git_commit: string;
   analysis_prompt: string;
+  github_owner: string;
+  github_repo: string;
+  installation_id: number;
+  sarif_upload_enabled: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -544,6 +548,8 @@ export const api = {
       fetchJSON(`${BASE}/projects/${projectId}/packages/${id}`, {
         method: "DELETE",
       }),
+    listBranches: (projectId: string, id: string): Promise<string[]> =>
+      fetchJSON(`${BASE}/projects/${projectId}/packages/${id}/branches`),
   },
 
   analyses: {

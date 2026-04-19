@@ -15,6 +15,8 @@ import {
   type AvailableProvider,
   type ProjectAllowedProvider,
   type DiscoveredModel,
+  type ProjectGitHubConfig,
+  type GitHubWebhookDelivery,
 } from "@/lib/api";
 import { AnalysisStatus } from "@/components/AnalysisStatus";
 import { Pagination, paginate } from "@/components/Pagination";
@@ -376,7 +378,7 @@ export default function ProjectsPage() {
 
 // ─── project card ───────────────────────────────────────────
 
-type ProjectTab = "packages" | "analyses" | "findings" | "api-keys" | "settings";
+type ProjectTab = "packages" | "analyses" | "findings" | "github" | "api-keys" | "settings";
 
 function ProjectCard({
   project,
@@ -417,7 +419,8 @@ function ProjectCard({
     { key: "packages", label: "Packages" },
     { key: "analyses", label: "Analyses" },
     { key: "findings", label: "Findings" },
-    ...(isProjectAdmin ? [{ key: "api-keys" as ProjectTab, label: "API Keys" }] : []),
+    ...(canEdit ? [{ key: "github" as ProjectTab, label: "GitHub" }] : []),
+    ...(isProjectAdmin ? [{ key: "api-keys" as ProjectTab, label: "LLMs" }] : []),
     ...(canEdit ? [{ key: "settings" as ProjectTab, label: "Settings" }] : []),
   ];
 
@@ -520,6 +523,7 @@ function ProjectCard({
             {tab === "packages" && <PackagesTab projectId={project.id} />}
             {tab === "analyses" && <AnalysesTab projectId={project.id} />}
             {tab === "findings" && <FindingsTabInline projectId={project.id} canEdit={canEdit} />}
+            {tab === "github" && canEdit && <GitHubTabInline projectId={project.id} />}
             {tab === "api-keys" && isProjectAdmin && <ProviderKeysTab projectId={project.id} />}
             {tab === "settings" && canEdit && (
               <SettingsTab
@@ -1890,6 +1894,75 @@ function FindingsTabInline({
   );
 }
 
+function GitHubTabInline({ projectId }: { projectId: string }) {
+  const { data: ghConfig, isLoading } = useQuery<ProjectGitHubConfig>({
+    queryKey: ['project', projectId, 'github'],
+    queryFn: () => api.github.getConfig(projectId),
+  });
+
+  const { data: webhooks } = useQuery<GitHubWebhookDelivery[]>({
+    queryKey: ['project', projectId, 'github-webhooks'],
+    queryFn: () => api.github.listWebhooks(projectId),
+  });
+
+  if (isLoading) return <p className="text-sm text-gray-400">Loading…</p>;
+
+  if (!ghConfig?.github_owner) {
+    return (
+      <div className="text-sm text-gray-500">
+        <p>GitHub integration not configured.</p>
+        <Link href={`/projects/${projectId}?tab=github`} className="text-blue-600 hover:underline text-xs">
+          Configure on project page →
+        </Link>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="text-sm space-y-1">
+        <p><span className="text-gray-500">Repository:</span> {ghConfig.github_owner}/{ghConfig.github_repo}</p>
+        <p><span className="text-gray-500">Branch:</span> {ghConfig.default_branch || 'main'}</p>
+        {ghConfig.installation_id > 0 && (
+          <p><span className="text-gray-500">GitHub App:</span> Installation #{ghConfig.installation_id}</p>
+        )}
+        <p>
+          <span className="text-gray-500">SARIF upload:</span>{' '}
+          <span className={ghConfig.sarif_upload_enabled ? 'text-green-600' : 'text-gray-400'}>
+            {ghConfig.sarif_upload_enabled ? 'Enabled' : 'Disabled'}
+          </span>
+        </p>
+        <p>
+          <span className="text-gray-500">Webhooks:</span>{' '}
+          <span className={ghConfig.webhook_enabled ? 'text-green-600' : 'text-gray-400'}>
+            {ghConfig.webhook_enabled ? `Enabled (${ghConfig.webhook_events?.join(', ') || 'none'})` : 'Disabled'}
+          </span>
+        </p>
+      </div>
+
+      {webhooks && webhooks.length > 0 && (
+        <div>
+          <h4 className="text-xs font-medium text-gray-500 mb-2">Recent Deliveries</h4>
+          <div className="space-y-1">
+            {webhooks.slice(0, 5).map((w) => (
+              <div key={w.delivery_id} className="flex items-center gap-2 text-xs">
+                <span className={`w-2 h-2 rounded-full ${w.status === 'triggered' ? 'bg-green-500' : w.status === 'failed' ? 'bg-red-500' : 'bg-gray-400'}`} />
+                <span className="text-gray-600">{w.event_type}{w.action ? `/${w.action}` : ''}</span>
+                <span className="text-gray-400">{w.repo_full_name}</span>
+                <span className="text-gray-400">{new Date(w.created_at).toLocaleString()}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <Link href={`/projects/${projectId}?tab=github`} className="text-blue-600 hover:underline text-xs">
+        Manage GitHub settings →
+      </Link>
+    </div>
+  );
+}
+
 function ProviderKeysTab({ projectId }: { projectId: string }) {
   const queryClient = useQueryClient();
   const [adding, setAdding] = useState(false);
@@ -1940,7 +2013,7 @@ function ProviderKeysTab({ projectId }: { projectId: string }) {
     <div>
       <div className="flex items-center justify-between mb-4">
         <div>
-          <h3 className="text-md font-semibold">Provider API Keys</h3>
+          <h3 className="text-md font-semibold">LLM Providers</h3>
           <p className="text-xs text-gray-500">
             API keys are encrypted at rest. Only the last 4 characters are ever displayed.
           </p>

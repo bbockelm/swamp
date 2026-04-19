@@ -338,6 +338,7 @@ func New(cfg *config.Config, pool *pgxpool.Pool, store *storage.Store) (*chi.Mux
 								r.Get("/", h.GetPackage)
 								r.Put("/", h.UpdatePackage)
 								r.Delete("/", h.DeletePackage)
+								r.Get("/branches", h.ListPackageBranches)
 							})
 						})
 

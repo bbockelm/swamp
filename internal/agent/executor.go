@@ -253,11 +253,14 @@ func (e *Executor) run(analysis *models.Analysis, packages []models.SoftwarePack
 	}
 	llmConfig := ResolveEffectiveLLMConfig(e.cfg, project)
 
-	// If GitHub integration is configured, pre-clone the repo so that
+	// If GitHub integration is configured, pre-clone repos so that
 	// credentials are never exposed in the agent prompt.
+	// For single-package analyses with package-level GitHub config, use that;
+	// otherwise fall back to project-level config.
 	var preClonedPath string
-	if e.ghInteg != nil && analysis.ProjectID != "" && len(packages) > 0 {
-		cred, err := e.ghInteg.CloneCredential(ctx, analysis.ProjectID)
+	if e.ghInteg != nil && len(packages) == 1 {
+		pkg := &packages[0]
+		cred, err := e.ghInteg.CloneCredentialForPackage(ctx, pkg)
 		if err != nil {
 			log.Warn().Err(err).Str("analysis_id", analysis.ID).Msg("GitHub clone credential failed, falling back to agent clone")
 		} else if cred != nil {
@@ -335,7 +338,7 @@ func (e *Executor) run(analysis *models.Analysis, packages []models.SoftwarePack
 		// Mark completed for new provider-based path.
 		completeCtx, completeCancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer completeCancel()
-		e.tryUploadSARIFToGitHub(completeCtx, analysis, sarifPath)
+		e.tryUploadSARIFToGitHub(completeCtx, analysis, packages, sarifPath)
 		if err := e.queries.SetAnalysisCompleted(completeCtx, analysis.ID, "completed", ""); err != nil {
 			log.Error().Err(err).Str("analysis_id", analysis.ID).Msg("Failed to mark analysis completed")
 		}
@@ -412,7 +415,7 @@ func (e *Executor) run(analysis *models.Analysis, packages []models.SoftwarePack
 	// Mark completed (use a fresh context in case the original expired during Phase 2).
 	completeCtx, completeCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer completeCancel()
-	e.tryUploadSARIFToGitHub(completeCtx, analysis, sarifPath)
+	e.tryUploadSARIFToGitHub(completeCtx, analysis, packages, sarifPath)
 	if err := e.queries.SetAnalysisCompleted(completeCtx, analysis.ID, "completed", ""); err != nil {
 		log.Error().Err(err).Str("analysis_id", analysis.ID).Msg("Failed to mark analysis completed")
 	}
@@ -420,9 +423,9 @@ func (e *Executor) run(analysis *models.Analysis, packages []models.SoftwarePack
 	// Log upload and room cleanup handled by deferred uploadOutputDir + CloseRoom.
 }
 
-// tryUploadSARIFToGitHub uploads SARIF results to GitHub if the project has
-// SARIF upload enabled via the GitHub App integration.
-func (e *Executor) tryUploadSARIFToGitHub(ctx context.Context, analysis *models.Analysis, sarifPath string) {
+// tryUploadSARIFToGitHub uploads SARIF results to GitHub if the project or
+// individual packages have SARIF upload enabled via the GitHub App integration.
+func (e *Executor) tryUploadSARIFToGitHub(ctx context.Context, analysis *models.Analysis, packages []models.SoftwarePackage, sarifPath string) {
 	if e.ghInteg == nil || analysis.ProjectID == "" {
 		return
 	}
@@ -430,13 +433,35 @@ func (e *Executor) tryUploadSARIFToGitHub(ctx context.Context, analysis *models.
 	if err != nil {
 		return // No SARIF file — nothing to upload.
 	}
-	alertsURL, uploadErr := e.ghInteg.UploadSARIFForProject(ctx, analysis.ProjectID, sarifData)
-	if uploadErr != nil {
-		log.Warn().Err(uploadErr).Str("analysis_id", analysis.ID).Msg("Failed to upload SARIF to GitHub")
-	} else {
-		log.Info().Str("analysis_id", analysis.ID).Msg("SARIF uploaded to GitHub Code Scanning")
-		e.hub.Broadcast(analysis.ID, []byte("[system] SARIF results uploaded to GitHub"))
-		if alertsURL != "" {
+
+	// Try per-package SARIF upload first. If any package has its own
+	// GitHub config with SARIF enabled, upload using that.
+	uploaded := false
+	for i := range packages {
+		pkg := &packages[i]
+		if pkg.GitHubOwner != "" && pkg.GitHubRepo != "" && pkg.InstallationID != 0 && pkg.SARIFUploadEnabled {
+			alertsURL, uploadErr := e.ghInteg.UploadSARIFForPackage(ctx, pkg, sarifData)
+			if uploadErr != nil {
+				log.Warn().Err(uploadErr).Str("analysis_id", analysis.ID).Str("package_id", pkg.ID).Msg("Failed to upload SARIF to GitHub for package")
+			} else if alertsURL != "" {
+				log.Info().Str("analysis_id", analysis.ID).Str("package_id", pkg.ID).Msg("SARIF uploaded to GitHub Code Scanning for package")
+				e.hub.Broadcast(analysis.ID, []byte("[system] SARIF results uploaded to GitHub for package: "+pkg.Name))
+				if setErr := e.queries.SetAnalysisSARIFUploadURL(ctx, analysis.ID, alertsURL); setErr != nil {
+					log.Warn().Err(setErr).Str("analysis_id", analysis.ID).Msg("Failed to record SARIF upload URL")
+				}
+				uploaded = true
+			}
+		}
+	}
+
+	// Fall back to project-level SARIF upload if no package-level upload occurred.
+	if !uploaded {
+		alertsURL, uploadErr := e.ghInteg.UploadSARIFForProject(ctx, analysis.ProjectID, sarifData)
+		if uploadErr != nil {
+			log.Warn().Err(uploadErr).Str("analysis_id", analysis.ID).Msg("Failed to upload SARIF to GitHub")
+		} else if alertsURL != "" {
+			log.Info().Str("analysis_id", analysis.ID).Msg("SARIF uploaded to GitHub Code Scanning")
+			e.hub.Broadcast(analysis.ID, []byte("[system] SARIF results uploaded to GitHub"))
 			if setErr := e.queries.SetAnalysisSARIFUploadURL(ctx, analysis.ID, alertsURL); setErr != nil {
 				log.Warn().Err(setErr).Str("analysis_id", analysis.ID).Msg("Failed to record SARIF upload URL")
 			}
@@ -646,7 +671,13 @@ func (e *Executor) uploadOutputDir(ctx context.Context, outputDir, analysisID st
 		return
 	}
 
-	results, err := ParseOutputDir(outputDir, analysisID, analysis.ProjectID)
+	// Load packages for per-package SARIF file matching.
+	var packages []models.SoftwarePackage
+	if pkgs, pkgErr := e.queries.ListAnalysisPackages(ctx, analysisID); pkgErr == nil {
+		packages = pkgs
+	}
+
+	results, err := ParseOutputDir(outputDir, analysisID, analysis.ProjectID, packages)
 	if err != nil {
 		log.Error().Err(err).Str("analysis_id", analysisID).Msg("Failed to parse output dir")
 		return

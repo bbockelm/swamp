@@ -42,8 +42,16 @@ type GitHubIntegration interface {
 	// Returns nil if the project has no GitHub config.
 	CloneCredential(ctx context.Context, projectID string) (*models.GitCloneCredential, error)
 
+	// CloneCredentialForPackage returns a clone credential using a package's
+	// own GitHub config, falling back to project-level config.
+	CloneCredentialForPackage(ctx context.Context, pkg *models.SoftwarePackage) (*models.GitCloneCredential, error)
+
 	// UploadSARIFForProject uploads SARIF results to GitHub Code Scanning
 	// if the project has SARIF upload enabled. Returns the Code Scanning
 	// alerts URL if upload succeeded, or "" if skipped.
 	UploadSARIFForProject(ctx context.Context, projectID string, sarifData []byte) (string, error)
+
+	// UploadSARIFForPackage uploads SARIF results using a package's own
+	// GitHub config, falling back to project-level config.
+	UploadSARIFForPackage(ctx context.Context, pkg *models.SoftwarePackage, sarifData []byte) (string, error)
 }
