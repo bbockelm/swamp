@@ -3,7 +3,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api, type SoftwarePackage, type Analysis, type Group, type Project, type ProjectGitHubConfig, type GitHubWebhookDelivery, type GitHubAppInstallation } from '@/lib/api';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import Link from 'next/link';
 import { AnalysisStatus } from '@/components/AnalysisStatus';
 import { Pagination, paginate } from '@/components/Pagination';
@@ -167,6 +167,33 @@ function PackagesTab({
   const [gitBranch, setGitBranch] = useState('main');
   const [analysisPrompt, setAnalysisPrompt] = useState('');
   const [sarifUploadEnabled, setSarifUploadEnabled] = useState(false);
+  const [installationId, setInstallationId] = useState<number>(0);
+
+  // Fetch GitHub App installations for the installation selector.
+  const { data: installations } = useQuery<GitHubAppInstallation[]>({
+    queryKey: ['admin', 'github-installations'],
+    queryFn: async () => {
+      const status = await api.admin.getGitHubStatus();
+      return status.installations ?? [];
+    },
+    staleTime: 120_000,
+  });
+
+  // Fetch the project's GitHub config to auto-inherit installation_id.
+  const { data: projectGhConfig } = useQuery<ProjectGitHubConfig>({
+    queryKey: ['project', projectId, 'github'],
+    queryFn: () => api.github.getConfig(projectId),
+    staleTime: 120_000,
+  });
+
+  // Parse owner/repo from the git URL for display.
+  const parsedGitHub = useMemo(() => {
+    const m = gitUrl.match(/github\.com\/([^/]+)\/([^/.]+)/);
+    return m ? { owner: m[1], repo: m[2] } : null;
+  }, [gitUrl]);
+
+  // Determine if this is a private repo setup (has an installation selected).
+  const isPrivateSetup = installationId > 0;
 
   const createMutation = useMutation({
     mutationFn: () =>
@@ -176,6 +203,7 @@ function PackagesTab({
         git_branch: gitBranch,
         analysis_prompt: analysisPrompt,
         sarif_upload_enabled: sarifUploadEnabled,
+        installation_id: installationId,
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['packages', projectId] });
@@ -185,6 +213,7 @@ function PackagesTab({
       setGitBranch('main');
       setAnalysisPrompt('');
       setSarifUploadEnabled(false);
+      setInstallationId(0);
     },
   });
 
@@ -196,6 +225,7 @@ function PackagesTab({
         git_branch: gitBranch,
         analysis_prompt: analysisPrompt,
         sarif_upload_enabled: sarifUploadEnabled,
+        installation_id: installationId,
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['packages', projectId] });
@@ -217,6 +247,7 @@ function PackagesTab({
     setGitBranch(pkg.git_branch);
     setAnalysisPrompt(pkg.analysis_prompt || '');
     setSarifUploadEnabled(pkg.sarif_upload_enabled ?? false);
+    setInstallationId(pkg.installation_id ?? 0);
     setAdding(false);
   };
 
@@ -227,6 +258,7 @@ function PackagesTab({
     setGitBranch('main');
     setAnalysisPrompt('');
     setSarifUploadEnabled(false);
+    setInstallationId(0);
   };
 
   return (
@@ -235,7 +267,7 @@ function PackagesTab({
         <h2 className="text-lg font-semibold">Software Packages</h2>
         {canEdit && (
           <button
-            onClick={() => { setAdding(true); setEditingId(null); setName(''); setGitUrl(''); setGitBranch('main'); setAnalysisPrompt(''); setSarifUploadEnabled(false); }}
+            onClick={() => { setAdding(true); setEditingId(null); setName(''); setGitUrl(''); setGitBranch('main'); setAnalysisPrompt(''); setSarifUploadEnabled(false); setInstallationId(projectGhConfig?.installation_id ?? 0); }}
             className="bg-blue-600 text-white px-3 py-1.5 text-sm rounded hover:bg-blue-700"
           >
             Add Package
@@ -264,7 +296,39 @@ function PackagesTab({
               className="w-full border rounded px-3 py-2 text-sm"
               placeholder="https://github.com/org/repo.git"
             />
+            {parsedGitHub && (
+              <p className="text-xs text-green-600 mt-1">
+                Detected GitHub repo: {parsedGitHub.owner}/{parsedGitHub.repo}
+              </p>
+            )}
           </div>
+
+          {/* GitHub App installation — needed for private repos */}
+          {parsedGitHub && installations && installations.length > 0 && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                GitHub App Installation
+              </label>
+              <select
+                value={installationId}
+                onChange={(e) => setInstallationId(Number(e.target.value))}
+                className="w-full border rounded px-3 py-2 text-sm"
+              >
+                <option value={0}>None (public repos only)</option>
+                {installations.map((inst) => (
+                  <option key={inst.installation_id} value={inst.installation_id}>
+                    {inst.account_login} ({inst.account_type})
+                  </option>
+                ))}
+              </select>
+              <p className="text-xs text-gray-400 mt-1">
+                {isPrivateSetup
+                  ? 'The GitHub App will be used to clone this repo and (optionally) upload SARIF results.'
+                  : 'Select an installation to enable cloning private repos and SARIF upload.'}
+              </p>
+            </div>
+          )}
+
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -282,6 +346,7 @@ function PackagesTab({
               gitUrl={gitUrl}
               value={gitBranch}
               onChange={setGitBranch}
+              projectId={projectId}
             />
           </div>
           <div>
@@ -296,15 +361,17 @@ function PackagesTab({
               placeholder="Focus on authentication and SQL injection..."
             />
           </div>
-          <label className="flex items-center gap-2 text-sm">
-            <input
-              type="checkbox"
-              checked={sarifUploadEnabled}
-              onChange={(e) => setSarifUploadEnabled(e.target.checked)}
-              className="rounded"
-            />
-            <span>Upload SARIF results to GitHub Code Scanning</span>
-          </label>
+          {parsedGitHub && isPrivateSetup && (
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={sarifUploadEnabled}
+                onChange={(e) => setSarifUploadEnabled(e.target.checked)}
+                className="rounded"
+              />
+              <span>Upload SARIF results to GitHub Code Scanning</span>
+            </label>
+          )}
           <div className="flex gap-2">
             <button
               type="submit"
@@ -351,7 +418,39 @@ function PackagesTab({
                     required
                     className="w-full border rounded px-3 py-2 text-sm"
                   />
+                  {parsedGitHub && (
+                    <p className="text-xs text-green-600 mt-1">
+                      Detected GitHub repo: {parsedGitHub.owner}/{parsedGitHub.repo}
+                    </p>
+                  )}
                 </div>
+
+                {/* GitHub App installation */}
+                {parsedGitHub && installations && installations.length > 0 && (
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      GitHub App Installation
+                    </label>
+                    <select
+                      value={installationId}
+                      onChange={(e) => setInstallationId(Number(e.target.value))}
+                      className="w-full border rounded px-3 py-2 text-sm"
+                    >
+                      <option value={0}>None (public repos only)</option>
+                      {installations.map((inst) => (
+                        <option key={inst.installation_id} value={inst.installation_id}>
+                          {inst.account_login} ({inst.account_type})
+                        </option>
+                      ))}
+                    </select>
+                    <p className="text-xs text-gray-400 mt-1">
+                      {isPrivateSetup
+                        ? 'The GitHub App will be used to clone this repo and (optionally) upload SARIF results.'
+                        : 'Select an installation to enable cloning private repos and SARIF upload.'}
+                    </p>
+                  </div>
+                )}
+
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -384,15 +483,17 @@ function PackagesTab({
                     className="w-full border rounded px-3 py-2 text-sm"
                   />
                 </div>
-                <label className="flex items-center gap-2 text-sm">
-                  <input
-                    type="checkbox"
-                    checked={sarifUploadEnabled}
-                    onChange={(e) => setSarifUploadEnabled(e.target.checked)}
-                    className="rounded"
-                  />
-                  <span>Upload SARIF results to GitHub Code Scanning</span>
-                </label>
+                {parsedGitHub && isPrivateSetup && (
+                  <label className="flex items-center gap-2 text-sm">
+                    <input
+                      type="checkbox"
+                      checked={sarifUploadEnabled}
+                      onChange={(e) => setSarifUploadEnabled(e.target.checked)}
+                      className="rounded"
+                    />
+                    <span>Upload SARIF results to GitHub Code Scanning</span>
+                  </label>
+                )}
                 <div className="flex gap-2">
                   <button
                     type="submit"

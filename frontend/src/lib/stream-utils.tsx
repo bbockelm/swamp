@@ -28,11 +28,11 @@ export function StreamLine({ line }: { line: string }) {
     const toolDetail = colonIdx > 0 ? detail.slice(colonIdx + 1).trim() : "";
     return (
       <div className="flex items-start gap-2 py-1.5 px-2 rounded bg-cyan-500/10 text-xs">
-        <span className="shrink-0 font-mono font-semibold text-cyan-300 bg-cyan-900 px-1.5 py-0.5 rounded text-[10px]">
+        <span className="shrink-0 font-mono font-semibold text-cyan-100 bg-cyan-700 px-1.5 py-0.5 rounded text-[10px]">
           {toolName}
         </span>
         {toolDetail && (
-          <span className="text-cyan-300 break-words whitespace-pre-wrap">{toolDetail}</span>
+          <span className="text-cyan-200 break-words whitespace-pre-wrap">{toolDetail}</span>
         )}
       </div>
     );
@@ -175,6 +175,11 @@ function parseOpenCodeToolUseEvent(raw: Record<string, unknown>): string {
   }
 
   let msg = detail ? `[tool] ${toolName}: ${detail}` : `[tool] ${toolName}`;
+  const status = state.status as string | undefined;
+  const errStr = ((state.error as string) || "").trim();
+  if (status === "error" && errStr) {
+    msg += "\n[error] " + truncateStr(errStr, 300);
+  }
   const output = ((state.output as string) || "").trim();
   if (output) {
     msg += "\n[result] " + truncateStr(output, 200);
