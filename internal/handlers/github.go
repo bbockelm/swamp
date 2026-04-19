@@ -699,6 +699,25 @@ func (h *Handler) triggerWebhookAnalysis(ctx context.Context, ghCfg *models.Proj
 		return "", err
 	}
 
+	packageMeta := make([]string, 0, len(packages))
+	githubConfigured := 0
+	for _, p := range packages {
+		packageMeta = append(packageMeta, p.Name+"("+p.GitBranch+")")
+		if p.InstallationID != 0 && p.GitHubOwner != "" && p.GitHubRepo != "" {
+			githubConfigured++
+		}
+	}
+	log.Info().
+		Str("analysis_id", analysis.ID).
+		Str("project_id", analysis.ProjectID).
+		Str("trigger", "github_webhook").
+		Int("package_count", len(packages)).
+		Int("github_clone_capable_packages", githubConfigured).
+		Strs("packages", packageMeta).
+		Str("event", info.Event).
+		Str("branch", info.Branch).
+		Msg("Created analysis")
+
 	// Link all packages.
 	for _, pkg := range packages {
 		if err := h.queries.AddAnalysisPackage(ctx, analysis.ID, pkg.ID); err != nil {

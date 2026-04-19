@@ -52,7 +52,12 @@ Include:
 Keep it under 2000 words. These notes will be provided to future analysis runs for continuity.
 
 Be thorough but precise. Only report genuine vulnerabilities in the SARIF/report, not style issues or theoretical concerns.
-Focus on finding NEW and DIFFERENT issues not already listed in the prior findings below.`
+Focus on finding NEW and DIFFERENT issues not already listed in the prior findings below.
+
+## Error Reporting
+If you are unable to complete the analysis (e.g. cannot access the repository, missing dependencies,
+build failures, or any other blocker), write a concise explanation (under 30 words) to ` + "`output/error.txt`" + `
+and stop. Do NOT fabricate findings.`
 
 var phase2Template = `You are a security researcher validating previously identified vulnerabilities.
 
@@ -169,7 +174,7 @@ func BuildPrompt(pkg *models.SoftwarePackage, phase string, analysisPrompt strin
 		// Determine clone vs pre-cloned instructions.
 		var step1, afterVerb, dirRef string
 		if preClonedPath != "" {
-			step1 = fmt.Sprintf("The repository has already been cloned for you at `%s`. Thoroughly review the codebase.", preClonedPath)
+			step1 = fmt.Sprintf("The repository has already been cloned for you at `%s`. Do NOT run git clone. Thoroughly review the codebase from that existing directory.", preClonedPath)
 			afterVerb = "entering the repository"
 			dirRef = "repository"
 		} else {
@@ -193,7 +198,7 @@ func BuildPrompt(pkg *models.SoftwarePackage, phase string, analysisPrompt strin
 }
 
 // BuildMultiPackagePrompt builds a prompt for analyzing multiple packages at once.
-func BuildMultiPackagePrompt(packages []models.SoftwarePackage, analysisPrompt string, analysisCtx *models.AnalysisContext) string {
+func BuildMultiPackagePrompt(packages []models.SoftwarePackage, analysisPrompt string, analysisCtx *models.AnalysisContext, preClonedByPackage map[string]string) string {
 	var sb strings.Builder
 	sb.WriteString("You are a security analyst performing a comprehensive vulnerability assessment.\n\n")
 	sb.WriteString("## Target Repositories\n\n")
@@ -220,8 +225,19 @@ func BuildMultiPackagePrompt(packages []models.SoftwarePackage, analysisPrompt s
 	// Inject prior context.
 	sb.WriteString(formatAnalysisContext(analysisCtx))
 
+	if len(preClonedByPackage) > 0 {
+		sb.WriteString("## Pre-cloned Repositories\n")
+		sb.WriteString("Some repositories are already cloned locally. Use these paths directly and do NOT clone them again.\n\n")
+		for _, pkg := range packages {
+			if p := preClonedByPackage[pkg.Name]; p != "" {
+				fmt.Fprintf(&sb, "- %s: `%s`\n", pkg.Name, p)
+			}
+		}
+		sb.WriteString("\n")
+	}
+
 	sb.WriteString("## Your Task\n")
-	sb.WriteString(`1. Clone each repository and thoroughly review the codebases.
+	sb.WriteString(`1. For each package, analyze the corresponding codebase thoroughly. Use pre-cloned local directories when provided; only clone repositories that are not already available locally.
 2. Identify security vulnerabilities (see OWASP Top 10, CWE categories, dependency vulnerabilities, secrets, auth issues, crypto weaknesses).
 3. For each vulnerability, provide severity, CWE ID, file location, description, and recommended fix.
 4. Output findings:
@@ -232,7 +248,12 @@ func BuildMultiPackagePrompt(packages []models.SoftwarePackage, analysisPrompt s
 IMPORTANT: Do NOT put all findings in a single results.sarif. Each package MUST have its own separate .sarif file named after the package.
 
 Focus on finding NEW and DIFFERENT issues not already listed in the prior findings above.
-Be thorough but precise. Only report genuine vulnerabilities.`)
+Be thorough but precise. Only report genuine vulnerabilities.
+
+## Error Reporting
+If you are unable to complete the analysis (e.g. cannot access a repository, missing dependencies,
+build failures, or any other blocker), write a concise explanation (under 30 words) to ` + "`output/error.txt`" + `
+and stop. Do NOT fabricate findings.`)
 
 	return sb.String()
 }

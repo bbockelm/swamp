@@ -229,15 +229,25 @@ func (h *Handler) GetCurrentSession(w http.ResponseWriter, r *http.Request) {
 		roleStrs[i] = rl.Role
 	}
 
-	aupAgreed, _ := h.queries.UserHasAgreedAUP(r.Context(), session.UserID, h.getAUPVersion(r.Context()))
+	aupVersion := h.getAUPVersion(r.Context())
+	aupAgreed, _ := h.queries.UserHasAgreedAUP(r.Context(), session.UserID, aupVersion)
+
+	var aupUpdatedAt string
+	if _, ts, err := h.queries.GetAppConfigWithTimestamp(r.Context(), "aup_text"); err == nil && !ts.IsZero() {
+		aupUpdatedAt = ts.Format("2 January 2006")
+	}
+
+	aupURL := fmt.Sprintf("%s/aup-v%s", h.cfg.BaseURL, aupVersion)
 
 	respondJSON(w, http.StatusOK, map[string]any{
-		"authenticated": true,
-		"user":          user,
-		"roles":         roleStrs,
-		"aup_agreed":    aupAgreed,
-		"aup_version":   h.getAUPVersion(r.Context()),
-		"aup_text":      h.getAUPText(r.Context()),
+		"authenticated":  true,
+		"user":           user,
+		"roles":          roleStrs,
+		"aup_agreed":     aupAgreed,
+		"aup_version":    aupVersion,
+		"aup_text":       h.getAUPText(r.Context()),
+		"aup_updated_at": aupUpdatedAt,
+		"aup_url":        aupURL,
 	})
 }
 

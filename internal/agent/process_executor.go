@@ -251,17 +251,30 @@ func (e *ProcessExecutor) launchProcess(analysis *models.Analysis, packages []mo
 		}
 	}
 
-	// Resolve GitHub clone credential for private repos.
-	var gitCloneCred *models.GitCloneCredential
-	if e.ghInteg != nil && analysis.ProjectID != "" {
-		cred, err := e.ghInteg.CloneCredential(ctx, analysis.ProjectID)
-		if err != nil {
-			log.Warn().Err(err).Str("analysis_id", analysis.ID).Msg("Failed to resolve GitHub clone credential")
-		} else if cred != nil {
-			gitCloneCred = cred
-			log.Info().Str("analysis_id", analysis.ID).Msg("Resolved GitHub clone credential for worker")
+	// Resolve GitHub clone credentials for all packages.
+	gitCloneCreds := make([]*models.GitCloneCredential, 0, len(packages))
+	if e.ghInteg != nil {
+		for i := range packages {
+			pkg := &packages[i]
+			cred, err := e.ghInteg.CloneCredentialForPackage(ctx, pkg)
+			if err != nil {
+				log.Warn().Err(err).
+					Str("analysis_id", analysis.ID).
+					Str("package_id", pkg.ID).
+					Str("package", pkg.Name).
+					Msg("Failed to resolve GitHub clone credential for package")
+				continue
+			}
+			if cred != nil {
+				gitCloneCreds = append(gitCloneCreds, cred)
+			}
 		}
 	}
+	log.Info().
+		Str("analysis_id", analysis.ID).
+		Int("package_count", len(packages)).
+		Int("clone_credential_count", len(gitCloneCreds)).
+		Msg("Prepared clone credentials for worker")
 
 	// Issue one-time token.
 	token, err := e.tokenStore.IssueToken(
@@ -277,7 +290,7 @@ func (e *ProcessExecutor) launchProcess(analysis *models.Analysis, packages []mo
 		"", // no direct key in process mode — worker reaches SWAMP proxy on localhost
 		extLLMAnalysisModel,
 		extLLMPoCModel,
-		gitCloneCred,
+		gitCloneCreds,
 	)
 	if err != nil {
 		e.failAnalysis(analysis.ID, "Failed to issue worker token", err)

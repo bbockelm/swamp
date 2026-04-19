@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"strings"
 	"time"
@@ -37,7 +38,10 @@ func SecureGitClone(ctx context.Context, cred *models.GitCloneCredential, workDi
 	ctx, cancel := context.WithTimeout(ctx, cloneTimeout)
 	defer cancel()
 
-	repoDir := filepath.Join(workDir, "repo")
+	repoDir, err := selectCloneDir(workDir, cred.CloneURL)
+	if err != nil {
+		return "", err
+	}
 
 	// The git credential-helper protocol uses newlines as field delimiters
 	// and has no escaping mechanism. Reject tokens that contain characters
@@ -96,4 +100,28 @@ func SecureGitClone(ctx context.Context, cred *models.GitCloneCredential, workDi
 	}
 
 	return repoDir, nil
+}
+
+func selectCloneDir(workDir, cloneURL string) (string, error) {
+	base := "repo"
+	if cloneURL != "" {
+		trimmed := strings.TrimSuffix(strings.TrimSuffix(cloneURL, "/"), ".git")
+		if idx := strings.LastIndex(trimmed, "/"); idx >= 0 && idx+1 < len(trimmed) {
+			name := path.Clean(trimmed[idx+1:])
+			if name != "." && name != "/" && name != "" {
+				base = name
+			}
+		}
+	}
+	for i := 0; i < 1000; i++ {
+		name := base
+		if i > 0 {
+			name = fmt.Sprintf("%s-%d", base, i+1)
+		}
+		candidate := filepath.Join(workDir, name)
+		if _, err := os.Stat(candidate); os.IsNotExist(err) {
+			return candidate, nil
+		}
+	}
+	return "", fmt.Errorf("unable to choose clone directory for %q", cloneURL)
 }

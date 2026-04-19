@@ -281,7 +281,7 @@ func (e *Executor) run(analysis *models.Analysis, packages []models.SoftwarePack
 	if len(packages) == 1 {
 		prompt = BuildPrompt(&packages[0], "phase1", analysis.CustomPrompt, analysisCtx, preClonedPath)
 	} else {
-		prompt = BuildMultiPackagePrompt(packages, analysis.CustomPrompt, analysisCtx)
+		prompt = BuildMultiPackagePrompt(packages, analysis.CustomPrompt, analysisCtx, nil)
 	}
 
 	// Save the prompt and context as output artifacts so they can be viewed

@@ -63,7 +63,7 @@ type workerTokenEntry struct {
 	// The token is short-lived (1 hour) and used by the worker's Go code to
 	// pre-clone the repo before launching the AI agent. It never appears in
 	// the prompt or agent environment.
-	gitCloneCred *models.GitCloneCredential
+	gitCloneCreds []*models.GitCloneCredential
 }
 
 // WorkerSession is the session created after a successful token exchange.
@@ -96,6 +96,9 @@ type WorkerExchangeResponse struct {
 	// Git clone credential for private repos. Used by the worker's Go code
 	// to pre-clone before the AI agent starts. Never exposed to the agent.
 	GitCloneCred *models.GitCloneCredential `json:"git_clone_cred,omitempty"`
+
+	// Multi-package support: one credential per package/repo as needed.
+	GitCloneCreds []*models.GitCloneCredential `json:"git_clone_creds,omitempty"`
 }
 
 type workerPackageInfo struct {
@@ -145,7 +148,7 @@ func (s *WorkerTokenStore) IssueToken(
 	analysisCtx *models.AnalysisContext,
 	ttl time.Duration,
 	agentProvider, extLLMProxyURL, extLLMDirectKey, extLLMAnalysisModel, extLLMPoCModel string,
-	gitCloneCred *models.GitCloneCredential,
+	gitCloneCreds []*models.GitCloneCredential,
 ) (string, error) {
 	raw := make([]byte, 32)
 	if _, err := rand.Read(raw); err != nil {
@@ -170,7 +173,7 @@ func (s *WorkerTokenStore) IssueToken(
 		extLLMDirectKey:     extLLMDirectKey,
 		extLLMAnalysisModel: extLLMAnalysisModel,
 		extLLMPoCModel:      extLLMPoCModel,
-		gitCloneCred:        gitCloneCred,
+		gitCloneCreds:       gitCloneCreds,
 	}
 	return token, nil
 }
@@ -258,8 +261,16 @@ func (s *WorkerTokenStore) ExchangeToken(token string) (*WorkerExchangeResponse,
 		ExtLLMDirectKey:     entry.extLLMDirectKey,
 		ExtLLMAnalysisModel: entry.extLLMAnalysisModel,
 		ExtLLMPoCModel:      entry.extLLMPoCModel,
-		GitCloneCred:        entry.gitCloneCred,
+		GitCloneCred:        firstCloneCred(entry.gitCloneCreds),
+		GitCloneCreds:       entry.gitCloneCreds,
 	}, nil
+}
+
+func firstCloneCred(creds []*models.GitCloneCredential) *models.GitCloneCredential {
+	if len(creds) == 0 {
+		return nil
+	}
+	return creds[0]
 }
 
 // ValidateSession checks a session token and returns the associated session.

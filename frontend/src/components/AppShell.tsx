@@ -96,6 +96,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 </p>
                 <div className="bg-gray-50 border rounded p-4 max-h-48 overflow-y-auto text-xs leading-relaxed prose prose-xs max-w-none">
                   <RenderedMarkdown content={session.aup_text || ''} />
+                  <hr className="my-2 border-gray-200" />
+                  <p className="text-[10px] text-gray-400 italic">
+                    This is the acceptable use policy v{session.aup_version}.
+                    {session.aup_updated_at && <> This text was last updated on {session.aup_updated_at}.</>}
+                    {' '}It can be found at <a href={session.aup_url || '/aup'} target="_blank" rel="noopener noreferrer" className="text-blue-500 underline">{session.aup_url || '/aup'}</a>.
+                  </p>
                 </div>
               </div>
               <button

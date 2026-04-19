@@ -8,7 +8,7 @@ import React from "react";
 export function StreamLine({ line }: { line: string }) {
   if (line.startsWith("[system]")) {
     return (
-      <div className="flex items-start gap-2 py-1 px-2 rounded bg-yellow-500/10 text-yellow-300 text-xs">
+      <div className="flex items-start gap-2 py-1 px-2 rounded bg-yellow-900/40 text-yellow-100 text-sm">
         <span className="shrink-0 mt-0.5">⚙</span>
         <span className="break-words whitespace-pre-wrap">{line.slice(9)}</span>
       </div>
@@ -16,7 +16,7 @@ export function StreamLine({ line }: { line: string }) {
   }
   if (line.startsWith("[thinking]")) {
     return (
-      <div className="py-1 px-2 text-gray-400 text-xs italic border-l-2 border-gray-600 ml-1 break-words whitespace-pre-wrap">
+      <div className="py-1 px-2 text-gray-300 text-sm italic border-l-2 border-gray-500 ml-1 break-words whitespace-pre-wrap">
         💭 {line.slice(11)}
       </div>
     );
@@ -27,12 +27,12 @@ export function StreamLine({ line }: { line: string }) {
     const toolName = colonIdx > 0 ? detail.slice(0, colonIdx) : detail;
     const toolDetail = colonIdx > 0 ? detail.slice(colonIdx + 1).trim() : "";
     return (
-      <div className="flex items-start gap-2 py-1.5 px-2 rounded bg-red-500/15 text-xs">
-        <span className="shrink-0 font-mono font-semibold text-red-100 bg-red-700 px-1.5 py-0.5 rounded text-[10px]">
+      <div className="flex items-start gap-2 py-1.5 px-2 rounded bg-red-900/50 text-sm">
+        <span className="shrink-0 font-mono font-bold text-white bg-red-600 px-1.5 py-0.5 rounded text-xs">
           {toolName}
         </span>
         {toolDetail && (
-          <span className="text-red-300 break-words whitespace-pre-wrap">{toolDetail}</span>
+          <span className="text-red-200 break-words whitespace-pre-wrap">{toolDetail}</span>
         )}
       </div>
     );
@@ -43,40 +43,40 @@ export function StreamLine({ line }: { line: string }) {
     const toolName = colonIdx > 0 ? detail.slice(0, colonIdx) : detail;
     const toolDetail = colonIdx > 0 ? detail.slice(colonIdx + 1).trim() : "";
     return (
-      <div className="flex items-start gap-2 py-1.5 px-2 rounded bg-cyan-500/10 text-xs">
-        <span className="shrink-0 font-mono font-semibold text-cyan-100 bg-cyan-700 px-1.5 py-0.5 rounded text-[10px]">
+      <div className="flex items-start gap-2 py-1.5 px-2 rounded bg-slate-800 text-sm">
+        <span className="shrink-0 font-mono font-bold text-white bg-blue-600 px-1.5 py-0.5 rounded text-xs">
           {toolName}
         </span>
         {toolDetail && (
-          <span className="text-cyan-200 break-words whitespace-pre-wrap">{toolDetail}</span>
+          <span className="text-white break-words whitespace-pre-wrap">{toolDetail}</span>
         )}
       </div>
     );
   }
   if (line.startsWith("[result]")) {
     return (
-      <div className="py-1 px-2 text-xs text-green-400 border-l-2 border-green-500 ml-1 break-words whitespace-pre-wrap font-mono">
+      <div className="py-1 px-2 text-sm text-green-200 border-l-2 border-green-400 ml-1 break-words whitespace-pre-wrap font-mono">
         {line.slice(9)}
       </div>
     );
   }
   if (line.startsWith("[error]")) {
     return (
-      <div className="flex items-start gap-2 py-1.5 px-2 rounded bg-red-900/60 text-red-300 text-xs border-l-2 border-red-500">
-        <span className="shrink-0 text-red-400 font-bold">✕</span>
+      <div className="flex items-start gap-2 py-1.5 px-2 rounded bg-red-900/70 text-red-100 text-sm border-l-2 border-red-400">
+        <span className="shrink-0 text-red-300 font-bold">✕</span>
         <span className="break-words whitespace-pre-wrap font-mono font-semibold">{line.slice(8)}</span>
       </div>
     );
   }
   if (line.startsWith("[stderr]")) {
     return (
-      <div className="py-0.5 px-2 text-red-400 text-xs font-mono break-words whitespace-pre-wrap">
+      <div className="py-0.5 px-2 text-red-200 text-sm font-mono break-words whitespace-pre-wrap">
         {line.slice(9)}
       </div>
     );
   }
   return (
-    <div className="py-0.5 px-2 text-gray-200 text-sm break-words whitespace-pre-wrap">
+    <div className="py-0.5 px-2 text-gray-100 text-sm break-words whitespace-pre-wrap">
       {line}
     </div>
   );

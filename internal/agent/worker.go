@@ -94,20 +94,49 @@ func RunWorker(cfg *config.Config) error {
 		return fmt.Errorf("create work dir: %w", err)
 	}
 
-	// Pre-clone the repository if a GitHub clone credential was provided.
-	// This runs in Go code so the credential is never visible to the AI agent.
-	var preClonedPath string
-	if session.GitCloneCred != nil {
-		log.Info().Str("url", session.GitCloneCred.CloneURL).Msg("Pre-cloning private repository")
-		localPath, err := SecureGitClone(context.Background(), session.GitCloneCred, workDir)
-		// Zero the token in memory immediately after use.
-		session.GitCloneCred.Token = ""
-		session.GitCloneCred = nil
+	// Pre-clone repositories if GitHub clone credentials were provided.
+	// This runs in Go code so credentials are never visible to the AI agent.
+	credList := session.GitCloneCreds
+	if len(credList) == 0 && session.GitCloneCred != nil {
+		// Backward compatibility with older session payloads.
+		credList = []*models.GitCloneCredential{session.GitCloneCred}
+	}
+	clonedByURL := map[string]string{}
+	for _, cred := range credList {
+		if cred == nil {
+			continue
+		}
+		log.Info().Str("url", cred.CloneURL).Msg("Pre-cloning repository")
+		localPath, err := SecureGitClone(context.Background(), cred, workDir)
+		// Zero token in memory immediately after use.
+		cred.Token = ""
 		if err != nil {
-			log.Warn().Err(err).Msg("Pre-clone failed, agent will attempt clone from prompt")
-		} else {
-			preClonedPath = localPath
-			log.Info().Str("path", localPath).Msg("Pre-cloned repository successfully")
+			detail := "Pre-clone failed; worker could not access repository"
+			if msg := strings.TrimSpace(err.Error()); msg != "" {
+				if len(msg) > 220 {
+					msg = msg[:220]
+				}
+				detail = "Pre-clone failed: " + msg
+			}
+			_ = os.WriteFile(filepath.Join(outputDir, "error.txt"), []byte(detail), 0640)
+			reportStatus(serverURL, sessionToken, analysisID, "failed", detail)
+			_ = uploadResults(serverURL, sessionToken, analysisID, outputDir)
+			return fmt.Errorf("pre-clone failed: %w", err)
+		}
+		clonedByURL[normalizeRepoURL(cred.CloneURL)] = localPath
+		log.Info().Str("path", localPath).Str("url", cred.CloneURL).Msg("Pre-cloned repository successfully")
+	}
+	session.GitCloneCred = nil
+	session.GitCloneCreds = nil
+
+	var preClonedPath string
+	preClonedByPackage := map[string]string{}
+	for _, p := range session.Packages {
+		if localPath, ok := clonedByURL[normalizeRepoURL(p.GitURL)]; ok {
+			if preClonedPath == "" {
+				preClonedPath = localPath
+			}
+			preClonedByPackage[p.Name] = localPath
 		}
 	}
 
@@ -121,7 +150,7 @@ func RunWorker(cfg *config.Config) error {
 		for i, p := range session.Packages {
 			pkgs[i] = packageInfoToSoftwarePackage(p)
 		}
-		prompt = BuildMultiPackagePrompt(pkgs, session.CustomPrompt, session.AnalysisContext)
+		prompt = BuildMultiPackagePrompt(pkgs, session.CustomPrompt, session.AnalysisContext, preClonedByPackage)
 	}
 
 	// Save the prompt and context as output artifacts.
@@ -201,7 +230,8 @@ func RunWorker(cfg *config.Config) error {
 	// missing config). An empty stdout means the agent didn't actually run.
 	stdoutLog := filepath.Join(outputDir, "agent_stdout.log")
 	if info, err := os.Stat(stdoutLog); err != nil || info.Size() == 0 {
-		reportStatus(serverURL, sessionToken, analysisID, "failed", "Agent produced no output (exited successfully but stdout was empty)")
+		detail := withErrorReportFallback(outputDir, "Agent produced no output (exited successfully but stdout was empty)")
+		reportStatus(serverURL, sessionToken, analysisID, "failed", detail)
 		_ = uploadResults(serverURL, sessionToken, analysisID, outputDir)
 		return fmt.Errorf("agent produced no output")
 	}
@@ -209,9 +239,19 @@ func RunWorker(cfg *config.Config) error {
 	// Detect if the agent exited 0 but only emitted error events (e.g. API
 	// routing error, invalid model). This means no useful work was done.
 	if fatalErr := checkOpenCodeFatalError(stdoutLog); fatalErr != "" {
-		reportStatus(serverURL, sessionToken, analysisID, "failed", "Agent failed: "+fatalErr)
+		detail := withErrorReportFallback(outputDir, "Agent failed: "+fatalErr)
+		reportStatus(serverURL, sessionToken, analysisID, "failed", detail)
 		_ = uploadResults(serverURL, sessionToken, analysisID, outputDir)
 		return fmt.Errorf("agent fatal error: %s", fatalErr)
+	}
+
+	// If the run ended without any usable analysis artifacts, fail and prefer
+	// a concise worker-authored error report when available.
+	if !hasUsableArtifacts(outputDir) {
+		detail := withErrorReportFallback(outputDir, "Agent produced no usable output files (expected SARIF or report)")
+		reportStatus(serverURL, sessionToken, analysisID, "failed", detail)
+		_ = uploadResults(serverURL, sessionToken, analysisID, outputDir)
+		return fmt.Errorf("analysis produced no usable artifacts")
 	}
 
 	// Check for shutdown before starting Phase 2.
@@ -271,6 +311,13 @@ func packageInfoToSoftwarePackage(p workerPackageInfo) models.SoftwarePackage {
 		GitCommit:      p.GitCommit,
 		AnalysisPrompt: p.AnalysisPrompt,
 	}
+}
+
+func normalizeRepoURL(u string) string {
+	u = strings.TrimSpace(strings.ToLower(u))
+	u = strings.TrimSuffix(u, ".git")
+	u = strings.TrimSuffix(u, "/")
+	return u
 }
 
 // exchangeToken calls the server to exchange a one-time worker token for a session.
@@ -633,6 +680,49 @@ func uploadSingleResult(serverURL, sessionToken, analysisID, filePath, filename 
 
 	log.Info().Str("file", filename).Msg("Uploaded result file")
 	return nil
+}
+
+func hasUsableArtifacts(outputDir string) bool {
+	entries, err := os.ReadDir(outputDir)
+	if err != nil {
+		return false
+	}
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		name := strings.ToLower(e.Name())
+		if name == "report.md" || strings.HasSuffix(name, ".sarif") {
+			return true
+		}
+	}
+	return false
+}
+
+func readConciseErrorReport(outputDir string) string {
+	b, err := os.ReadFile(filepath.Join(outputDir, "error.txt"))
+	if err != nil {
+		return ""
+	}
+	msg := strings.Join(strings.Fields(string(b)), " ")
+	if msg == "" {
+		return ""
+	}
+	words := strings.Fields(msg)
+	if len(words) > 30 {
+		msg = strings.Join(words[:30], " ")
+	}
+	if len(msg) > 220 {
+		msg = msg[:220]
+	}
+	return msg
+}
+
+func withErrorReportFallback(outputDir, defaultDetail string) string {
+	if msg := readConciseErrorReport(outputDir); msg != "" {
+		return msg
+	}
+	return defaultDetail
 }
 
 // doWithRetry executes an HTTP request with retries on transient failures

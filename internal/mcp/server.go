@@ -432,6 +432,25 @@ func (s *Server) startAnalysis(ctx context.Context, req mcp.CallToolRequest) (*m
 		return errResult("failed to create analysis: " + err.Error()), nil
 	}
 
+	pkgsForLog, _ := s.queries.ListAnalysisPackages(ctx, analysis.ID)
+	packageMeta := make([]string, 0, len(pkgsForLog))
+	githubConfigured := 0
+	for _, p := range pkgsForLog {
+		packageMeta = append(packageMeta, p.Name+"("+p.GitBranch+")")
+		if p.InstallationID != 0 && p.GitHubOwner != "" && p.GitHubRepo != "" {
+			githubConfigured++
+		}
+	}
+	log.Info().
+		Str("analysis_id", analysis.ID).
+		Str("project_id", projectID).
+		Str("trigger", "mcp").
+		Str("triggered_by", userID).
+		Int("package_count", len(pkgsForLog)).
+		Int("github_clone_capable_packages", githubConfigured).
+		Strs("packages", packageMeta).
+		Msg("Created analysis")
+
 	for _, pkgID := range pkgIDs {
 		_ = s.queries.AddAnalysisPackage(ctx, analysis.ID, pkgID)
 	}

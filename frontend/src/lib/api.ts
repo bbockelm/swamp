@@ -69,6 +69,8 @@ export interface Session {
   aup_agreed: boolean;
   aup_version: string;
   aup_text: string;
+  aup_updated_at?: string;
+  aup_url?: string;
 }
 
 export interface Group {

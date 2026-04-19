@@ -100,6 +100,8 @@ func (h *Handler) CreateAnalysis(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	selectedPackages := make([]models.SoftwarePackage, 0, len(req.PackageIDs))
+
 	// A provider must always be specified — "server default" is not allowed
 	// because it bypasses the per-project provider ACL.
 	if req.ProviderID == "" {
@@ -114,6 +116,7 @@ func (h *Handler) CreateAnalysis(w http.ResponseWriter, r *http.Request) {
 			respondError(w, http.StatusBadRequest, "Invalid package ID: "+pkgID)
 			return
 		}
+		selectedPackages = append(selectedPackages, *pkg)
 	}
 
 	// Merge provider info into agent_config.
@@ -160,6 +163,25 @@ func (h *Handler) CreateAnalysis(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusInternalServerError, "Failed to create analysis")
 		return
 	}
+
+	githubConfigured := 0
+	packageMeta := make([]string, 0, len(selectedPackages))
+	for _, p := range selectedPackages {
+		if p.InstallationID != 0 && p.GitHubOwner != "" && p.GitHubRepo != "" {
+			githubConfigured++
+		}
+		packageMeta = append(packageMeta, p.Name+"("+p.GitBranch+")")
+	}
+	log.Info().
+		Str("analysis_id", analysis.ID).
+		Str("project_id", projectID).
+		Str("triggered_by", user.ID).
+		Int("package_count", len(selectedPackages)).
+		Int("github_clone_capable_packages", githubConfigured).
+		Strs("packages", packageMeta).
+		Str("provider_id", req.ProviderID).
+		Str("provider_source", req.ProviderSource).
+		Msg("Created analysis")
 
 	// Link packages to analysis
 	for _, pkgID := range req.PackageIDs {
