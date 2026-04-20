@@ -4,6 +4,25 @@ import React from "react";
 
 // ─── line rendering ─────────────────────────────────────────
 
+/** Strip XML-like tool tags (e.g. <path>…</path>, <content>…</content>) and
+ *  return human-readable text. Collapses long inner content. */
+function stripToolXml(text: string): string {
+  // Replace <tag>content</tag> with the tag label and a trimmed preview.
+  return text.replace(/<(\w+)>([\s\S]*?)<\/\1>/g, (_match, tag: string, inner: string) => {
+    const trimmed = inner.trim();
+    if (!trimmed) return "";
+    // For path/file tags, just show the value.
+    if (/^(?:path|file|file_path|filePath|url|command)$/i.test(tag)) {
+      return trimmed;
+    }
+    // For long content blocks (file contents, etc.), truncate.
+    if (trimmed.length > 200) {
+      return `[${tag}: ${trimmed.slice(0, 150).trimEnd()}…]`;
+    }
+    return trimmed;
+  }).replace(/\s{2,}/g, " ").trim();
+}
+
 /** Renders a single parsed stream line with high-contrast styling for dark logs. */
 export function StreamLine({ line }: { line: string }) {
   if (line.startsWith("[system]")) {
@@ -16,7 +35,7 @@ export function StreamLine({ line }: { line: string }) {
   }
   if (line.startsWith("[thinking]")) {
     return (
-      <div className="py-1.5 px-2 text-gray-100 text-sm italic border-l-2 border-gray-300 ml-1 break-words whitespace-pre-wrap">
+      <div className="py-1.5 px-2 text-white/80 text-sm italic border-l-2 border-gray-300 ml-1 break-words whitespace-pre-wrap">
         💭 {line.slice(11)}
       </div>
     );
@@ -54,14 +73,16 @@ export function StreamLine({ line }: { line: string }) {
     );
   }
   if (line.startsWith("[result]")) {
-    const content = line.slice(9);
+    const raw = line.slice(9);
+    const content = stripToolXml(raw);
+    if (!content) return null;
     // Detect stderr-like error output in results and render prominently.
     const isErrorOutput = /^\/bin\/\w+:|^sh:|^bash:|^error:|^fatal:|^E:|^Traceback /i.test(content.trimStart());
     return (
       <div className={`py-1 px-2 text-sm border-l-2 ml-1 break-words whitespace-pre-wrap font-mono ${
         isErrorOutput
-          ? "text-red-200 border-red-300"
-          : "text-gray-100 border-emerald-300"
+          ? "text-red-100 border-red-300"
+          : "text-white border-emerald-300"
       }`}>
         {content}
       </div>
@@ -77,14 +98,16 @@ export function StreamLine({ line }: { line: string }) {
   }
   if (line.startsWith("[stderr]")) {
     return (
-      <div className="py-1 px-2 text-red-200 text-sm font-mono border-l-2 border-red-400/80 ml-1 break-words whitespace-pre-wrap">
+      <div className="py-1 px-2 text-red-100 text-sm font-mono border-l-2 border-red-400/80 ml-1 break-words whitespace-pre-wrap">
         {line.slice(9)}
       </div>
     );
   }
+  const cleaned = stripToolXml(line);
+  if (!cleaned) return null;
   return (
-    <div className="py-1 px-2 text-gray-100 text-sm break-words whitespace-pre-wrap">
-      {line}
+    <div className="py-1 px-2 text-white/90 text-sm break-words whitespace-pre-wrap">
+      {cleaned}
     </div>
   );
 }
