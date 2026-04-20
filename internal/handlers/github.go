@@ -1079,7 +1079,7 @@ func (h *Handler) triggerWebhookAnalysis(ctx context.Context, ghCfg *models.Proj
 	if ghCfg.WebhookProviderID != nil && *ghCfg.WebhookProviderID != "" {
 		agentConfig["llm_provider_id"] = *ghCfg.WebhookProviderID
 		agentConfig["provider_source"] = "global"
-		if prov, err := h.queries.GetLLMProvider(r.Context(), *ghCfg.WebhookProviderID); err == nil {
+		if prov, err := h.queries.GetLLMProvider(ctx, *ghCfg.WebhookProviderID); err == nil {
 			agentConfig["provider_label"] = prov.Label
 		}
 	}

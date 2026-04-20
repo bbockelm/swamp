@@ -88,6 +88,9 @@ function LandingPage() {
               Learn More
             </a>
           </div>
+          <div className="mt-12">
+            <img src="/logo.png" alt="SWAMP" className="h-20 w-auto opacity-90" />
+          </div>
         </div>
       </section>
 
