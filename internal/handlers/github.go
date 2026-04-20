@@ -729,6 +729,7 @@ func (h *Handler) UserRepoAccess(w http.ResponseWriter, r *http.Request) {
 
 	// 3. Cross-reference with SWAMP-known installations.
 	var matched []matchedInstallation
+	ownerMatched := false
 	for _, ui := range userInstalls {
 		// Check if this installation is known to SWAMP.
 		swampInst, err := h.queries.GetInstallationByID(r.Context(), ui.ID)
@@ -742,6 +743,7 @@ func (h *Handler) UserRepoAccess(w http.ResponseWriter, r *http.Request) {
 
 		// Check if the owner matches (the repo might be under this installation's account).
 		if strings.EqualFold(swampInst.AccountLogin, owner) {
+			ownerMatched = true
 			// This installation covers the right owner — check repo access.
 			accessible, defaultBranch, err := h.ghClient.UserCanAccessRepo(r.Context(), token, swampInst.InstallationID, owner, repo)
 			if err == nil && accessible {
@@ -765,12 +767,12 @@ func (h *Handler) UserRepoAccess(w http.ResponseWriter, r *http.Request) {
 		MatchedInstallations: matched,
 	}
 
-	if len(matched) > 0 {
-		// User has overlapping installations, but none cover this repo.
+	if ownerMatched {
+		// User has an installation for this owner, but it doesn't cover this repo.
 		resp.HasInstallation = true
 		resp.Error = fmt.Sprintf("The GitHub App is installed but does not have access to %s/%s. Ask the organization admin to grant access to this repository.", owner, repo)
 	} else {
-		// No overlapping installations — suggest installing the app.
+		// No installation for this owner — suggest installing the app.
 		resp.InstallURL = h.ghClient.InstallURL(r.Context())
 		resp.Error = fmt.Sprintf("No GitHub App installation found for %q. Install the app to enable access.", owner)
 	}
