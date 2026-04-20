@@ -635,11 +635,11 @@ export const api = {
         method: "POST",
         body: JSON.stringify(data),
       }),
-    get: async (projectId: string, id: string): Promise<Analysis & { token_usage?: TokenUsage[] }> => {
-      const resp = await fetchJSON<{ analysis: Analysis; token_usage?: TokenUsage[] }>(
+    get: async (projectId: string, id: string): Promise<Analysis & { token_usage?: TokenUsage[]; packages?: SoftwarePackage[] }> => {
+      const resp = await fetchJSON<{ analysis: Analysis; packages?: SoftwarePackage[]; token_usage?: TokenUsage[] }>(
         `${BASE}/projects/${projectId}/analyses/${id}`,
       );
-      return { ...resp.analysis, token_usage: resp.token_usage };
+      return { ...resp.analysis, token_usage: resp.token_usage, packages: resp.packages };
     },
     cancel: (projectId: string, id: string): Promise<void> =>
       fetchJSON(`${BASE}/projects/${projectId}/analyses/${id}/cancel`, {

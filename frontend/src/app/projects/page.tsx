@@ -2157,6 +2157,15 @@ function FindingsTabInline({
 }
 
 function GitHubTabInline({ projectId }: { projectId: string }) {
+  const [linkingGitHub, setLinkingGitHub] = useState(false);
+  const queryClient = useQueryClient();
+
+  const { data: linkStatus } = useQuery({
+    queryKey: ['github-link-status'],
+    queryFn: () => api.github.getLinkStatus(),
+    staleTime: 30_000,
+  });
+
   const { data: installations, isLoading } = useQuery({
     queryKey: ['github-installations'],
     queryFn: async () => {
@@ -2171,10 +2180,44 @@ function GitHubTabInline({ projectId }: { projectId: string }) {
     staleTime: 300_000,
   });
 
+  useEffect(() => {
+    const handler = (e: MessageEvent) => {
+      if (e.data === 'github-linked') {
+        setLinkingGitHub(false);
+        queryClient.invalidateQueries({ queryKey: ['github-link-status'] });
+        queryClient.invalidateQueries({ queryKey: ['github-installations'] });
+      }
+    };
+    window.addEventListener('message', handler);
+    return () => window.removeEventListener('message', handler);
+  }, [queryClient]);
+
+  const handleLinkGitHub = async () => {
+    setLinkingGitHub(true);
+    try {
+      const resp = await api.github.startLink();
+      window.open(resp.authorize_url, 'github-link', 'width=600,height=700');
+    } catch {
+      setLinkingGitHub(false);
+    }
+  };
+
   if (isLoading) return <p className="text-sm text-gray-400">Loading…</p>;
 
   return (
     <div className="space-y-4">
+      {linkStatus && !linkStatus.linked && linkStatus.oauth_configured && (
+        <div className="bg-amber-50 border border-amber-200 p-3 rounded flex items-center justify-between">
+          <p className="text-xs text-amber-700">Link your GitHub account to see installations.</p>
+          <button
+            onClick={handleLinkGitHub}
+            disabled={linkingGitHub}
+            className="bg-brand-600 text-white px-2 py-1 text-xs rounded hover:bg-brand-700 disabled:opacity-50 whitespace-nowrap ml-2"
+          >
+            {linkingGitHub ? 'Linking…' : 'Link GitHub'}
+          </button>
+        </div>
+      )}
       {appInfo?.configured && appInfo.install_url && (
         <div className="flex items-center justify-between">
           <p className="text-sm text-gray-500">

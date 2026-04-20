@@ -56,8 +56,9 @@ func (h *Handler) GetGitHubStatus(w http.ResponseWriter, r *http.Request) {
 // ListGitHubInstallations returns GitHub App installations the current user
 // is authorized to see:
 //   - Admins: all installations (optionally filtered by ?owner=)
-//   - Others: only installations they created, or installations linked to
-//     projects where they have admin access.
+//   - Others: installations visible via their linked GitHub token (cross-
+//     referenced with SWAMP's DB), plus any installations they created or
+//     that are linked to projects where they have admin access.
 func (h *Handler) ListGitHubInstallations(w http.ResponseWriter, r *http.Request) {
 	type response struct {
 		Installations []models.GitHubAppInstallation `json:"installations"`
@@ -81,7 +82,43 @@ func (h *Handler) ListGitHubInstallations(w http.ResponseWriter, r *http.Request
 	if UserHasRole(r.Context(), RoleAdmin) {
 		installations, err = h.queries.ListGitHubInstallations(r.Context())
 	} else {
+		// Start with DB-known installations for this user.
 		installations, err = h.queries.ListInstallationsForUser(r.Context(), user.ID)
+		if err != nil {
+			log.Error().Err(err).Msg("Failed to list installations from DB")
+			respondError(w, http.StatusInternalServerError, "Failed to list installations")
+			return
+		}
+		if installations == nil {
+			installations = []models.GitHubAppInstallation{}
+		}
+
+		// Also discover installations via the user's linked GitHub token.
+		token := h.getValidGitHubToken(r.Context(), user.ID)
+		if token != "" {
+			userInstalls, ghErr := h.ghClient.ListUserInstallations(r.Context(), token)
+			if ghErr != nil {
+				log.Warn().Err(ghErr).Str("user_id", user.ID).Msg("Failed to list user GitHub installations")
+			} else {
+				// Merge: add any SWAMP-known installations visible to the
+				// user on GitHub that aren't already in the list.
+				seen := make(map[int64]bool, len(installations))
+				for _, inst := range installations {
+					seen[inst.InstallationID] = true
+				}
+				for _, ui := range userInstalls {
+					if seen[ui.ID] {
+						continue
+					}
+					swampInst, lookupErr := h.queries.GetInstallationByID(r.Context(), ui.ID)
+					if lookupErr != nil || swampInst == nil {
+						continue // Not registered in SWAMP
+					}
+					installations = append(installations, *swampInst)
+					seen[ui.ID] = true
+				}
+			}
+		}
 	}
 	if err != nil {
 		log.Error().Err(err).Msg("Failed to list installations")
@@ -1042,6 +1079,9 @@ func (h *Handler) triggerWebhookAnalysis(ctx context.Context, ghCfg *models.Proj
 	if ghCfg.WebhookProviderID != nil && *ghCfg.WebhookProviderID != "" {
 		agentConfig["llm_provider_id"] = *ghCfg.WebhookProviderID
 		agentConfig["provider_source"] = "global"
+		if prov, err := h.queries.GetLLMProvider(r.Context(), *ghCfg.WebhookProviderID); err == nil {
+			agentConfig["provider_label"] = prov.Label
+		}
 	}
 	configBytes, _ := json.Marshal(agentConfig)
 

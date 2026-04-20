@@ -3,6 +3,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, type AnalysisResult } from "@/lib/api";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { AnalysisStatus } from "@/components/AnalysisStatus";
 import { SARIFViewer } from "@/components/SARIFViewer";
 import { MarkdownReport, RenderedMarkdown } from "@/components/MarkdownReport";
@@ -148,14 +149,22 @@ export default function AnalysisDetailClient() {
   const providerID = typeof analysis.agent_config?.llm_provider_id === "string"
     ? analysis.agent_config.llm_provider_id
     : "";
-  const providerSource = typeof analysis.agent_config?.provider_source === "string"
-    ? analysis.agent_config.provider_source
+  const providerLabel = typeof analysis.agent_config?.provider_label === "string"
+    ? analysis.agent_config.provider_label
     : "";
 
   return (
     <div>
       <div className="flex justify-between items-start mb-6">
         <div>
+          {project && (
+            <p className="text-sm text-gray-500 mb-1">
+              <Link href={`/projects/${projectId}`} className="text-brand-600 hover:underline">
+                {project.name}
+              </Link>
+              {' '}&rsaquo; Analysis
+            </p>
+          )}
           <h1 className="text-2xl font-bold">
             Analysis{" "}
             <span className="font-mono text-gray-500">
@@ -310,11 +319,33 @@ export default function AnalysisDetailClient() {
               <p className="text-sm font-mono">{analysis.agent_model || "auto"}</p>
               {providerID && (
                 <p className="text-xs text-gray-500 mt-0.5">
-                  Provider: {providerSource ? `${providerSource}/` : ""}{providerID}
+                  Provider: {providerLabel || providerID}
                 </p>
               )}
             </div>
           )}
+        {analysis.packages && analysis.packages.length > 0 && (
+          <div>
+            <p className="text-xs text-gray-500 uppercase">
+              {analysis.packages.length === 1 ? 'Package' : 'Packages'}
+            </p>
+            <div className="space-y-0.5">
+              {analysis.packages.map((pkg) => (
+                <p key={pkg.id} className="text-sm">
+                  <Link
+                    href={`/projects/${projectId}`}
+                    className="text-brand-600 hover:underline"
+                  >
+                    {pkg.name}
+                  </Link>
+                  <span className="text-xs text-gray-400 font-mono ml-1.5">
+                    {pkg.git_branch}
+                  </span>
+                </p>
+              ))}
+            </div>
+          </div>
+        )}
         {analysis.sarif_upload_url && (
           <div>
             <p className="text-xs text-gray-500 uppercase">GitHub Code Scanning</p>

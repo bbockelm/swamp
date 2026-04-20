@@ -130,6 +130,11 @@ func (h *Handler) CreateAnalysis(w http.ResponseWriter, r *http.Request) {
 			req.ProviderSource = "global"
 		}
 		agentConfig["provider_source"] = req.ProviderSource
+
+		// Look up human-readable label for display.
+		if prov, err := h.queries.GetLLMProvider(r.Context(), req.ProviderID); err == nil {
+			agentConfig["provider_label"] = prov.Label
+		}
 	}
 	configBytes, _ := json.Marshal(agentConfig)
 

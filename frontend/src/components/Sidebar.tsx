@@ -1,7 +1,6 @@
 "use client";
 
 import Link from "next/link";
-import Image from "next/image";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -71,7 +70,7 @@ export function Sidebar({ roles = [], userName }: SidebarProps) {
       >
         <div className="p-4 border-b border-navy-700">
           <Link href="/" className="flex items-center gap-3">
-            <Image src="/logo-square.png" alt="SWAMP" width={36} height={36} className="rounded" />
+            <img src="/logo-square.png" alt="SWAMP" width={36} height={36} className="rounded" />
             <div>
               <span className="text-xl font-bold">SWAMP</span>
               <p className="text-xs text-gray-400">Security Analysis Platform</p>
