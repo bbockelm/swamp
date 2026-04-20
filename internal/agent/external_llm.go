@@ -23,6 +23,18 @@ type outputBroadcaster interface {
 	Broadcast(analysisID string, data []byte)
 }
 
+// resetOpenCodeState removes opencode's data and state directories so that
+// a subsequent run in the same workDir starts a fresh session. Without this,
+// opencode may detect the previous session and skip or behave unexpectedly.
+func resetOpenCodeState(workDir string) {
+	for _, sub := range []string{"data", "state", "cache"} {
+		dir := filepath.Join(workDir, sub)
+		if err := os.RemoveAll(dir); err != nil {
+			log.Warn().Err(err).Str("dir", dir).Msg("Failed to remove opencode state dir")
+		}
+	}
+}
+
 // writeOpenCodeConfig writes opencode configuration files to workDir.
 //
 // The shape intentionally mirrors known-good custom OpenAI-compatible config:

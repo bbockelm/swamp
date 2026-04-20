@@ -271,6 +271,10 @@ func RunWorker(cfg *config.Config) error {
 	// Run Phase 2 if Phase 1 produced SARIF.
 	sarifPath := filepath.Join(outputDir, "results.sarif")
 	if _, err := os.Stat(sarifPath); err == nil {
+		// Clear opencode state/data/cache directories so Phase 2 starts a
+		// fresh session instead of potentially resuming Phase 1's session.
+		resetOpenCodeState(workDir)
+
 		reportStatus(serverURL, sessionToken, analysisID, "running", "Phase 2: Exploit validation")
 		streamer.send("[system] Starting Phase 2: Exploit validation")
 		pkg := packageInfoToSoftwarePackage(session.Packages[0])
@@ -280,7 +284,13 @@ func RunWorker(cfg *config.Config) error {
 				streamer.send("[system] Phase 2 interrupted — uploading results...")
 			}
 			log.Warn().Err(err).Msg("Phase 2 failed (non-fatal)")
+			streamer.send("[system] Phase 2 failed (non-fatal) — proceeding with Phase 1 results")
+		} else {
+			streamer.send("[system] Phase 2 completed successfully")
 		}
+	} else {
+		log.Info().Str("analysis_id", analysisID).Msg("No SARIF produced by Phase 1, skipping Phase 2")
+		streamer.send("[system] No SARIF output from Phase 1 — skipping Phase 2")
 	}
 
 	// Upload results.

@@ -320,6 +320,8 @@ func (e *Executor) run(analysis *models.Analysis, packages []models.SoftwarePack
 				return
 			}
 			if _, statErr := os.Stat(sarifPath); statErr == nil {
+				// Clear opencode state so Phase 2 starts a fresh session.
+				resetOpenCodeState(workDir)
 				if err := e.updateStatus(ctx, analysis.ID, "running", "Phase 2: Exploit validation"); err != nil {
 					return
 				}
@@ -394,6 +396,8 @@ func (e *Executor) run(analysis *models.Analysis, packages []models.SoftwarePack
 
 		// Phase 2: Exploit validation.
 		if _, err := os.Stat(sarifPath); err == nil {
+			// Clear opencode state so Phase 2 starts a fresh session.
+			resetOpenCodeState(workDir)
 			if err := e.updateStatus(ctx, analysis.ID, "running", "Phase 2: Exploit validation"); err != nil {
 				return
 			}
