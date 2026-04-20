@@ -586,6 +586,12 @@ func (wh *WorkerHandler) UploadResult(w http.ResponseWriter, r *http.Request) {
 				break
 			}
 		}
+		// Single-package analyses always produce "results.sarif" which won't
+		// match the package name. Fall back to the only package available.
+		if result.PackageID == nil && len(session.Packages) == 1 {
+			pkgID := session.Packages[0].ID
+			result.PackageID = &pkgID
+		}
 	}
 
 	if err := wh.h.queries.CreateAnalysisResult(r.Context(), result); err != nil {

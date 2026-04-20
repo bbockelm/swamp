@@ -372,6 +372,7 @@ func New(cfg *config.Config, pool *pgxpool.Pool, store *storage.Store) (*chi.Mux
 						r.Get("/alive", h.CheckAnalysisLiveness)
 						r.Post("/cancel", h.CancelAnalysis)
 						r.Post("/resubmit", h.ResubmitAnalysis)
+						r.Post("/retry-sarif-upload", h.RetrySARIFUpload)
 						r.Get("/results", h.ListResults)
 						r.Route("/results/{resultID}", func(r chi.Router) {
 							r.Get("/", h.GetResult)

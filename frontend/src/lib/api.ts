@@ -653,6 +653,24 @@ export const api = {
       fetchJSON(`${BASE}/projects/${projectId}/analyses/${id}/resubmit`, {
         method: "POST",
       }),
+    retrySarifUpload: (
+      projectId: string,
+      analysisId: string,
+    ): Promise<{
+      attempted: number;
+      uploaded: number;
+      results: Array<{
+        result_id: string;
+        filename: string;
+        uploaded: boolean;
+        url?: string;
+        error?: string;
+      }>;
+    }> =>
+      fetchJSON(
+        `${BASE}/projects/${projectId}/analyses/${analysisId}/retry-sarif-upload`,
+        { method: "POST" },
+      ),
     listResults: (
       projectId: string,
       analysisId: string,

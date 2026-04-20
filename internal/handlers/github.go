@@ -696,23 +696,29 @@ func (h *Handler) UserRepoAccess(w http.ResponseWriter, r *http.Request) {
 	// 1. Check if the user has a linked GitHub identity with a valid token.
 	token := h.getValidGitHubToken(r.Context(), user.ID)
 	if token == "" {
-		// Not linked or token invalid — check if OAuth is configured to suggest linking.
-		if h.ghClient.OAuthConfigured() {
-			respondJSON(w, http.StatusOK, response{NeedsLink: true})
-		} else {
-			// Fall back to the old non-user-aware check.
-			result := h.ghClient.CheckRepoAccess(r.Context(), owner, repo)
-			resp := response{
-				HasInstallation: result.HasInstallation,
-				Accessible:      result.Accessible,
-				DefaultBranch:   result.DefaultBranch,
-				Error:           result.Error,
-			}
-			if !result.HasInstallation {
-				resp.InstallURL = h.ghClient.InstallURL(r.Context())
-			}
-			respondJSON(w, http.StatusOK, resp)
+		// Not linked or token invalid — still check installation-based access
+		// so the SARIF toggle and branch detection work even without a personal
+		// GitHub link. NeedsLink is set as a suggestion only.
+		result := h.ghClient.CheckRepoAccess(r.Context(), owner, repo)
+		resp := response{
+			HasInstallation: result.HasInstallation,
+			Accessible:      result.Accessible,
+			DefaultBranch:   result.DefaultBranch,
+			Error:           result.Error,
 		}
+		if result.Accessible {
+			// Installation covers this repo — find its ID.
+			if inst, err := h.queries.GetInstallationByOwner(r.Context(), owner); err == nil && inst != nil {
+				resp.InstallationID = inst.InstallationID
+			}
+		}
+		if !result.HasInstallation {
+			resp.InstallURL = h.ghClient.InstallURL(r.Context())
+		}
+		if h.ghClient.OAuthConfigured() {
+			resp.NeedsLink = true
+		}
+		respondJSON(w, http.StatusOK, resp)
 		return
 	}
 

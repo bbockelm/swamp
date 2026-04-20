@@ -570,12 +570,12 @@ function PackagesTab({ projectId }: { projectId: string }) {
     }
     if (parsedGitHub) {
       api.github.userRepoAccess(parsedGitHub.owner, parsedGitHub.repo).then((access) => {
-        if (access.needs_link) {
+        if (access.accessible) {
+          setBranchError(result.error ?? 'Could not detect branches.');
+        } else if (access.needs_link && !access.has_installation) {
           setBranchError('Could not access this repository — link your GitHub account to check access.');
           setNeedsGitHubLink(true);
           setAccessInstallURL(null);
-        } else if (access.accessible) {
-          setBranchError(result.error ?? 'Could not detect branches.');
         } else if (!access.has_installation) {
           setBranchError('Could not access this repository — it may be private.');
           setAccessInstallURL(access.install_url ?? null);
@@ -601,21 +601,21 @@ function PackagesTab({ projectId }: { projectId: string }) {
     if (!checked || !parsedGitHub) return;
     try {
       const access = await api.github.userRepoAccess(parsedGitHub.owner, parsedGitHub.repo);
-      if (access.needs_link) {
-        setInstallationWarning('Link your GitHub account to enable SARIF upload.');
-        setNeedsGitHubLink(true);
+      if (access.accessible) {
+        setInstallationSuccess(
+          `Connected to ${parsedGitHub.owner}/${parsedGitHub.repo} — results will be uploaded to GitHub Code Scanning.`
+        );
       } else if (!access.has_installation) {
         setInstallationWarning(
           `No GitHub App installation found for "${parsedGitHub.owner}". Results won't be uploaded until the app is installed.`
         );
         setAccessInstallURL(access.install_url ?? null);
+      } else if (access.needs_link && !access.has_installation) {
+        setInstallationWarning('Link your GitHub account to enable SARIF upload.');
+        setNeedsGitHubLink(true);
       } else if (!access.accessible) {
         setInstallationWarning(
           access.error ?? `GitHub App does not have access to this repository.`
-        );
-      } else {
-        setInstallationSuccess(
-          `Connected to ${parsedGitHub.owner}/${parsedGitHub.repo} — results will be uploaded to GitHub Code Scanning.`
         );
       }
     } catch {

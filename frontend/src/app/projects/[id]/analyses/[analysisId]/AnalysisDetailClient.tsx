@@ -383,6 +383,8 @@ export default function AnalysisDetailClient() {
         <SARIFUploadSummaryCard
           summary={sarifUploadSummary}
           fallbackURL={analysis.sarif_upload_url}
+          projectId={projectId}
+          analysisId={analysisId}
         />
       )}
 
@@ -624,11 +626,31 @@ function TokenUsageBox({ usage }: { usage: TokenUsage[] }) {
 function SARIFUploadSummaryCard({
   summary,
   fallbackURL,
+  projectId,
+  analysisId,
 }: {
   summary: ReturnType<typeof summarizeSARIFUploads>;
   fallbackURL?: string;
+  projectId: string;
+  analysisId: string;
 }) {
   const alertsURL = summary.alertsURL || fallbackURL || "";
+  const queryClient = useQueryClient();
+  const [retryResult, setRetryResult] = useState<{
+    attempted: number;
+    uploaded: number;
+    results: Array<{ result_id: string; filename: string; uploaded: boolean; url?: string; error?: string }>;
+  } | null>(null);
+
+  const retryMutation = useMutation({
+    mutationFn: () => api.analyses.retrySarifUpload(projectId, analysisId),
+    onSuccess: (data) => {
+      setRetryResult(data);
+      queryClient.invalidateQueries({ queryKey: ["results", projectId, analysisId] });
+      queryClient.invalidateQueries({ queryKey: ["analysis", projectId, analysisId] });
+      queryClient.invalidateQueries({ queryKey: ["findings", projectId] });
+    },
+  });
 
   return (
     <div className="bg-gray-50 border rounded p-4 mb-6">
@@ -639,16 +661,25 @@ function SARIFUploadSummaryCard({
             {summary.total} SARIF artifact{summary.total === 1 ? "" : "s"} in this analysis
           </p>
         </div>
-        {alertsURL && (
-          <a
-            href={alertsURL}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-sm text-brand-600 hover:underline whitespace-nowrap"
+        <div className="flex items-center gap-3">
+          <button
+            onClick={() => retryMutation.mutate()}
+            disabled={retryMutation.isPending}
+            className="text-sm px-3 py-1 rounded border border-brand-300 text-brand-700 hover:bg-brand-50 disabled:opacity-50 whitespace-nowrap"
           >
-            View alerts ↗
-          </a>
-        )}
+            {retryMutation.isPending ? "Uploading…" : "Retry Upload"}
+          </button>
+          {alertsURL && (
+            <a
+              href={alertsURL}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-sm text-brand-600 hover:underline whitespace-nowrap"
+            >
+              View alerts ↗
+            </a>
+          )}
+        </div>
       </div>
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-4">
         <div className="rounded border bg-white p-3">
@@ -671,6 +702,23 @@ function SARIFUploadSummaryCard({
       <p className="text-xs text-gray-500 mt-3">
         Per-file status and concrete upload errors are available in the findings table.
       </p>
+      {retryMutation.isError && (
+        <p className="text-xs text-red-600 mt-2">
+          Retry failed: {(retryMutation.error as Error)?.message || "Unknown error"}
+        </p>
+      )}
+      {retryResult && (
+        <div className="mt-3 border-t pt-3">
+          <p className="text-xs font-semibold text-gray-700">
+            Retry result: {retryResult.uploaded}/{retryResult.attempted} uploaded successfully
+          </p>
+          {retryResult.results.filter((r) => r.error).map((r) => (
+            <p key={r.result_id} className="text-xs text-red-600 mt-1">
+              {r.filename}: {r.error}
+            </p>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
