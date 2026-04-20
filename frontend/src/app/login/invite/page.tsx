@@ -97,7 +97,7 @@ function InviteContent() {
         ) : (
           <button
             onClick={handleLogin}
-            className="w-full bg-blue-600 text-white py-2 rounded hover:bg-blue-700"
+            className="w-full bg-brand-600 text-white py-2 rounded hover:bg-brand-700"
           >
             Link Identity with CILogon
           </button>

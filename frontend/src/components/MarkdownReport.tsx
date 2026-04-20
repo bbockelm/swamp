@@ -276,7 +276,7 @@ function formatInline(text: string): React.ReactNode {
         if (m) {
           if (m[1]) parts.push(m[1]);
           parts.push(
-            <a key={key++} href={m[3]} className="text-blue-600 hover:underline" target="_blank" rel="noopener noreferrer">
+            <a key={key++} href={m[3]} className="text-brand-600 hover:underline" target="_blank" rel="noopener noreferrer">
               {m[2]}
             </a>
           );

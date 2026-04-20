@@ -53,7 +53,7 @@ function NextBackupCountdown({ lastCompletedAt }: { lastCompletedAt: string | nu
   return (
     <div className="bg-blue-50 border border-blue-200 rounded-lg px-4 py-2 mb-4 text-sm text-blue-800">
       Next scheduled backup in <strong>{label}</strong>{' '}
-      <span className="text-blue-600">(every {settings.backup_frequency_hours}h)</span>
+      <span className="text-brand-600">(every {settings.backup_frequency_hours}h)</span>
     </div>
   );
 }
@@ -139,7 +139,7 @@ function KeyModal({
           </button>
           <button
             onClick={onClose}
-            className="text-sm px-3 py-1.5 rounded bg-blue-600 text-white hover:bg-blue-700"
+            className="text-sm px-3 py-1.5 rounded bg-brand-600 text-white hover:bg-brand-700"
           >
             Close
           </button>
@@ -256,7 +256,7 @@ export default function AdminBackupsPage() {
           <button
             onClick={() => triggerBackup.mutate()}
             disabled={triggerBackup.isPending}
-            className="text-sm px-4 py-1.5 rounded bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
+            className="text-sm px-4 py-1.5 rounded bg-brand-600 text-white hover:bg-brand-700 disabled:opacity-50"
           >
             {triggerBackup.isPending ? 'Starting...' : 'Create Backup'}
           </button>
@@ -457,7 +457,7 @@ function UploadRestoreModal({ onClose }: { onClose: () => void }) {
             <p className="text-green-700 mb-4">Restore started successfully.</p>
             <button
               onClick={onClose}
-              className="text-sm px-4 py-1.5 rounded bg-blue-600 text-white hover:bg-blue-700"
+              className="text-sm px-4 py-1.5 rounded bg-brand-600 text-white hover:bg-brand-700"
             >
               Close
             </button>
@@ -510,7 +510,7 @@ function UploadRestoreModal({ onClose }: { onClose: () => void }) {
               <button
                 onClick={handleSubmit}
                 disabled={status === 'uploading'}
-                className="text-sm px-4 py-1.5 rounded bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
+                className="text-sm px-4 py-1.5 rounded bg-brand-600 text-white hover:bg-brand-700 disabled:opacity-50"
               >
                 {status === 'uploading' ? 'Uploading...' : 'Restore'}
               </button>

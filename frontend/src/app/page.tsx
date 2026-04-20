@@ -45,15 +45,16 @@ function LandingPage() {
   return (
     <div className="min-h-screen bg-white">
       {/* Header */}
-      <header className="border-b">
+      <header className="border-b bg-navy-950">
         <div className="max-w-5xl mx-auto px-6 py-4 flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <span className="text-xl font-bold text-gray-900">SWAMP</span>
-            <span className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded font-medium">beta</span>
+            <img src="/logo-square.png" alt="" className="h-8 w-8 rounded" />
+            <span className="text-xl font-bold text-white">SWAMP</span>
+            <span className="text-xs bg-brand-100 text-brand-700 px-2 py-0.5 rounded font-medium">beta</span>
           </div>
           <Link
             href="/login"
-            className="text-sm bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 transition"
+            className="text-sm bg-brand-600 text-white px-4 py-2 rounded hover:bg-brand-700 transition"
           >
             Sign In
           </Link>
@@ -76,13 +77,13 @@ function LandingPage() {
           <div className="mt-8 flex flex-wrap gap-4">
             <Link
               href="/login"
-              className="bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700 transition font-medium"
+              className="bg-brand-600 text-white px-6 py-3 rounded-lg hover:bg-brand-700 transition font-medium"
             >
               Get Started
             </Link>
             <a
               href="#how-it-works"
-              className="border border-gray-300 text-gray-700 px-6 py-3 rounded-lg hover:bg-gray-50 transition font-medium"
+              className="border border-brand-600 text-brand-700 px-6 py-3 rounded-lg hover:bg-brand-50 transition font-medium"
             >
               Learn More
             </a>
@@ -215,14 +216,14 @@ function LandingPage() {
       </section>
 
       {/* Footer */}
-      <footer className="border-t">
+      <footer className="bg-navy-950 border-t border-navy-800">
         <div className="max-w-5xl mx-auto px-6 py-8 flex flex-col sm:flex-row items-center justify-between gap-4">
           <p className="text-sm text-gray-400">
             SWAMP — Software Assurance Marketplace
           </p>
           <Link
             href="/login"
-            className="text-sm text-blue-600 hover:underline"
+            className="text-sm text-brand-400 hover:text-brand-300 hover:underline"
           >
             Sign In
           </Link>
@@ -235,7 +236,7 @@ function LandingPage() {
 function StepCard({ step, title, description }: { step: string; title: string; description: string }) {
   return (
     <div className="bg-white rounded-lg border p-6">
-      <div className="w-8 h-8 rounded-full bg-blue-600 text-white flex items-center justify-center text-sm font-bold mb-4">
+      <div className="w-8 h-8 rounded-full bg-brand-600 text-white flex items-center justify-center text-sm font-bold mb-4">
         {step}
       </div>
       <h3 className="font-semibold text-gray-900 mb-2">{title}</h3>
@@ -367,7 +368,7 @@ function DashboardContent({ userName }: { userName: string }) {
               <p className="text-gray-400 text-sm mb-3">No analyses yet</p>
               <Link
                 href="/projects"
-                className="text-sm text-blue-600 hover:underline"
+                className="text-sm text-brand-600 hover:underline"
               >
                 Create a project to get started
               </Link>
@@ -529,7 +530,7 @@ function DashboardContent({ userName }: { userName: string }) {
           </h2>
           <Link
             href="/analyses"
-            className="text-xs text-blue-600 hover:underline"
+            className="text-xs text-brand-600 hover:underline"
           >
             View all
           </Link>
@@ -588,9 +589,9 @@ function StatCard({
   color: string;
 }) {
   const borderColors: Record<string, string> = {
-    blue: "border-l-blue-500",
-    indigo: "border-l-indigo-500",
-    purple: "border-l-purple-500",
+    blue: "border-l-brand-500",
+    indigo: "border-l-brand-400",
+    purple: "border-l-navy-800",
     amber: "border-l-amber-500",
     green: "border-l-green-500",
     red: "border-l-red-500",

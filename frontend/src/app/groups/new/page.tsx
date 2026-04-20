@@ -61,7 +61,7 @@ export default function NewGroupPage() {
           <button
             type="submit"
             disabled={mutation.isPending}
-            className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 disabled:opacity-50"
+            className="bg-brand-600 text-white px-4 py-2 rounded hover:bg-brand-700 disabled:opacity-50"
           >
             {mutation.isPending ? 'Creating...' : 'Create Group'}
           </button>

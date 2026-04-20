@@ -141,7 +141,7 @@ export function SARIFViewer({
                 <td className="px-4 py-2 text-gray-700">
                   {result.message?.text || '-'}
                   {finding && (
-                    <span className="ml-2 text-blue-500 text-xs">→</span>
+                    <span className="ml-2 text-brand-500 text-xs">→</span>
                   )}
                 </td>
               </tr>

@@ -109,7 +109,7 @@ function UserCard({ user }: { user: User }) {
         className="w-full flex items-center gap-4 px-4 py-3 text-left hover:bg-gray-50 transition-colors"
       >
         {/* Avatar */}
-        <div className="flex-shrink-0 w-10 h-10 rounded-full bg-blue-600 text-white flex items-center justify-center text-sm font-semibold">
+        <div className="flex-shrink-0 w-10 h-10 rounded-full bg-brand-600 text-white flex items-center justify-center text-sm font-semibold">
           {initials}
         </div>
 
@@ -174,7 +174,7 @@ function UserCard({ user }: { user: User }) {
                   onClick={() =>
                     updateUser.mutate({ display_name: displayName })
                   }
-                  className="text-sm text-blue-600 hover:text-blue-800 font-medium"
+                  className="text-sm text-brand-600 hover:text-brand-800 font-medium"
                 >
                   Save
                 </button>
@@ -195,7 +195,7 @@ function UserCard({ user }: { user: User }) {
                 </span>
                 <button
                   onClick={() => setEditingName(true)}
-                  className="text-xs text-blue-600 hover:text-blue-800"
+                  className="text-xs text-brand-600 hover:text-brand-800"
                 >
                   Edit
                 </button>
@@ -222,7 +222,7 @@ function UserCard({ user }: { user: User }) {
                   {role}
                   <button
                     onClick={() => removeRole.mutate(role)}
-                    className="hover:text-blue-600"
+                    className="hover:text-brand-600"
                     title={`Remove ${role} role`}
                   >
                     ×
@@ -506,7 +506,7 @@ export default function AdminUsersPage() {
             className={`px-4 py-2 rounded text-sm font-medium transition-colors ${
               showCreateForm
                 ? "bg-gray-200 text-gray-700 hover:bg-gray-300"
-                : "bg-blue-600 text-white hover:bg-blue-700"
+                : "bg-brand-600 text-white hover:bg-brand-700"
             }`}
           >
             {showCreateForm ? "Cancel" : "+ New User"}
@@ -680,7 +680,7 @@ function InviteSection({ userId }: { userId: string }) {
         <button
           onClick={() => createInviteMut.mutate()}
           disabled={createInviteMut.isPending}
-          className="text-xs px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
+          className="text-xs px-3 py-1 bg-brand-600 text-white rounded hover:bg-brand-700 disabled:opacity-50"
         >
           Generate Invite
         </button>

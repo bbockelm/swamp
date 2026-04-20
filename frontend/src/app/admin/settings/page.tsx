@@ -71,7 +71,7 @@ function OIDCConfigSection() {
         <div className="p-3 bg-blue-50 rounded-md">
           <div className="text-xs font-medium text-blue-700 mb-1">Callback URL</div>
           <code className="text-xs text-blue-900 break-all">{callbackUrl}</code>
-          <p className="text-xs text-blue-600 mt-1">
+          <p className="text-xs text-brand-600 mt-1">
             Register this URL with your OIDC provider as an allowed redirect URI.
           </p>
         </div>
@@ -140,7 +140,7 @@ function OIDCConfigSection() {
           <button
             type="submit"
             disabled={updateMut.isPending}
-            className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50"
+            className="px-4 py-2 bg-brand-600 text-white rounded-md hover:bg-brand-700 disabled:opacity-50"
           >
             {updateMut.isPending ? 'Saving...' : 'Save OIDC Settings'}
           </button>
@@ -313,7 +313,7 @@ function LLMProvidersSection() {
         {!showForm && (
           <button
             onClick={() => { resetForm(); setShowForm(true); }}
-            className="px-3 py-1.5 bg-blue-600 text-white text-sm rounded-md hover:bg-blue-700"
+            className="px-3 py-1.5 bg-brand-600 text-white text-sm rounded-md hover:bg-brand-700"
           >
             Add Provider
           </button>
@@ -364,7 +364,7 @@ function LLMProvidersSection() {
                     <button
                       onClick={() => handleDiscoverEnv(envId)}
                       disabled={discoveringId === envId}
-                      className="text-xs text-blue-600 hover:underline disabled:opacity-50"
+                      className="text-xs text-brand-600 hover:underline disabled:opacity-50"
                     >
                       {discoveringId === envId ? 'Loading...' : 'Models'}
                     </button>
@@ -429,7 +429,7 @@ function LLMProvidersSection() {
                 <button
                   onClick={() => handleDiscover(p.id)}
                   disabled={discoveringId === p.id}
-                  className="text-xs text-blue-600 hover:underline disabled:opacity-50"
+                  className="text-xs text-brand-600 hover:underline disabled:opacity-50"
                 >
                   {discoveringId === p.id ? 'Loading...' : 'Models'}
                 </button>
@@ -559,7 +559,7 @@ function LLMProvidersSection() {
             <button
               onClick={() => editingId ? updateMut.mutate() : createMut.mutate()}
               disabled={createMut.isPending || updateMut.isPending || !label || (!editingId && !apiKey)}
-              className="px-3 py-1.5 bg-blue-600 text-white text-sm rounded-md hover:bg-blue-700 disabled:opacity-50"
+              className="px-3 py-1.5 bg-brand-600 text-white text-sm rounded-md hover:bg-brand-700 disabled:opacity-50"
             >
               {(createMut.isPending || updateMut.isPending) ? 'Saving...' : editingId ? 'Update' : 'Add'}
             </button>
@@ -664,7 +664,7 @@ function GitHubConfigSection() {
               <button
                 onClick={() => { setSyncMessage(null); syncMut.mutate(); }}
                 disabled={syncMut.isPending}
-                className="text-sm text-blue-600 hover:text-blue-800 disabled:opacity-50"
+                className="text-sm text-brand-600 hover:text-brand-800 disabled:opacity-50"
               >
                 {syncMut.isPending ? 'Syncing...' : 'Sync from GitHub'}
               </button>
@@ -813,7 +813,7 @@ function ExecutorConfigSection() {
                     {hint && !currentForm[field.key] && (
                       <button
                         type="button"
-                        className="text-xs text-blue-600 hover:underline mt-0.5"
+                        className="text-xs text-brand-600 hover:underline mt-0.5"
                         onClick={() => setForm({ ...currentForm, [field.key]: hint })}
                       >
                         Use {field.hintLabel}: {hint}
@@ -841,7 +841,7 @@ function ExecutorConfigSection() {
           <button
             type="submit"
             disabled={updateMut.isPending}
-            className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50"
+            className="px-4 py-2 bg-brand-600 text-white rounded-md hover:bg-brand-700 disabled:opacity-50"
           >
             {updateMut.isPending ? 'Saving...' : 'Save Executor Settings'}
           </button>
@@ -991,7 +991,7 @@ function BackupConfigSection() {
           <button
             type="submit"
             disabled={updateMut.isPending}
-            className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50"
+            className="px-4 py-2 bg-brand-600 text-white rounded-md hover:bg-brand-700 disabled:opacity-50"
           >
             {updateMut.isPending ? 'Saving...' : 'Save Backup Settings'}
           </button>

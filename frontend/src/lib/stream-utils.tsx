@@ -44,7 +44,7 @@ export function StreamLine({ line }: { line: string }) {
     const toolDetail = colonIdx > 0 ? detail.slice(colonIdx + 1).trim() : "";
     return (
       <div className="flex items-start gap-2 py-1.5 px-2 rounded bg-slate-700 text-sm border border-slate-500/70">
-        <span className="shrink-0 font-mono font-bold text-white bg-blue-600 px-1.5 py-0.5 rounded text-xs">
+        <span className="shrink-0 font-mono font-bold text-white bg-brand-600 px-1.5 py-0.5 rounded text-xs">
           {toolName}
         </span>
         {toolDetail && (

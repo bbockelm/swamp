@@ -111,7 +111,7 @@ export default function AnalysesPage() {
             onClick={() => { setFilter(key); setPage(1); }}
             className={`text-xs px-3 py-1.5 rounded-full border transition-colors ${
               filter === key
-                ? 'bg-blue-600 text-white border-blue-600'
+                ? 'bg-brand-600 text-white border-brand-600'
                 : 'bg-white text-gray-600 hover:bg-gray-50'
             }`}
           >
@@ -191,7 +191,7 @@ function AnalysisCard({ analysis: a, expanded, onToggle }: { analysis: Analysis;
           <Link
             href={`/projects/${a.project_id}`}
             onClick={(e) => e.stopPropagation()}
-            className="text-sm text-blue-600 hover:underline"
+            className="text-sm text-brand-600 hover:underline"
           >
             {a.project_name || a.project_id.slice(0, 8)}
           </Link>
@@ -209,7 +209,7 @@ function AnalysisCard({ analysis: a, expanded, onToggle }: { analysis: Analysis;
           </span>
           {(a.status === 'running' || a.status === 'pending') ? (
             <span className="text-xs text-gray-400 inline-flex items-center gap-1">
-              <svg className="w-3 h-3 animate-spin text-blue-500" viewBox="0 0 24 24" fill="none">
+              <svg className="w-3 h-3 animate-spin text-brand-500" viewBox="0 0 24 24" fill="none">
                 <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                 <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
               </svg>
@@ -221,7 +221,7 @@ function AnalysisCard({ analysis: a, expanded, onToggle }: { analysis: Analysis;
           <Link
             href={`/projects/${a.project_id}/analyses/${a.id}`}
             onClick={(e) => e.stopPropagation()}
-            className="p-1 text-gray-400 hover:text-blue-600"
+            className="p-1 text-gray-400 hover:text-brand-600"
             title="Open analysis page"
           >
             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -279,7 +279,7 @@ function AnalysisCard({ analysis: a, expanded, onToggle }: { analysis: Analysis;
             <div>
               <span className="text-xs text-gray-500 uppercase">Project</span>
               <p>
-                <Link href={`/projects/${a.project_id}`} className="text-blue-600 hover:underline">
+                <Link href={`/projects/${a.project_id}`} className="text-brand-600 hover:underline">
                   {a.project_name || a.project_id.slice(0, 8)}
                 </Link>
               </p>
@@ -345,7 +345,7 @@ function AnalysisCard({ analysis: a, expanded, onToggle }: { analysis: Analysis;
                 {markdownResult && (
                   <a
                     href={api.analyses.downloadResult(a.project_id, a.id, markdownResult.id)}
-                    className="inline-flex items-center gap-1.5 text-xs bg-white border rounded px-2.5 py-1.5 hover:bg-gray-50 text-blue-600"
+                    className="inline-flex items-center gap-1.5 text-xs bg-white border rounded px-2.5 py-1.5 hover:bg-gray-50 text-brand-600"
                   >
                     <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3M3 17V7a2 2 0 012-2h6l2 2h6a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z" />
@@ -371,7 +371,7 @@ function AnalysisCard({ analysis: a, expanded, onToggle }: { analysis: Analysis;
           <div className="flex items-center gap-2 pt-1">
             <Link
               href={`/projects/${a.project_id}/analyses/${a.id}`}
-              className="text-xs px-3 py-1.5 rounded border text-blue-600 border-blue-300 hover:bg-blue-50"
+              className="text-xs px-3 py-1.5 rounded border text-brand-600 border-brand-300 hover:bg-brand-50"
             >
               View Full Analysis
             </Link>
@@ -388,7 +388,7 @@ function AnalysisCard({ analysis: a, expanded, onToggle }: { analysis: Analysis;
               <button
                 onClick={() => resubmit.mutate()}
                 disabled={resubmit.isPending}
-                className="text-xs px-3 py-1.5 rounded border text-blue-600 border-blue-300 hover:bg-blue-50 disabled:opacity-50"
+                className="text-xs px-3 py-1.5 rounded border text-brand-600 border-brand-300 hover:bg-brand-50 disabled:opacity-50"
               >
                 {resubmit.isPending ? 'Submitting…' : 'Resubmit'}
               </button>

@@ -40,7 +40,7 @@ export default function GroupsPage() {
           className={`px-4 py-2 rounded text-sm font-medium transition-colors ${
             showCreateForm
               ? "bg-gray-200 text-gray-700 hover:bg-gray-300"
-              : "bg-blue-600 text-white hover:bg-blue-700"
+              : "bg-brand-600 text-white hover:bg-brand-700"
           }`}
         >
           {showCreateForm ? "Cancel" : "+ New Group"}
@@ -165,7 +165,7 @@ function GroupCard({
         <Link
           href={`/groups/${group.id}`}
           onClick={(e) => e.stopPropagation()}
-          className="p-1 text-gray-400 hover:text-blue-600 flex-shrink-0"
+          className="p-1 text-gray-400 hover:text-brand-600 flex-shrink-0"
           title="Open group page"
         >
           <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -202,7 +202,7 @@ function GroupCard({
                   onClick={() => setTab(t.key)}
                   className={`pb-2 px-1 text-sm font-medium border-b-2 ${
                     tab === t.key
-                      ? "border-blue-600 text-blue-600"
+                      ? "border-brand-600 text-brand-600"
                       : "border-transparent text-gray-500 hover:text-gray-700"
                   }`}
                 >
@@ -312,7 +312,7 @@ function GroupSettings({ group }: { group: Group }) {
           <button
             type="submit"
             disabled={updateMutation.isPending}
-            className="bg-blue-600 text-white px-4 py-2 rounded text-sm hover:bg-blue-700 disabled:opacity-50"
+            className="bg-brand-600 text-white px-4 py-2 rounded text-sm hover:bg-brand-700 disabled:opacity-50"
           >
             {updateMutation.isPending ? "Saving..." : "Save Changes"}
           </button>

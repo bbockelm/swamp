@@ -27,7 +27,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
           </p>
           <Link
             href="/"
-            className="inline-block px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 text-sm"
+            className="inline-block px-4 py-2 bg-brand-600 text-white rounded hover:bg-brand-700 text-sm"
           >
             Go to Dashboard
           </Link>

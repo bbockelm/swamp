@@ -18,14 +18,18 @@ type User struct {
 
 // UserIdentity is a federated identity link (OIDC issuer + subject).
 type UserIdentity struct {
-	ID          string    `json:"id"`
-	UserID      string    `json:"user_id"`
-	Issuer      string    `json:"issuer"`
-	Subject     string    `json:"subject"`
-	Email       string    `json:"email"`
-	DisplayName string    `json:"display_name"`
-	IDPName     string    `json:"idp_name"`
-	CreatedAt   time.Time `json:"created_at"`
+	ID              string     `json:"id"`
+	UserID          string     `json:"user_id"`
+	Issuer          string     `json:"issuer"`
+	Subject         string     `json:"subject"`
+	Email           string     `json:"email"`
+	DisplayName     string     `json:"display_name"`
+	IDPName         string     `json:"idp_name"`
+	AccessTokenEnc  *string    `json:"-"`
+	RefreshTokenEnc *string    `json:"-"`
+	TokenExpiresAt  *time.Time `json:"-"`
+	CreatedAt       time.Time  `json:"created_at"`
+	UpdatedAt       time.Time  `json:"updated_at"`
 }
 
 // UserRole is a role assignment for a user.

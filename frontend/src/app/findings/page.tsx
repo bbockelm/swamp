@@ -236,7 +236,7 @@ function FindingsPageInner() {
               setDebouncedSearch('');
               setPage(1);
             }}
-            className="text-sm text-blue-600 hover:underline"
+            className="text-sm text-brand-600 hover:underline"
           >
             Clear filters
           </button>
@@ -248,7 +248,7 @@ function FindingsPageInner() {
         {sortField && (
           <button
             onClick={() => { setSortField(null); }}
-            className="ml-2 text-xs text-blue-600 hover:underline"
+            className="ml-2 text-xs text-brand-600 hover:underline"
           >
             Clear sort
           </button>
@@ -342,7 +342,7 @@ function GlobalFindingRow({
             const ghLink = finding.git_url ? buildGitHubLink(finding.git_url, finding.file_path, finding.start_line) : null;
             const label = `${finding.file_path}${finding.start_line > 0 ? `:${finding.start_line}` : ''}`;
             return ghLink ? (
-              <a href={ghLink} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline" onClick={(e) => e.stopPropagation()}>{label}</a>
+              <a href={ghLink} target="_blank" rel="noopener noreferrer" className="text-brand-600 hover:underline" onClick={(e) => e.stopPropagation()}>{label}</a>
             ) : label;
           })()}
         </td>
@@ -350,7 +350,7 @@ function GlobalFindingRow({
         <td className="px-4 py-2 hidden md:table-cell">
           <Link
             href={`/projects/${finding.project_id}?tab=findings`}
-            className="text-blue-600 hover:underline text-xs"
+            className="text-brand-600 hover:underline text-xs"
             onClick={(e) => e.stopPropagation()}
           >
             View
@@ -391,7 +391,7 @@ function GlobalFindingDetail({ finding }: { finding: Finding }) {
           <span className="text-gray-500">Analysis:</span>{' '}
           <Link
             href={`/projects/${finding.project_id}/analyses/${finding.analysis_id}`}
-            className="font-mono text-blue-600 hover:underline"
+            className="font-mono text-brand-600 hover:underline"
           >
             {finding.analysis_id.slice(0, 8)}
           </Link>
@@ -401,7 +401,7 @@ function GlobalFindingDetail({ finding }: { finding: Finding }) {
           {(() => {
             const ghLink = finding.git_url ? buildGitHubLink(finding.git_url, finding.file_path, finding.start_line) : null;
             return ghLink ? (
-              <a href={ghLink} target="_blank" rel="noopener noreferrer" className="font-mono text-blue-600 hover:underline">{finding.file_path}</a>
+              <a href={ghLink} target="_blank" rel="noopener noreferrer" className="font-mono text-brand-600 hover:underline">{finding.file_path}</a>
             ) : (
               <span className="font-mono">{finding.file_path}</span>
             );
@@ -454,7 +454,7 @@ function GlobalFindingDetail({ finding }: { finding: Finding }) {
           <button
             onClick={() => annotateMutation.mutate()}
             disabled={annotateMutation.isPending}
-            className="bg-blue-600 text-white px-3 py-1.5 text-sm rounded hover:bg-blue-700 disabled:opacity-50"
+            className="bg-brand-600 text-white px-3 py-1.5 text-sm rounded hover:bg-brand-700 disabled:opacity-50"
           >
             {annotateMutation.isPending ? 'Saving...' : 'Save'}
           </button>

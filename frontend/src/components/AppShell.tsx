@@ -7,7 +7,7 @@ import { Sidebar } from './Sidebar';
 import { RenderedMarkdown } from './MarkdownReport';
 import { api } from '@/lib/api';
 
-const publicPaths = ['/login', '/', '/github/setup'];
+const publicPaths = ['/login', '/', '/github/setup', '/github/linked'];
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
@@ -100,7 +100,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                   <p className="text-[10px] text-gray-400 italic">
                     This is the acceptable use policy v{session.aup_version}.
                     {session.aup_updated_at && <> This text was last updated on {session.aup_updated_at}.</>}
-                    {' '}It can be found at <a href={session.aup_url || '/aup'} target="_blank" rel="noopener noreferrer" className="text-blue-500 underline">{session.aup_url || '/aup'}</a>.
+                    {' '}It can be found at <a href={session.aup_url || '/aup'} target="_blank" rel="noopener noreferrer" className="text-brand-600 underline">{session.aup_url || '/aup'}</a>.
                   </p>
                 </div>
               </div>
@@ -110,7 +110,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                   agreeAup.mutate();
                 }}
                 disabled={agreeing}
-                className="w-full bg-blue-600 text-white py-2 rounded hover:bg-blue-700 disabled:opacity-50"
+                className="w-full bg-brand-600 text-white py-2 rounded hover:bg-brand-700 disabled:opacity-50"
               >
                 {agreeing ? 'Submitting...' : 'I Agree'}
               </button>

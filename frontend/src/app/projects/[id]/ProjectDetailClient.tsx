@@ -97,7 +97,7 @@ export default function ProjectDetailClient() {
               onClick={() => setTab(t.key)}
               className={`pb-2 px-1 text-sm font-medium border-b-2 ${
                 tab === t.key
-                  ? 'border-blue-600 text-blue-600'
+                  ? 'border-brand-600 text-brand-600'
                   : 'border-transparent text-gray-500 hover:text-gray-700'
               }`}
             >
@@ -170,6 +170,8 @@ function PackagesTab({
   const [branchError, setBranchError] = useState<string | null>(null);
   const [installationWarning, setInstallationWarning] = useState<string | null>(null);
   const [accessInstallURL, setAccessInstallURL] = useState<string | null>(null);
+  const [needsGitHubLink, setNeedsGitHubLink] = useState(false);
+  const [linkingGitHub, setLinkingGitHub] = useState(false);
 
   // Parse owner/repo from the git URL for display.
   const parsedGitHub = useMemo(() => {
@@ -180,21 +182,26 @@ function PackagesTab({
   const handleBranchDetection = useCallback((result: { ok: boolean; error?: string }) => {
     if (result.ok) {
       setBranchError(null);
+      setNeedsGitHubLink(false);
       return;
     }
     // When branch detection fails, check repo access to give better advice.
     if (parsedGitHub) {
-      api.github.checkRepoAccess(parsedGitHub.owner, parsedGitHub.repo).then((access) => {
-        if (access.accessible) {
-          // Repo is accessible but branch detection failed for another reason.
+      api.github.userRepoAccess(parsedGitHub.owner, parsedGitHub.repo).then((access) => {
+        if (access.needs_link) {
+          setBranchError('Could not access this repository — link your GitHub account to check access.');
+          setNeedsGitHubLink(true);
+          setAccessInstallURL(null);
+        } else if (access.accessible) {
           setBranchError(result.error ?? 'Could not detect branches.');
         } else if (!access.has_installation) {
           setBranchError('Could not access this repository — it may be private.');
           setAccessInstallURL(access.install_url ?? null);
+          setNeedsGitHubLink(false);
         } else {
-          // App installed but no repo access.
           setBranchError(access.error ?? 'GitHub App does not have access to this repository.');
           setAccessInstallURL(null);
+          setNeedsGitHubLink(false);
         }
       }).catch(() => {
         setBranchError(result.error ?? 'Could not detect branches.');
@@ -210,8 +217,11 @@ function PackagesTab({
     setAccessInstallURL(null);
     if (!checked || !parsedGitHub) return;
     try {
-      const access = await api.github.checkRepoAccess(parsedGitHub.owner, parsedGitHub.repo);
-      if (!access.has_installation) {
+      const access = await api.github.userRepoAccess(parsedGitHub.owner, parsedGitHub.repo);
+      if (access.needs_link) {
+        setInstallationWarning('Link your GitHub account to enable SARIF upload.');
+        setNeedsGitHubLink(true);
+      } else if (!access.has_installation) {
         setInstallationWarning(
           `No GitHub App installation found for "${parsedGitHub.owner}". Results won't be uploaded until the app is installed.`
         );
@@ -230,20 +240,37 @@ function PackagesTab({
   const branchInputRef = useRef<GitBranchInputHandle>(null);
   useEffect(() => {
     if (!parsedGitHub || (!branchError && !installationWarning)) return;
-    const onVisible = () => {
-      if (document.visibilityState !== 'visible') return;
-      api.github.checkRepoAccess(parsedGitHub.owner, parsedGitHub.repo).then((access) => {
+
+    const recheckAccess = () => {
+      api.github.userRepoAccess(parsedGitHub.owner, parsedGitHub.repo).then((access) => {
         if (access.accessible) {
           setBranchError(null);
           setInstallationWarning(null);
           setAccessInstallURL(null);
-          // Re-trigger branch detection now that access is available.
+          setNeedsGitHubLink(false);
           branchInputRef.current?.refetch();
+        } else if (!access.needs_link) {
+          setNeedsGitHubLink(false);
         }
       }).catch(() => { /* ignore */ });
     };
+
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') recheckAccess();
+    };
+    const onMessage = (e: MessageEvent) => {
+      if (e.origin === window.location.origin && e.data?.type === 'github-linked') {
+        setLinkingGitHub(false);
+        setNeedsGitHubLink(false);
+        recheckAccess();
+      }
+    };
     document.addEventListener('visibilitychange', onVisible);
-    return () => document.removeEventListener('visibilitychange', onVisible);
+    window.addEventListener('message', onMessage);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('message', onMessage);
+    };
   }, [parsedGitHub, branchError, installationWarning]);
 
   const createMutation = useMutation({
@@ -313,6 +340,16 @@ function PackagesTab({
     setInstallationWarning(null);
   };
 
+  const handleGitHubLink = async () => {
+    setLinkingGitHub(true);
+    try {
+      const resp = await api.github.startLink();
+      window.open(resp.authorize_url, 'github-link', 'width=600,height=700');
+    } catch {
+      setLinkingGitHub(false);
+    }
+  };
+
   return (
     <div>
       <div className="flex justify-between items-center mb-4">
@@ -320,7 +357,7 @@ function PackagesTab({
         {canEdit && (
           <button
             onClick={() => { setAdding(true); setEditingId(null); setName(''); setGitUrl(''); setGitBranch('main'); setAnalysisPrompt(''); setSarifUploadEnabled(false); setBranchError(null); setInstallationWarning(null); }}
-            className="bg-blue-600 text-white px-3 py-1.5 text-sm rounded hover:bg-blue-700"
+            className="bg-brand-600 text-white px-3 py-1.5 text-sm rounded hover:bg-brand-700"
           >
             Add Package
           </button>
@@ -356,9 +393,21 @@ function PackagesTab({
             {parsedGitHub && branchError && (
               <p className="text-xs text-amber-600 mt-1">
                 {branchError}
-                {accessInstallURL && (
+                {needsGitHubLink && (
                   <>{' '}
-                    <a href={accessInstallURL} target="_blank" rel="noopener noreferrer" className="underline text-blue-600 hover:text-blue-700">
+                    <button
+                      type="button"
+                      onClick={handleGitHubLink}
+                      disabled={linkingGitHub}
+                      className="underline text-brand-600 hover:text-blue-700"
+                    >
+                      {linkingGitHub ? 'Linking…' : 'Link your GitHub account'}
+                    </button>
+                  </>
+                )}
+                {!needsGitHubLink && accessInstallURL && (
+                  <>{' '}
+                    <a href={accessInstallURL} target="_blank" rel="noopener noreferrer" className="underline text-brand-600 hover:text-blue-700">
                       Install the GitHub App
                     </a>{' '}
                     on <strong>{parsedGitHub.owner}</strong> to grant access.
@@ -415,9 +464,21 @@ function PackagesTab({
             {installationWarning && (
               <p className="text-xs text-amber-600 mt-1">
                 {installationWarning}
-                {accessInstallURL && (
+                {needsGitHubLink && (
                   <>{' '}
-                    <a href={accessInstallURL} target="_blank" rel="noopener noreferrer" className="underline text-blue-600 hover:text-blue-700">
+                    <button
+                      type="button"
+                      onClick={handleGitHubLink}
+                      disabled={linkingGitHub}
+                      className="underline text-brand-600 hover:text-blue-700"
+                    >
+                      {linkingGitHub ? 'Linking…' : 'Link your GitHub account'}
+                    </button>
+                  </>
+                )}
+                {!needsGitHubLink && accessInstallURL && (
+                  <>{' '}
+                    <a href={accessInstallURL} target="_blank" rel="noopener noreferrer" className="underline text-brand-600 hover:text-blue-700">
                       Install the GitHub App
                     </a>{' '}
                     to enable uploads.
@@ -430,7 +491,7 @@ function PackagesTab({
             <button
               type="submit"
               disabled={createMutation.isPending}
-              className="bg-blue-600 text-white px-3 py-1.5 text-sm rounded hover:bg-blue-700 disabled:opacity-50"
+              className="bg-brand-600 text-white px-3 py-1.5 text-sm rounded hover:bg-brand-700 disabled:opacity-50"
             >
               {createMutation.isPending ? 'Adding...' : 'Add'}
             </button>
@@ -480,9 +541,21 @@ function PackagesTab({
                   {parsedGitHub && branchError && (
                     <p className="text-xs text-amber-600 mt-1">
                       {branchError}
-                      {accessInstallURL && (
+                      {needsGitHubLink && (
                         <>{' '}
-                          <a href={accessInstallURL} target="_blank" rel="noopener noreferrer" className="underline text-blue-600 hover:text-blue-700">
+                          <button
+                            type="button"
+                            onClick={handleGitHubLink}
+                            disabled={linkingGitHub}
+                            className="underline text-brand-600 hover:text-blue-700"
+                          >
+                            {linkingGitHub ? 'Linking…' : 'Link your GitHub account'}
+                          </button>
+                        </>
+                      )}
+                      {!needsGitHubLink && accessInstallURL && (
+                        <>{' '}
+                          <a href={accessInstallURL} target="_blank" rel="noopener noreferrer" className="underline text-brand-600 hover:text-blue-700">
                             Install the GitHub App
                           </a>{' '}
                           on <strong>{parsedGitHub.owner}</strong> to grant access.
@@ -539,9 +612,21 @@ function PackagesTab({
                   {installationWarning && (
                     <p className="text-xs text-amber-600 mt-1">
                       {installationWarning}
-                      {accessInstallURL && (
+                      {needsGitHubLink && (
                         <>{' '}
-                          <a href={accessInstallURL} target="_blank" rel="noopener noreferrer" className="underline text-blue-600 hover:text-blue-700">
+                          <button
+                            type="button"
+                            onClick={handleGitHubLink}
+                            disabled={linkingGitHub}
+                            className="underline text-brand-600 hover:text-blue-700"
+                          >
+                            {linkingGitHub ? 'Linking…' : 'Link your GitHub account'}
+                          </button>
+                        </>
+                      )}
+                      {!needsGitHubLink && accessInstallURL && (
+                        <>{' '}
+                          <a href={accessInstallURL} target="_blank" rel="noopener noreferrer" className="underline text-brand-600 hover:text-blue-700">
                             Install the GitHub App
                           </a>{' '}
                           to enable uploads.
@@ -554,7 +639,7 @@ function PackagesTab({
                   <button
                     type="submit"
                     disabled={updateMutation.isPending}
-                    className="bg-blue-600 text-white px-3 py-1.5 text-sm rounded hover:bg-blue-700 disabled:opacity-50"
+                    className="bg-brand-600 text-white px-3 py-1.5 text-sm rounded hover:bg-brand-700 disabled:opacity-50"
                   >
                     {updateMutation.isPending ? 'Saving...' : 'Save'}
                   </button>
@@ -597,7 +682,7 @@ function PackagesTab({
                     <>
                       <button
                         onClick={() => startEdit(pkg)}
-                        className="text-blue-500 text-sm hover:text-blue-700"
+                        className="text-brand-500 text-sm hover:text-blue-700"
                       >
                         Edit
                       </button>
@@ -948,7 +1033,7 @@ function GitHubTab({ projectId }: { projectId: string }) {
               href={appInfo.install_url}
               target="_blank"
               rel="noopener noreferrer"
-              className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 text-sm whitespace-nowrap"
+              className="bg-brand-600 text-white px-4 py-2 rounded hover:bg-brand-700 text-sm whitespace-nowrap"
             >
               Install GitHub App
             </a>
@@ -1169,7 +1254,7 @@ function SettingsTab({
         <button
           type="submit"
           disabled={updateMutation.isPending}
-          className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 disabled:opacity-50"
+          className="bg-brand-600 text-white px-4 py-2 rounded hover:bg-brand-700 disabled:opacity-50"
         >
           {updateMutation.isPending ? 'Saving...' : 'Save Changes'}
         </button>
@@ -1233,7 +1318,7 @@ function SettingsTab({
           ) : (
             <div className="text-sm text-gray-400 text-center py-4 border rounded-md">
               No global or environment providers configured. Add providers in{' '}
-              <a href="/admin/settings" className="text-blue-600 hover:underline">Admin Settings</a>{' '}
+              <a href="/admin/settings" className="text-brand-600 hover:underline">Admin Settings</a>{' '}
               to control access here.
             </div>
           )}
@@ -1350,7 +1435,7 @@ function ProviderKeysTab({ projectId }: { projectId: string }) {
         {!adding && (
           <button
             onClick={() => setAdding(true)}
-            className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 text-sm"
+            className="bg-brand-600 text-white px-4 py-2 rounded hover:bg-brand-700 text-sm"
           >
             Add Key
           </button>
@@ -1433,7 +1518,7 @@ function ProviderKeysTab({ projectId }: { projectId: string }) {
             <button
               type="submit"
               disabled={createMutation.isPending}
-              className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 disabled:opacity-50 text-sm"
+              className="bg-brand-600 text-white px-4 py-2 rounded hover:bg-brand-700 disabled:opacity-50 text-sm"
             >
               {createMutation.isPending ? 'Saving...' : 'Save Key'}
             </button>

@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import Image from "next/image";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -45,7 +46,7 @@ export function Sidebar({ roles = [], userName }: SidebarProps) {
     <>
       {/* Mobile toggle */}
       <button
-        className="lg:hidden fixed top-4 left-4 z-50 p-2 bg-gray-800 text-white rounded print:hidden"
+        className="lg:hidden fixed top-4 left-4 z-50 p-2 bg-navy-900 text-white rounded print:hidden"
         onClick={() => setMobileOpen(!mobileOpen)}
       >
         ☰
@@ -63,18 +64,19 @@ export function Sidebar({ roles = [], userName }: SidebarProps) {
       <aside
         className={`
           fixed lg:static inset-y-0 left-0 z-40
-          w-64 bg-gray-900 text-white
+          w-64 bg-navy-900 text-white
           transform transition-transform lg:translate-x-0 print:hidden
           ${mobileOpen ? "translate-x-0" : "-translate-x-full"}
         `}
       >
-        <div className="p-4 border-b border-gray-700">
-          <Link href="/" className="text-xl font-bold">
-            SWAMP
+        <div className="p-4 border-b border-navy-700">
+          <Link href="/" className="flex items-center gap-3">
+            <Image src="/logo-square.png" alt="SWAMP" width={36} height={36} className="rounded" />
+            <div>
+              <span className="text-xl font-bold">SWAMP</span>
+              <p className="text-xs text-gray-400">Security Analysis Platform</p>
+            </div>
           </Link>
-          <p className="text-xs text-gray-400 mt-1">
-            Security Analysis Platform
-          </p>
         </div>
 
         <nav className="p-4 space-y-1">
@@ -84,8 +86,8 @@ export function Sidebar({ roles = [], userName }: SidebarProps) {
               href={item.href}
               className={`block px-3 py-2 rounded text-sm ${
                 pathname === item.href
-                  ? "bg-blue-600 text-white"
-                  : "text-gray-300 hover:bg-gray-800"
+                  ? "bg-brand-600 text-white"
+                  : "text-gray-300 hover:bg-navy-800"
               }`}
               onClick={() => setMobileOpen(false)}
             >
@@ -94,7 +96,7 @@ export function Sidebar({ roles = [], userName }: SidebarProps) {
           ))}
 
           {isAdmin && (
-            <div className="pt-4 mt-4 border-t border-gray-700">
+            <div className="pt-4 mt-4 border-t border-navy-700">
               <p className="px-3 text-xs text-gray-500 uppercase mb-2">Admin</p>
               {adminItems.map((item) => (
                 <Link
@@ -102,8 +104,8 @@ export function Sidebar({ roles = [], userName }: SidebarProps) {
                   href={item.href}
                   className={`block px-3 py-2 rounded text-sm ${
                     pathname === item.href
-                      ? "bg-blue-600 text-white"
-                      : "text-gray-300 hover:bg-gray-800"
+                      ? "bg-brand-600 text-white"
+                      : "text-gray-300 hover:bg-navy-800"
                   }`}
                   onClick={() => setMobileOpen(false)}
                 >
@@ -114,7 +116,7 @@ export function Sidebar({ roles = [], userName }: SidebarProps) {
           )}
         </nav>
 
-        <div className="absolute bottom-0 left-0 right-0 p-4 border-t border-gray-700">
+        <div className="absolute bottom-0 left-0 right-0 p-4 border-t border-navy-700">
           {userName && (
             <div className="px-3 pb-2">
               <p className="text-sm text-gray-200 truncate">{userName}</p>
@@ -123,7 +125,7 @@ export function Sidebar({ roles = [], userName }: SidebarProps) {
                   {roles.map((role) => (
                     <span
                       key={role}
-                      className="text-[10px] px-1.5 py-0.5 rounded bg-gray-700 text-gray-400"
+                      className="text-[10px] px-1.5 py-0.5 rounded bg-navy-800 text-gray-400"
                     >
                       {role}
                     </span>

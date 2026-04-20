@@ -171,7 +171,7 @@ export default function AnalysisDetailClient() {
             )}
             {(analysis.status === "pending" || analysis.status === "running") && (
               <span className="text-sm text-gray-500 inline-flex items-center gap-1.5">
-                <svg className="w-4 h-4 animate-spin text-blue-500" viewBox="0 0 24 24" fill="none">
+                <svg className="w-4 h-4 animate-spin text-brand-500" viewBox="0 0 24 24" fill="none">
                   <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                   <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
                 </svg>
@@ -194,7 +194,7 @@ export default function AnalysisDetailClient() {
             <button
               onClick={() => resubmitMutation.mutate()}
               disabled={resubmitMutation.isPending}
-              className="bg-blue-600 text-white px-3 py-1.5 text-sm rounded hover:bg-blue-700 disabled:opacity-50"
+              className="bg-brand-600 text-white px-3 py-1.5 text-sm rounded hover:bg-brand-700 disabled:opacity-50"
             >
               {resubmitMutation.isPending ? "Resubmitting…" : "Resubmit"}
             </button>
@@ -255,7 +255,7 @@ export default function AnalysisDetailClient() {
                 href={analysis.trigger_meta.pr_url as string}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="text-blue-600 hover:underline"
+                className="text-brand-600 hover:underline"
               >
                 PR #{String(analysis.trigger_meta.pr_number)}
                 {analysis.trigger_meta.head_ref ? ` (${String(analysis.trigger_meta.head_ref)})` : ''}
@@ -272,7 +272,7 @@ export default function AnalysisDetailClient() {
                 href={analysis.trigger_meta.release_url as string}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="text-blue-600 hover:underline"
+                className="text-brand-600 hover:underline"
               >
                 {String(analysis.trigger_meta.tag || 'release')} ↗
               </a>
@@ -294,7 +294,7 @@ export default function AnalysisDetailClient() {
                   href={`https://github.com/${analysis.trigger_meta.repo}/commit/${analysis.git_commit}`}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="text-blue-600 hover:underline"
+                  className="text-brand-600 hover:underline"
                 >
                   {analysis.git_commit.slice(0, 12)} ↗
                 </a>
@@ -323,7 +323,7 @@ export default function AnalysisDetailClient() {
                 href={analysis.sarif_upload_url}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="inline-flex items-center gap-1 text-blue-600 hover:underline"
+                className="inline-flex items-center gap-1 text-brand-600 hover:underline"
               >
                 <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800">
                   ✓ Uploaded
@@ -364,11 +364,11 @@ export default function AnalysisDetailClient() {
             <div className="flex items-center gap-3 print:hidden">
               {markdownResult && sarifResult && (
                 <>
-                  <a href="#security-report" className="text-sm text-gray-500 hover:text-blue-600">
+                  <a href="#security-report" className="text-sm text-gray-500 hover:text-brand-600">
                     Report
                   </a>
                   <span className="text-gray-300">|</span>
-                  <a href="#findings" className="text-sm text-gray-500 hover:text-blue-600">
+                  <a href="#findings" className="text-sm text-gray-500 hover:text-brand-600">
                     Findings ({sarifResult.finding_count})
                   </a>
                   <span className="text-gray-300">|</span>
@@ -377,7 +377,7 @@ export default function AnalysisDetailClient() {
               {markdownResult && (
                 <button
                   onClick={() => window.print()}
-                  className="inline-flex items-center gap-1.5 text-sm text-gray-500 hover:text-blue-600"
+                  className="inline-flex items-center gap-1.5 text-sm text-gray-500 hover:text-brand-600"
                   title="Print or save as PDF"
                 >
                   <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -400,7 +400,7 @@ export default function AnalysisDetailClient() {
                     analysisId,
                     markdownResult.id,
                   )}
-                  className="text-blue-600 text-sm hover:underline print:hidden"
+                  className="text-brand-600 text-sm hover:underline print:hidden"
                 >
                   Download Markdown
                 </a>
@@ -422,7 +422,7 @@ export default function AnalysisDetailClient() {
                 </h3>
                 <div className="flex items-center gap-3 print:hidden">
                   {markdownResult && (
-                    <a href="#security-report" className="text-gray-500 text-sm hover:text-blue-600">
+                    <a href="#security-report" className="text-gray-500 text-sm hover:text-brand-600">
                       ↑ Back to Report
                     </a>
                   )}
@@ -432,7 +432,7 @@ export default function AnalysisDetailClient() {
                       analysisId,
                       sarifResult.id,
                     )}
-                    className="text-blue-600 text-sm hover:underline"
+                    className="text-brand-600 text-sm hover:underline"
                   >
                     Download SARIF
                   </a>
@@ -613,7 +613,7 @@ function SARIFUploadSummaryCard({
             href={alertsURL}
             target="_blank"
             rel="noopener noreferrer"
-            className="text-sm text-blue-600 hover:underline whitespace-nowrap"
+            className="text-sm text-brand-600 hover:underline whitespace-nowrap"
           >
             View alerts ↗
           </a>
@@ -728,14 +728,14 @@ function CollapsibleResultSection({
         <div className="flex items-center gap-3" onClick={(e) => e.stopPropagation()}>
           <a
             href={api.analyses.downloadResult(projectId, analysisId, resultId)}
-            className="text-xs text-blue-600 hover:underline"
+            className="text-xs text-brand-600 hover:underline"
           >
             Download Raw
           </a>
           {content && (
             <button
               onClick={handlePrintPDF}
-              className="text-xs text-blue-600 hover:underline"
+              className="text-xs text-brand-600 hover:underline"
             >
               Download PDF
             </button>
@@ -916,7 +916,7 @@ function ArchivedOutput({
                 analysisId,
                 stdoutLog.id,
               )}
-              className="text-xs text-gray-500 hover:text-blue-600"
+              className="text-xs text-gray-500 hover:text-brand-600"
             >
               Download
             </a>
@@ -935,7 +935,7 @@ function ArchivedOutput({
               onClick={() =>
                 setShowOther(showOther === log.id ? null : log.id)
               }
-              className="text-sm font-medium text-blue-600 hover:underline"
+              className="text-sm font-medium text-brand-600 hover:underline"
             >
               {showOther === log.id ? "▾" : "▸"} {log.filename}
               <span className="text-gray-400 ml-1 text-xs font-normal">
@@ -948,7 +948,7 @@ function ArchivedOutput({
                 analysisId,
                 log.id,
               )}
-              className="text-xs text-gray-500 hover:text-blue-600"
+              className="text-xs text-gray-500 hover:text-brand-600"
             >
               Download
             </a>

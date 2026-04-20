@@ -80,7 +80,7 @@ export default function AdminAUPPage() {
         {/* User list toggle */}
         <button
           onClick={() => setShowUsers(!showUsers)}
-          className="text-sm text-blue-600 hover:underline"
+          className="text-sm text-brand-600 hover:underline"
         >
           {showUsers ? 'Hide user details' : 'Show user details'}
         </button>
@@ -185,7 +185,7 @@ export default function AdminAUPPage() {
           <button
             type="submit"
             disabled={updateMut.isPending}
-            className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50"
+            className="px-4 py-2 bg-brand-600 text-white rounded-md hover:bg-brand-700 disabled:opacity-50"
           >
             {updateMut.isPending ? 'Saving...' : 'Save AUP Settings'}
           </button>

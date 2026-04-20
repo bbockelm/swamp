@@ -2,12 +2,14 @@ package handlers
 
 import (
 	"context"
+	cryptoRandPkg "crypto/rand"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/rs/zerolog/log"
@@ -16,6 +18,8 @@ import (
 	"github.com/bbockelm/swamp/internal/github"
 	"github.com/bbockelm/swamp/internal/models"
 )
+
+var cryptoRand io.Reader = cryptoRandPkg.Reader
 
 // SetGitHubClient sets the GitHub App client on the handler.
 func (h *Handler) SetGitHubClient(ghClient *github.Client) {
@@ -380,6 +384,360 @@ func (h *Handler) CheckRepoAccess(w http.ResponseWriter, r *http.Request) {
 	if !result.HasInstallation {
 		resp.InstallURL = h.ghClient.InstallURL(r.Context())
 	}
+	respondJSON(w, http.StatusOK, resp)
+}
+
+// ============================================================
+// GitHub identity linking (OAuth user authorization)
+// ============================================================
+
+// GetGitHubLinkStatus returns the current user's GitHub link status.
+// GET /api/v1/github/link
+func (h *Handler) GetGitHubLinkStatus(w http.ResponseWriter, r *http.Request) {
+	type response struct {
+		Linked        bool   `json:"linked"`
+		GitHubLogin   string `json:"github_login,omitempty"`
+		OAuthURL      string `json:"oauth_url,omitempty"`
+		OAuthConfigured bool `json:"oauth_configured"`
+	}
+
+	user := GetUserFromContext(r.Context())
+	oauthConfigured := h.ghClient != nil && h.ghClient.OAuthConfigured()
+
+	identity, err := h.queries.FindGitHubIdentity(r.Context(), user.ID)
+	if err != nil || identity == nil {
+		resp := response{OAuthConfigured: oauthConfigured}
+		respondJSON(w, http.StatusOK, resp)
+		return
+	}
+
+	respondJSON(w, http.StatusOK, response{
+		Linked:          true,
+		GitHubLogin:     identity.DisplayName,
+		OAuthConfigured: oauthConfigured,
+	})
+}
+
+// StartGitHubLink initiates the GitHub OAuth flow to link a GitHub account.
+// POST /api/v1/github/link
+func (h *Handler) StartGitHubLink(w http.ResponseWriter, r *http.Request) {
+	if h.ghClient == nil || !h.ghClient.OAuthConfigured() {
+		respondError(w, http.StatusBadRequest, "GitHub OAuth is not configured")
+		return
+	}
+
+	// Generate a random state parameter and store it in the session cookie.
+	stateBytes := make([]byte, 16)
+	if _, err := io.ReadFull(cryptoRand, stateBytes); err != nil {
+		respondError(w, http.StatusInternalServerError, "Failed to generate state")
+		return
+	}
+	state := fmt.Sprintf("%x", stateBytes)
+
+	// Store state in an HttpOnly cookie so we can validate on callback.
+	http.SetCookie(w, &http.Cookie{
+		Name:     "github_link_state",
+		Value:    state,
+		Path:     "/api/v1/github/link",
+		MaxAge:   600, // 10 minutes
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+		Secure:   r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https",
+	})
+
+	respondJSON(w, http.StatusOK, map[string]string{
+		"authorize_url": h.ghClient.OAuthAuthorizeURL(state),
+	})
+}
+
+// GitHubLinkCallback handles the OAuth callback from GitHub.
+// GET /api/v1/github/link/callback?code=X&state=Y
+func (h *Handler) GitHubLinkCallback(w http.ResponseWriter, r *http.Request) {
+	if h.ghClient == nil || !h.ghClient.OAuthConfigured() {
+		respondError(w, http.StatusBadRequest, "GitHub OAuth is not configured")
+		return
+	}
+
+	code := r.URL.Query().Get("code")
+	state := r.URL.Query().Get("state")
+	if code == "" || state == "" {
+		respondError(w, http.StatusBadRequest, "Missing code or state parameter")
+		return
+	}
+
+	// Validate state against cookie.
+	stateCookie, err := r.Cookie("github_link_state")
+	if err != nil || stateCookie.Value != state {
+		respondError(w, http.StatusBadRequest, "Invalid state parameter")
+		return
+	}
+
+	// Clear the state cookie.
+	http.SetCookie(w, &http.Cookie{
+		Name:     "github_link_state",
+		Value:    "",
+		Path:     "/api/v1/github/link",
+		MaxAge:   -1,
+		HttpOnly: true,
+	})
+
+	// Exchange code for tokens.
+	tokenResp, err := h.ghClient.OAuthExchangeCode(r.Context(), code)
+	if err != nil {
+		log.Error().Err(err).Msg("GitHub OAuth token exchange failed")
+		respondError(w, http.StatusBadGateway, "Failed to exchange authorization code")
+		return
+	}
+
+	// Get user info from GitHub.
+	ghUser, err := h.ghClient.GetUser(r.Context(), tokenResp.AccessToken)
+	if err != nil {
+		log.Error().Err(err).Msg("Failed to get GitHub user info")
+		respondError(w, http.StatusBadGateway, "Failed to get GitHub user info")
+		return
+	}
+
+	// Encrypt tokens before storing.
+	var accessTokenEnc, refreshTokenEnc *string
+	if h.encryptor != nil {
+		if tokenResp.AccessToken != "" {
+			enc, err := h.encryptor.EncryptConfigValue(tokenResp.AccessToken)
+			if err != nil {
+				log.Error().Err(err).Msg("Failed to encrypt GitHub access token")
+				respondError(w, http.StatusInternalServerError, "Failed to store tokens")
+				return
+			}
+			accessTokenEnc = &enc
+		}
+		if tokenResp.RefreshToken != "" {
+			enc, err := h.encryptor.EncryptConfigValue(tokenResp.RefreshToken)
+			if err != nil {
+				log.Error().Err(err).Msg("Failed to encrypt GitHub refresh token")
+				respondError(w, http.StatusInternalServerError, "Failed to store tokens")
+				return
+			}
+			refreshTokenEnc = &enc
+		}
+	}
+
+	var tokenExpiry *time.Time
+	if tokenResp.ExpiresIn > 0 {
+		t := time.Now().Add(time.Duration(tokenResp.ExpiresIn) * time.Second)
+		tokenExpiry = &t
+	}
+
+	user := GetUserFromContext(r.Context())
+	identity := &models.UserIdentity{
+		UserID:          user.ID,
+		Subject:         fmt.Sprintf("%d", ghUser.ID),
+		Email:           ghUser.Email,
+		DisplayName:     ghUser.Login,
+		AccessTokenEnc:  accessTokenEnc,
+		RefreshTokenEnc: refreshTokenEnc,
+		TokenExpiresAt:  tokenExpiry,
+	}
+	if err := h.queries.UpsertGitHubIdentity(r.Context(), identity); err != nil {
+		log.Error().Err(err).Str("user_id", user.ID).Msg("Failed to upsert GitHub identity")
+		respondError(w, http.StatusInternalServerError, "Failed to link GitHub account")
+		return
+	}
+
+	// Redirect to a frontend page that closes the popup.
+	http.Redirect(w, r, "/github/linked", http.StatusFound)
+}
+
+// DeleteGitHubLink removes the GitHub identity link for the current user.
+// DELETE /api/v1/github/link
+func (h *Handler) DeleteGitHubLink(w http.ResponseWriter, r *http.Request) {
+	user := GetUserFromContext(r.Context())
+	if err := h.queries.DeleteGitHubIdentity(r.Context(), user.ID); err != nil {
+		respondError(w, http.StatusInternalServerError, "Failed to unlink GitHub account")
+		return
+	}
+	respondJSON(w, http.StatusOK, map[string]string{"status": "unlinked"})
+}
+
+// getValidGitHubToken returns a valid GitHub access token for the user,
+// refreshing if necessary. Returns "" if the user has no GitHub link or
+// the token cannot be refreshed.
+func (h *Handler) getValidGitHubToken(ctx context.Context, userID string) string {
+	identity, err := h.queries.FindGitHubIdentity(ctx, userID)
+	if err != nil || identity == nil || identity.AccessTokenEnc == nil {
+		return ""
+	}
+
+	// Decrypt access token.
+	if h.encryptor == nil {
+		return ""
+	}
+	accessToken, err := h.encryptor.DecryptConfigValue(*identity.AccessTokenEnc)
+	if err != nil {
+		log.Warn().Err(err).Str("user_id", userID).Msg("Failed to decrypt GitHub access token")
+		return ""
+	}
+
+	// Check if token is still valid (with 5-minute buffer).
+	if identity.TokenExpiresAt != nil && identity.TokenExpiresAt.Before(time.Now().Add(5*time.Minute)) {
+		// Token expired or expiring — try to refresh.
+		if identity.RefreshTokenEnc == nil {
+			return ""
+		}
+		refreshToken, err := h.encryptor.DecryptConfigValue(*identity.RefreshTokenEnc)
+		if err != nil {
+			log.Warn().Err(err).Str("user_id", userID).Msg("Failed to decrypt GitHub refresh token")
+			return ""
+		}
+
+		tokenResp, err := h.ghClient.OAuthRefreshToken(ctx, refreshToken)
+		if err != nil {
+			log.Warn().Err(err).Str("user_id", userID).Msg("Failed to refresh GitHub token")
+			return ""
+		}
+
+		// Encrypt and store new tokens.
+		var newAccessEnc, newRefreshEnc *string
+		enc, err := h.encryptor.EncryptConfigValue(tokenResp.AccessToken)
+		if err == nil {
+			newAccessEnc = &enc
+		}
+		if tokenResp.RefreshToken != "" {
+			enc, err := h.encryptor.EncryptConfigValue(tokenResp.RefreshToken)
+			if err == nil {
+				newRefreshEnc = &enc
+			}
+		}
+		var newExpiry *time.Time
+		if tokenResp.ExpiresIn > 0 {
+			t := time.Now().Add(time.Duration(tokenResp.ExpiresIn) * time.Second)
+			newExpiry = &t
+		}
+		_ = h.queries.UpdateIdentityTokens(ctx, identity.ID, newAccessEnc, newRefreshEnc, newExpiry)
+
+		return tokenResp.AccessToken
+	}
+
+	return accessToken
+}
+
+// UserRepoAccess checks whether the authenticated user can access a specific
+// GitHub repository through any of their installations. This is the user-aware
+// replacement for CheckRepoAccess.
+// GET /api/v1/github/user-repo-access?owner=X&repo=Y
+func (h *Handler) UserRepoAccess(w http.ResponseWriter, r *http.Request) {
+	type matchedInstallation struct {
+		InstallationID int64  `json:"installation_id"`
+		AccountLogin   string `json:"account_login"`
+		Accessible     bool   `json:"accessible"`
+		DefaultBranch  string `json:"default_branch,omitempty"`
+	}
+	type response struct {
+		Linked              bool                  `json:"linked"`
+		HasInstallation     bool                  `json:"has_installation"`
+		Accessible          bool                  `json:"accessible"`
+		DefaultBranch       string                `json:"default_branch,omitempty"`
+		InstallationID      int64                 `json:"installation_id,omitempty"`
+		Error               string                `json:"error,omitempty"`
+		InstallURL          string                `json:"install_url,omitempty"`
+		NeedsLink           bool                  `json:"needs_link"`
+		MatchedInstallations []matchedInstallation `json:"matched_installations,omitempty"`
+	}
+
+	if h.ghClient == nil || !h.ghClient.Configured() {
+		respondJSON(w, http.StatusOK, response{Error: "GitHub App is not configured"})
+		return
+	}
+
+	owner := r.URL.Query().Get("owner")
+	repo := r.URL.Query().Get("repo")
+	if owner == "" || repo == "" {
+		respondError(w, http.StatusBadRequest, "owner and repo query parameters are required")
+		return
+	}
+
+	user := GetUserFromContext(r.Context())
+
+	// 1. Check if the user has a linked GitHub identity with a valid token.
+	token := h.getValidGitHubToken(r.Context(), user.ID)
+	if token == "" {
+		// Not linked or token invalid — check if OAuth is configured to suggest linking.
+		if h.ghClient.OAuthConfigured() {
+			respondJSON(w, http.StatusOK, response{NeedsLink: true})
+		} else {
+			// Fall back to the old non-user-aware check.
+			result := h.ghClient.CheckRepoAccess(r.Context(), owner, repo)
+			resp := response{
+				HasInstallation: result.HasInstallation,
+				Accessible:      result.Accessible,
+				DefaultBranch:   result.DefaultBranch,
+				Error:           result.Error,
+			}
+			if !result.HasInstallation {
+				resp.InstallURL = h.ghClient.InstallURL(r.Context())
+			}
+			respondJSON(w, http.StatusOK, resp)
+		}
+		return
+	}
+
+	// 2. List installations visible to this GitHub user.
+	userInstalls, err := h.ghClient.ListUserInstallations(r.Context(), token)
+	if err != nil {
+		log.Warn().Err(err).Str("user_id", user.ID).Msg("Failed to list GitHub user installations")
+		respondJSON(w, http.StatusOK, response{
+			Linked: true,
+			Error:  "Failed to list your GitHub installations. Your GitHub link may need to be refreshed.",
+		})
+		return
+	}
+
+	// 3. Cross-reference with SWAMP-known installations.
+	var matched []matchedInstallation
+	for _, ui := range userInstalls {
+		// Check if this installation is known to SWAMP.
+		swampInst, err := h.queries.GetInstallationByID(r.Context(), ui.ID)
+		if err != nil || swampInst == nil {
+			continue // Not registered in SWAMP
+		}
+		mi := matchedInstallation{
+			InstallationID: swampInst.InstallationID,
+			AccountLogin:   swampInst.AccountLogin,
+		}
+
+		// Check if the owner matches (the repo might be under this installation's account).
+		if strings.EqualFold(swampInst.AccountLogin, owner) {
+			// This installation covers the right owner — check repo access.
+			accessible, defaultBranch, err := h.ghClient.UserCanAccessRepo(r.Context(), token, swampInst.InstallationID, owner, repo)
+			if err == nil && accessible {
+				respondJSON(w, http.StatusOK, response{
+					Linked:          true,
+					HasInstallation: true,
+					Accessible:      true,
+					DefaultBranch:   defaultBranch,
+					InstallationID:  swampInst.InstallationID,
+				})
+				return
+			}
+			mi.Accessible = accessible
+		}
+		matched = append(matched, mi)
+	}
+
+	// 4. No accessible installation found.
+	resp := response{
+		Linked:               true,
+		MatchedInstallations: matched,
+	}
+
+	if len(matched) > 0 {
+		// User has overlapping installations, but none cover this repo.
+		resp.HasInstallation = true
+		resp.Error = fmt.Sprintf("The GitHub App is installed but does not have access to %s/%s. Ask the organization admin to grant access to this repository.", owner, repo)
+	} else {
+		// No overlapping installations — suggest installing the app.
+		resp.InstallURL = h.ghClient.InstallURL(r.Context())
+		resp.Error = fmt.Sprintf("No GitHub App installation found for %q. Install the app to enable access.", owner)
+	}
+
 	respondJSON(w, http.StatusOK, resp)
 }
 

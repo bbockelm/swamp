@@ -82,7 +82,7 @@ export default function AdminAPIKeysPage() {
           className={`px-4 py-2 rounded text-sm font-medium transition-colors ${
             showCreate
               ? "bg-gray-200 text-gray-700 hover:bg-gray-300"
-              : "bg-blue-600 text-white hover:bg-blue-700"
+              : "bg-brand-600 text-white hover:bg-brand-700"
           }`}
         >
           {showCreate ? "Cancel" : "+ New API Key"}
@@ -136,7 +136,7 @@ export default function AdminAPIKeysPage() {
               <button
                 type="submit"
                 disabled={createKey.isPending || !keyName.trim()}
-                className="px-4 py-2 bg-blue-600 text-white rounded text-sm font-medium hover:bg-blue-700 disabled:opacity-50"
+                className="px-4 py-2 bg-brand-600 text-white rounded text-sm font-medium hover:bg-brand-700 disabled:opacity-50"
               >
                 {createKey.isPending ? "Creating..." : "Create Key"}
               </button>

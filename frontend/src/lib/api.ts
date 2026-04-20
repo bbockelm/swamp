@@ -409,6 +409,34 @@ export interface GitHubRepoAccessResult {
   install_url?: string;
 }
 
+export interface GitHubLinkStatus {
+  linked: boolean;
+  github_login?: string;
+  oauth_url?: string;
+  oauth_configured: boolean;
+}
+
+export interface GitHubStartLinkResponse {
+  authorize_url: string;
+}
+
+export interface GitHubUserRepoAccessResult {
+  linked: boolean;
+  has_installation: boolean;
+  accessible: boolean;
+  default_branch?: string;
+  installation_id?: number;
+  error?: string;
+  install_url?: string;
+  needs_link: boolean;
+  matched_installations?: Array<{
+    installation_id: number;
+    account_login: string;
+    accessible: boolean;
+    default_branch?: string;
+  }>;
+}
+
 export interface GitHubStatus {
   configured: boolean;
   app_id?: number;
@@ -956,6 +984,14 @@ export const api = {
       fetchJSON(`${BASE}/github/branches?owner=${encodeURIComponent(owner)}&repo=${encodeURIComponent(repo)}`),
     checkRepoAccess: (owner: string, repo: string): Promise<GitHubRepoAccessResult> =>
       fetchJSON(`${BASE}/github/check-repo-access?owner=${encodeURIComponent(owner)}&repo=${encodeURIComponent(repo)}`),
+    getLinkStatus: (): Promise<GitHubLinkStatus> =>
+      fetchJSON(`${BASE}/github/link`),
+    startLink: (): Promise<GitHubStartLinkResponse> =>
+      fetchJSON(`${BASE}/github/link`, { method: 'POST' }),
+    deleteLink: (): Promise<void> =>
+      fetchJSON(`${BASE}/github/link`, { method: 'DELETE' }),
+    userRepoAccess: (owner: string, repo: string): Promise<GitHubUserRepoAccessResult> =>
+      fetchJSON(`${BASE}/github/user-repo-access?owner=${encodeURIComponent(owner)}&repo=${encodeURIComponent(repo)}`),
     getConfig: (projectId: string): Promise<ProjectGitHubConfig> =>
       fetchJSON(`${BASE}/projects/${projectId}/github`),
     updateConfig: (

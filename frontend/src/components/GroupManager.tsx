@@ -193,7 +193,7 @@ function MembersSection({ groupId, isAdmin }: { groupId: string; isAdmin: boolea
           <button
             type="submit"
             disabled={addMutation.isPending || !selectedUser}
-            className="bg-blue-600 text-white px-3 py-1.5 text-sm rounded hover:bg-blue-700 disabled:opacity-50"
+            className="bg-brand-600 text-white px-3 py-1.5 text-sm rounded hover:bg-brand-700 disabled:opacity-50"
           >
             Add
           </button>
@@ -244,7 +244,7 @@ function MembersSection({ groupId, isAdmin }: { groupId: string; isAdmin: boolea
                       })
                     }
                     disabled={roleMutation.isPending}
-                    className="text-xs text-blue-600 hover:text-blue-800"
+                    className="text-xs text-brand-600 hover:text-brand-800"
                   >
                     {m.role === "admin" ? "Demote" : "Promote"}
                   </button>
@@ -344,7 +344,7 @@ function InvitesSection({ groupId, isAdmin }: { groupId: string; isAdmin: boolea
         <button
           onClick={() => createMutation.mutate()}
           disabled={createMutation.isPending}
-          className="bg-blue-600 text-white px-3 py-1.5 text-sm rounded hover:bg-blue-700 disabled:opacity-50"
+          className="bg-brand-600 text-white px-3 py-1.5 text-sm rounded hover:bg-brand-700 disabled:opacity-50"
         >
           {createMutation.isPending ? "Creating..." : "Create Invite Link"}
         </button>

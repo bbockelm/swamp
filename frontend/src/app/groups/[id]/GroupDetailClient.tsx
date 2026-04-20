@@ -101,7 +101,7 @@ export default function GroupDetailClient() {
                 <button
                   type="submit"
                   disabled={updateMutation.isPending}
-                  className="bg-blue-600 text-white px-3 py-1.5 text-sm rounded hover:bg-blue-700 disabled:opacity-50"
+                  className="bg-brand-600 text-white px-3 py-1.5 text-sm rounded hover:bg-brand-700 disabled:opacity-50"
                 >
                   Save
                 </button>

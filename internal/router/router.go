@@ -302,6 +302,13 @@ func New(cfg *config.Config, pool *pgxpool.Pool, store *storage.Store) (*chi.Mux
 			r.Get("/github/branches", h.ListRepoBranches)
 			r.Get("/github/check-repo-access", h.CheckRepoAccess)
 
+			// GitHub identity linking
+			r.Get("/github/link", h.GetGitHubLinkStatus)
+			r.Post("/github/link", h.StartGitHubLink)
+			r.Get("/github/link/callback", h.GitHubLinkCallback)
+			r.Delete("/github/link", h.DeleteGitHubLink)
+			r.Get("/github/user-repo-access", h.UserRepoAccess)
+
 			// Dashboard stats
 			r.Get("/dashboard/stats", h.DashboardStats)
 

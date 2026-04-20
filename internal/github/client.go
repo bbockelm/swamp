@@ -769,3 +769,220 @@ func extractCommitSHA(sarifData []byte) string {
 	}
 	return ""
 }
+
+// ============================================================
+// GitHub OAuth (user-to-server) for identity linking
+// ============================================================
+
+// OAuthConfigured returns true if the GitHub App OAuth client credentials are set.
+func (c *Client) OAuthConfigured() bool {
+	return c != nil && c.cfg.GitHubAppClientID != "" && c.cfg.GitHubAppClientSecret != ""
+}
+
+// OAuthAuthorizeURL returns the URL to redirect the user to for GitHub authorization.
+func (c *Client) OAuthAuthorizeURL(state string) string {
+	return fmt.Sprintf("https://github.com/login/oauth/authorize?client_id=%s&state=%s",
+		c.cfg.GitHubAppClientID, state)
+}
+
+// OAuthTokenResponse represents the token exchange response from GitHub.
+type OAuthTokenResponse struct {
+	AccessToken           string `json:"access_token"`
+	TokenType             string `json:"token_type"`
+	ExpiresIn             int    `json:"expires_in"`
+	RefreshToken          string `json:"refresh_token"`
+	RefreshTokenExpiresIn int    `json:"refresh_token_expires_in"`
+	Scope                 string `json:"scope"`
+}
+
+// OAuthExchangeCode exchanges an authorization code for tokens.
+func (c *Client) OAuthExchangeCode(ctx context.Context, code string) (*OAuthTokenResponse, error) {
+	payload := fmt.Sprintf("client_id=%s&client_secret=%s&code=%s",
+		c.cfg.GitHubAppClientID, c.cfg.GitHubAppClientSecret, code)
+	req, err := http.NewRequestWithContext(ctx, "POST", "https://github.com/login/oauth/access_token",
+		strings.NewReader(payload))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("token exchange request failed: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, _ := io.ReadAll(resp.Body)
+
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("token exchange returned %d: %s", resp.StatusCode, string(body))
+	}
+
+	var tokenResp OAuthTokenResponse
+	if err := json.Unmarshal(body, &tokenResp); err != nil {
+		return nil, fmt.Errorf("parsing token response: %w", err)
+	}
+	if tokenResp.AccessToken == "" {
+		// GitHub returns errors as JSON with "error" field instead of access_token
+		var errResp struct {
+			Error       string `json:"error"`
+			Description string `json:"error_description"`
+		}
+		_ = json.Unmarshal(body, &errResp)
+		if errResp.Error != "" {
+			return nil, fmt.Errorf("GitHub OAuth error: %s — %s", errResp.Error, errResp.Description)
+		}
+		return nil, fmt.Errorf("no access token in response")
+	}
+	return &tokenResp, nil
+}
+
+// OAuthRefreshToken refreshes an expired access token using a refresh token.
+func (c *Client) OAuthRefreshToken(ctx context.Context, refreshToken string) (*OAuthTokenResponse, error) {
+	payload := fmt.Sprintf("client_id=%s&client_secret=%s&grant_type=refresh_token&refresh_token=%s",
+		c.cfg.GitHubAppClientID, c.cfg.GitHubAppClientSecret, refreshToken)
+	req, err := http.NewRequestWithContext(ctx, "POST", "https://github.com/login/oauth/access_token",
+		strings.NewReader(payload))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("token refresh request failed: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, _ := io.ReadAll(resp.Body)
+
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("token refresh returned %d: %s", resp.StatusCode, string(body))
+	}
+
+	var tokenResp OAuthTokenResponse
+	if err := json.Unmarshal(body, &tokenResp); err != nil {
+		return nil, fmt.Errorf("parsing refresh response: %w", err)
+	}
+	if tokenResp.AccessToken == "" {
+		return nil, fmt.Errorf("no access token in refresh response")
+	}
+	return &tokenResp, nil
+}
+
+// GitHubUser represents basic GitHub user info.
+type GitHubUser struct {
+	ID    int64  `json:"id"`
+	Login string `json:"login"`
+	Email string `json:"email"`
+}
+
+// GetUser fetches the authenticated user's profile using a user access token.
+func (c *Client) GetUser(ctx context.Context, accessToken string) (*GitHubUser, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", c.apiURL+"/user", nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+	req.Header.Set("Accept", "application/vnd.github+json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, _ := io.ReadAll(resp.Body)
+
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("GET /user returned %d", resp.StatusCode)
+	}
+	var user GitHubUser
+	if err := json.Unmarshal(body, &user); err != nil {
+		return nil, err
+	}
+	return &user, nil
+}
+
+// UserInstallation represents a GitHub App installation visible to a user.
+type UserInstallation struct {
+	ID      int64  `json:"id"`
+	Account struct {
+		Login string `json:"login"`
+		Type  string `json:"type"`
+	} `json:"account"`
+}
+
+// ListUserInstallations lists GitHub App installations accessible to the user.
+func (c *Client) ListUserInstallations(ctx context.Context, accessToken string) ([]UserInstallation, error) {
+	var all []UserInstallation
+	page := 1
+	for {
+		url := fmt.Sprintf("%s/user/installations?per_page=100&page=%d", c.apiURL, page)
+		req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Authorization", "Bearer "+accessToken)
+		req.Header.Set("Accept", "application/vnd.github+json")
+		req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			return nil, err
+		}
+		body, _ := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+
+		if resp.StatusCode != 200 {
+			return nil, fmt.Errorf("GET /user/installations returned %d: %s", resp.StatusCode, string(body))
+		}
+
+		var result struct {
+			Installations []UserInstallation `json:"installations"`
+		}
+		if err := json.Unmarshal(body, &result); err != nil {
+			return nil, err
+		}
+		all = append(all, result.Installations...)
+		if len(result.Installations) < 100 {
+			break
+		}
+		page++
+	}
+	return all, nil
+}
+
+// UserCanAccessRepo checks if a user's access token can see a specific repo
+// through any of their installations.
+func (c *Client) UserCanAccessRepo(ctx context.Context, accessToken string, installationID int64, owner, repo string) (bool, string, error) {
+	// Use the installation token (not user token) to check repo access.
+	token, err := c.GetInstallationToken(ctx, installationID)
+	if err != nil {
+		return false, "", fmt.Errorf("getting installation token: %w", err)
+	}
+
+	url := fmt.Sprintf("%s/repos/%s/%s", c.apiURL, owner, repo)
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return false, "", err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return false, "", err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, _ := io.ReadAll(resp.Body)
+
+	if resp.StatusCode == 200 {
+		var repoInfo struct {
+			DefaultBranch string `json:"default_branch"`
+		}
+		_ = json.Unmarshal(body, &repoInfo)
+		return true, repoInfo.DefaultBranch, nil
+	}
+	return false, "", nil
+}

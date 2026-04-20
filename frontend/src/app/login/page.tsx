@@ -42,8 +42,11 @@ function LoginContent() {
   if (loading) return <div className="p-8">Loading...</div>;
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-100">
-      <div className="bg-white p-8 rounded-lg shadow-md w-full max-w-md">
+    <div className="min-h-screen flex items-center justify-center bg-navy-950">
+      <div className="bg-white p-8 rounded-lg shadow-xl w-full max-w-md">
+        <div className="flex justify-center mb-4">
+          <img src="/logo.png" alt="SWAMP" className="h-24 w-auto" />
+        </div>
         <h1 className="text-2xl font-bold text-center mb-2">SWAMP</h1>
         <p className="text-center text-gray-500 mb-6">
           Software Assurance Marketplace
@@ -71,7 +74,7 @@ function LoginContent() {
             </p>
             <button
               onClick={handleOIDCLogin}
-              className="w-full bg-blue-600 text-white py-2 rounded hover:bg-blue-700"
+              className="w-full bg-brand-600 text-white py-2 rounded hover:bg-brand-700"
             >
               Sign In with CILogon
             </button>

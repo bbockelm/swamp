@@ -245,7 +245,7 @@ export function FindingsTable({
               setDebouncedSearch('');
               setPage(1);
             }}
-            className="text-sm text-blue-600 hover:underline"
+            className="text-sm text-brand-600 hover:underline"
           >
             Clear filters
           </button>
@@ -256,15 +256,15 @@ export function FindingsTable({
       <div className="text-sm text-gray-500 mb-3">
         {data ? `${data.total} finding${data.total !== 1 ? 's' : ''}` : 'Loading...'}
         {analysisFilter && (
-          <span className="ml-2 text-xs bg-blue-50 text-blue-700 px-2 py-0.5 rounded">
+          <span className="ml-2 text-xs bg-brand-50 text-brand-700 px-2 py-0.5 rounded">
             Analysis {analysisFilter.slice(0, 8)}
-            <button onClick={() => { setAnalysisFilter(''); setPage(1); }} className="ml-1 text-blue-400 hover:text-blue-600">&times;</button>
+            <button onClick={() => { setAnalysisFilter(''); setPage(1); }} className="ml-1 text-brand-400 hover:text-brand-600">&times;</button>
           </span>
         )}
         {sortField && (
           <button
             onClick={() => { setSortField(null); }}
-            className="ml-2 text-xs text-blue-600 hover:underline"
+            className="ml-2 text-xs text-brand-600 hover:underline"
           >
             Clear sort
           </button>
@@ -371,7 +371,7 @@ function FindingRow({
               href={ghLink}
               target="_blank"
               rel="noopener noreferrer"
-              className="text-blue-600 hover:underline"
+              className="text-brand-600 hover:underline"
               onClick={(e) => e.stopPropagation()}
             >
               {finding.file_path}{finding.start_line > 0 && `:${finding.start_line}`}
@@ -454,7 +454,7 @@ function FindingDetail({ finding, projectId, canEdit }: { finding: Finding; proj
               href={finding.sarif_upload_url}
               target="_blank"
               rel="noopener noreferrer"
-              className="text-blue-600 hover:underline"
+              className="text-brand-600 hover:underline"
             >
               View alerts ↗
             </a>
@@ -509,7 +509,7 @@ function FindingDetail({ finding, projectId, canEdit }: { finding: Finding; proj
             <button
               onClick={() => annotateMutation.mutate()}
               disabled={annotateMutation.isPending}
-              className="bg-blue-600 text-white px-3 py-1.5 text-sm rounded hover:bg-blue-700 disabled:opacity-50"
+              className="bg-brand-600 text-white px-3 py-1.5 text-sm rounded hover:bg-brand-700 disabled:opacity-50"
             >
               {annotateMutation.isPending ? 'Saving...' : 'Save'}
             </button>
@@ -527,7 +527,7 @@ function FindingDetail({ finding, projectId, canEdit }: { finding: Finding; proj
       <div>
         <button
           onClick={() => setShowAnnotations(!showAnnotations)}
-          className="text-xs text-blue-600 hover:underline"
+          className="text-xs text-brand-600 hover:underline"
         >
           {showAnnotations ? 'Hide' : 'Show'} annotation history
         </button>
