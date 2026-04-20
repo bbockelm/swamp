@@ -179,9 +179,15 @@ func runOpenCodeProcess(ctx context.Context, binary, workDir, prompt, analysisID
 		scanner := bufio.NewScanner(stdoutPR)
 		scanner.Buffer(make([]byte, 0, 1024*1024), 1024*1024)
 		for scanner.Scan() {
-			msg := extractOpenCodeMessage(scanner.Bytes())
+			raw := scanner.Bytes()
+			msg := extractOpenCodeMessage(raw)
 			if msg != "" {
 				broadcast(msg)
+			}
+			// Forward raw JSON for token-bearing events so the frontend
+			// can extract live token usage.
+			if isTokenBearingEvent(raw) {
+				broadcast(string(raw))
 			}
 		}
 	}()

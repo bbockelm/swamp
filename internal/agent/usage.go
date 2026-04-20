@@ -134,6 +134,35 @@ func parseOpenCodeStepFinishUsage(raw map[string]json.RawMessage, totals map[str
 	u.CostUSD += part.Cost
 }
 
+// isTokenBearingEvent checks if a raw JSON line is a token-usage event
+// (Claude "assistant" with usage or OpenCode "step_finish" with tokens).
+// This is used by the streaming goroutines to forward raw JSON for live
+// token tracking on the frontend.
+func isTokenBearingEvent(line []byte) bool {
+	if len(line) == 0 || line[0] != '{' {
+		return false
+	}
+	var raw struct {
+		Type string `json:"type"`
+	}
+	if json.Unmarshal(line, &raw) != nil {
+		return false
+	}
+	switch raw.Type {
+	case "step_finish":
+		return true
+	case "assistant":
+		// Only if it contains usage data.
+		var msg struct {
+			Message struct {
+				Usage *json.RawMessage `json:"usage"`
+			} `json:"message"`
+		}
+		return json.Unmarshal(line, &msg) == nil && msg.Message.Usage != nil
+	}
+	return false
+}
+
 func getOrCreate(m map[string]*models.TokenUsage, model string) *models.TokenUsage {
 	if u, ok := m[model]; ok {
 		return u

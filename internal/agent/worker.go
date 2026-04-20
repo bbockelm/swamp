@@ -564,9 +564,15 @@ func runWorkerAgent(ctx context.Context, cfg *config.Config, session *WorkerExch
 		scanner := bufio.NewScanner(stdoutPR)
 		scanner.Buffer(make([]byte, 0, 1024*1024), 1024*1024)
 		for scanner.Scan() {
-			msg := extractStreamMessage(scanner.Bytes())
+			raw := scanner.Bytes()
+			msg := extractStreamMessage(raw)
 			if msg != "" {
 				streamer.send(msg)
+			}
+			// Forward raw JSON for token-bearing events so the frontend
+			// can extract live token usage.
+			if isTokenBearingEvent(raw) {
+				streamer.send(string(raw))
 			}
 		}
 	}()

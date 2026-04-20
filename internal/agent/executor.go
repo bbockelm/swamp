@@ -538,6 +538,11 @@ func (e *Executor) runAgent(ctx context.Context, workDir, prompt string, analysi
 			if msg != "" {
 				e.hub.Broadcast(analysisID, []byte(msg))
 			}
+			// Forward raw JSON for token-bearing events so the frontend
+			// can extract live token usage.
+			if isTokenBearingEvent(line) {
+				e.hub.Broadcast(analysisID, line)
+			}
 		}
 	}
 
