@@ -169,6 +169,20 @@ func (h *Handler) UpdatePackage(w http.ResponseWriter, r *http.Request) {
 	if updates.SARIFUploadEnabled != nil {
 		pkg.SARIFUploadEnabled = *updates.SARIFUploadEnabled
 	}
+	// Auto-match installation if SARIF is enabled but no installation is set.
+	if pkg.SARIFUploadEnabled && pkg.InstallationID == 0 && pkg.GitHubOwner != "" {
+		user := GetUserFromContext(r.Context())
+		projectID := chi.URLParam(r, "projectID")
+		if ghCfg, err := h.queries.GetProjectGitHubConfig(r.Context(), projectID); err == nil && ghCfg.InstallationID != 0 {
+			if user != nil && h.userCanUseInstallation(r.Context(), user.ID, ghCfg.InstallationID) {
+				pkg.InstallationID = ghCfg.InstallationID
+			}
+		} else if inst, err := h.queries.GetInstallationByOwner(r.Context(), pkg.GitHubOwner); err == nil {
+			if user != nil && h.userCanUseInstallation(r.Context(), user.ID, inst.InstallationID) {
+				pkg.InstallationID = inst.InstallationID
+			}
+		}
+	}
 	if err := h.queries.UpdatePackage(r.Context(), pkg); err != nil {
 		log.Error().Err(err).Msg("Failed to update package")
 		respondError(w, http.StatusInternalServerError, "Failed to update package")
