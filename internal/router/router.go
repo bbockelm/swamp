@@ -281,6 +281,7 @@ func New(cfg *config.Config, pool *pgxpool.Pool, store *storage.Store) (*chi.Mux
 			r.Post("/auth/agree-aup", h.AgreeAUP)
 			r.Put("/auth/profile", h.UpdateMyProfile)
 			r.Get("/auth/my-stats", h.GetMyStats)
+			r.Get("/auth/my-identities", h.ListMyIdentities)
 		})
 
 		// --- All authenticated + AUP-agreed endpoints ---

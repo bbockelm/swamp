@@ -1,7 +1,7 @@
 'use client';
 
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { api } from '@/lib/api';
+import { api, type UserIdentity } from '@/lib/api';
 
 export default function AdminSettingsPage() {
   const { data: session } = useQuery({
@@ -19,6 +19,12 @@ export default function AdminSettingsPage() {
     queryKey: ['version'],
     queryFn: api.version,
     staleTime: Infinity,
+  });
+
+  const { data: identities } = useQuery({
+    queryKey: ['my-identities'],
+    queryFn: api.auth.myIdentities,
+    enabled: !!session?.user,
   });
 
   return (
@@ -66,6 +72,32 @@ export default function AdminSettingsPage() {
         {/* AUP Agreement */}
         {session && !session.aup_agreed && (
           <AUPSection aupVersion={session.aup_version} />
+        )}
+
+        {/* Linked Identities */}
+        {identities && identities.length > 0 && (
+          <div>
+            <h2 className="text-lg font-semibold mb-3">Linked Identities</h2>
+            <div className="bg-gray-50 rounded border divide-y">
+              {identities.map((identity) => (
+                <div key={identity.id} className="p-4 text-sm">
+                  <div className="flex items-center gap-2 mb-1">
+                    <span className="font-medium">{identity.display_name || identity.email || identity.subject}</span>
+                    {identity.idp_name && (
+                      <span className="text-xs bg-gray-200 text-gray-600 px-1.5 py-0.5 rounded">
+                        {identity.idp_name}
+                      </span>
+                    )}
+                  </div>
+                  <div className="text-xs text-gray-500 space-y-0.5">
+                    {identity.email && <div>{identity.email}</div>}
+                    <div className="font-mono text-gray-400">{identity.issuer}</div>
+                    <div className="text-gray-400">Linked {new Date(identity.created_at).toLocaleDateString()}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
         )}
 
         {/* API Documentation */}

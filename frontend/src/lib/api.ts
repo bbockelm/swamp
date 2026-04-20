@@ -517,6 +517,8 @@ export const api = {
       }),
     myStats: (): Promise<UserStats> =>
       fetchJSON(`${BASE}/auth/my-stats`),
+    myIdentities: (): Promise<UserIdentity[]> =>
+      fetchJSON(`${BASE}/auth/my-identities`),
   },
 
   groups: {

@@ -63,33 +63,35 @@ function LandingPage() {
 
       {/* Hero */}
       <section className="max-w-5xl mx-auto px-6 py-16 lg:py-24">
-        <div className="max-w-3xl">
-          <h1 className="text-4xl lg:text-5xl font-bold text-gray-900 leading-tight">
-            AI-Powered Security Analysis for Your Code
-          </h1>
-          <p className="mt-6 text-lg text-gray-600 leading-relaxed">
-            The <strong>Software Assurance Marketplace (SWAMP)</strong> uses AI
-            agents to perform deep security analysis of Git repositories. Submit
-            your code, and SWAMP automatically identifies vulnerabilities,
-            generates SARIF reports, and optionally validates findings with
-            proof-of-concept exploits.
-          </p>
-          <div className="mt-8 flex flex-wrap gap-4">
-            <Link
-              href="/login"
-              className="bg-brand-600 text-white px-6 py-3 rounded-lg hover:bg-brand-700 transition font-medium"
-            >
-              Get Started
-            </Link>
-            <a
-              href="#how-it-works"
-              className="border border-brand-600 text-brand-700 px-6 py-3 rounded-lg hover:bg-brand-50 transition font-medium"
-            >
-              Learn More
-            </a>
+        <div className="flex flex-col lg:flex-row items-center gap-12 lg:gap-16">
+          <div className="flex-1">
+            <h1 className="text-4xl lg:text-5xl font-bold text-gray-900 leading-tight">
+              AI-Powered Security Analysis for Your Code
+            </h1>
+            <p className="mt-6 text-lg text-gray-600 leading-relaxed">
+              The <strong>Software Assurance Marketplace (SWAMP)</strong> uses AI
+              agents to perform deep security analysis of Git repositories. Submit
+              your code, and SWAMP automatically identifies vulnerabilities,
+              generates SARIF reports, and optionally validates findings with
+              proof-of-concept exploits.
+            </p>
+            <div className="mt-8 flex flex-wrap gap-4">
+              <Link
+                href="/login"
+                className="bg-brand-600 text-white px-6 py-3 rounded-lg hover:bg-brand-700 transition font-medium"
+              >
+                Get Started
+              </Link>
+              <a
+                href="#how-it-works"
+                className="border border-brand-600 text-brand-700 px-6 py-3 rounded-lg hover:bg-brand-50 transition font-medium"
+              >
+                Learn More
+              </a>
+            </div>
           </div>
-          <div className="mt-12">
-            <img src="/logo.png" alt="SWAMP" className="h-20 w-auto opacity-90" />
+          <div className="flex-shrink-0">
+            <img src="/logo.png" alt="SWAMP" className="w-64 lg:w-80 h-auto" />
           </div>
         </div>
       </section>

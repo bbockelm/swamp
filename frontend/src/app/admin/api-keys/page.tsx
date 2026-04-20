@@ -110,7 +110,7 @@ export default function AdminAPIKeysPage() {
                   onChange={(e) => setKeyName(e.target.value)}
                   placeholder="e.g. CI/CD Pipeline"
                   required
-                  className="w-full border rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="w-full border rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
                   autoFocus
                 />
               </div>
@@ -121,7 +121,7 @@ export default function AdminAPIKeysPage() {
                 <select
                   value={expiresIn}
                   onChange={(e) => setExpiresIn(e.target.value)}
-                  className="w-full border rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="w-full border rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
                 >
                   <option value="">No expiration</option>
                   <option value="1d">1 day</option>

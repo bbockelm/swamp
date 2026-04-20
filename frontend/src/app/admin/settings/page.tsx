@@ -754,7 +754,7 @@ function ExecutorConfigSection() {
               <label
                 key={mode.value}
                 className={`flex items-start gap-3 p-3 border rounded-md cursor-pointer transition-colors ${
-                  selectedMode === mode.value ? 'border-blue-500 bg-blue-50' : 'border-gray-200 hover:bg-gray-50'
+                  selectedMode === mode.value ? 'border-brand-500 bg-brand-50' : 'border-gray-200 hover:bg-gray-50'
                 }`}
               >
                 <input

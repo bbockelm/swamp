@@ -79,7 +79,7 @@ function GroupSearch({
             setQuery("");
           }}
           disabled={disabled}
-          className="w-full border rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100 disabled:text-gray-400"
+          className="w-full border rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500 disabled:bg-gray-100 disabled:text-gray-400"
           placeholder="Search groups..."
         />
         {value && !disabled && (
@@ -246,7 +246,7 @@ export default function ProjectsPage() {
                   value={name}
                   onChange={(e) => setName(e.target.value)}
                   required
-                  className="w-full border rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="w-full border rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
                   placeholder="My Security Project"
                   autoFocus
                 />
@@ -259,7 +259,7 @@ export default function ProjectsPage() {
                   type="text"
                   value={description}
                   onChange={(e) => setDescription(e.target.value)}
-                  className="w-full border rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="w-full border rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
                   placeholder="Optional description..."
                 />
               </div>
@@ -323,7 +323,7 @@ export default function ProjectsPage() {
                 <select
                   value={ownerId}
                   onChange={(e) => setOwnerId(e.target.value)}
-                  className="w-full border rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="w-full border rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
                 >
                   <option value="">Myself</option>
                   {users?.map((u) => (
@@ -551,6 +551,7 @@ function PackagesTab({ projectId }: { projectId: string }) {
   const [sarifUploadEnabled, setSarifUploadEnabled] = useState(false);
   const [branchError, setBranchError] = useState<string | null>(null);
   const [installationWarning, setInstallationWarning] = useState<string | null>(null);
+  const [installationSuccess, setInstallationSuccess] = useState<string | null>(null);
   const [accessInstallURL, setAccessInstallURL] = useState<string | null>(null);
   const [needsGitHubLink, setNeedsGitHubLink] = useState(false);
   const [linkingGitHub, setLinkingGitHub] = useState(false);
@@ -595,6 +596,7 @@ function PackagesTab({ projectId }: { projectId: string }) {
   const handleSarifToggle = useCallback(async (checked: boolean) => {
     setSarifUploadEnabled(checked);
     setInstallationWarning(null);
+    setInstallationSuccess(null);
     setAccessInstallURL(null);
     if (!checked || !parsedGitHub) return;
     try {
@@ -610,6 +612,10 @@ function PackagesTab({ projectId }: { projectId: string }) {
       } else if (!access.accessible) {
         setInstallationWarning(
           access.error ?? `GitHub App does not have access to this repository.`
+        );
+      } else {
+        setInstallationSuccess(
+          `Connected to ${parsedGitHub.owner}/${parsedGitHub.repo} — results will be uploaded to GitHub Code Scanning.`
         );
       }
     } catch {
@@ -629,6 +635,9 @@ function PackagesTab({ projectId }: { projectId: string }) {
           setInstallationWarning(null);
           setAccessInstallURL(null);
           setNeedsGitHubLink(false);
+          if (sarifUploadEnabled) {
+            setInstallationSuccess(`Connected to ${parsedGitHub.owner}/${parsedGitHub.repo} — results will be uploaded to GitHub Code Scanning.`);
+          }
           branchInputRef.current?.refetch();
         } else if (!access.needs_link) {
           setNeedsGitHubLink(false);
@@ -678,6 +687,7 @@ function PackagesTab({ projectId }: { projectId: string }) {
       setSarifUploadEnabled(false);
       setBranchError(null);
       setInstallationWarning(null);
+      setInstallationSuccess(null);
     },
   });
 
@@ -712,6 +722,18 @@ function PackagesTab({ projectId }: { projectId: string }) {
     setAdding(false);
     setBranchError(null);
     setInstallationWarning(null);
+    setInstallationSuccess(null);
+    // Auto-check access when editing a package with SARIF already enabled
+    if (pkg.sarif_upload_enabled) {
+      const m = pkg.git_url.match(/github\.com[/:]([^/]+)\/([^/.]+?)(?:\.git)?\/?$/i);
+      if (m) {
+        api.github.userRepoAccess(m[1], m[2]).then((access) => {
+          if (access.accessible && access.has_installation) {
+            setInstallationSuccess(`Connected to ${m[1]}/${m[2]} — results will be uploaded to GitHub Code Scanning.`);
+          }
+        }).catch(() => { /* ignore */ });
+      }
+    }
   };
 
   const cancelEdit = () => {
@@ -723,6 +745,7 @@ function PackagesTab({ projectId }: { projectId: string }) {
     setSarifUploadEnabled(false);
     setBranchError(null);
     setInstallationWarning(null);
+    setInstallationSuccess(null);
   };
 
   const handleGitHubLink = async () => {
@@ -795,7 +818,7 @@ function PackagesTab({ projectId }: { projectId: string }) {
                       type="button"
                       onClick={handleGitHubLink}
                       disabled={linkingGitHub}
-                      className="underline text-brand-600 hover:text-blue-700"
+                      className="underline text-brand-600 hover:text-brand-700"
                     >
                       {linkingGitHub ? 'Linking…' : 'Link your GitHub account'}
                     </button>
@@ -803,7 +826,7 @@ function PackagesTab({ projectId }: { projectId: string }) {
                 )}
                 {!needsGitHubLink && accessInstallURL && (
                   <>{' '}
-                    <a href={accessInstallURL} target="_blank" rel="noopener noreferrer" className="underline text-brand-600 hover:text-blue-700">
+                    <a href={accessInstallURL} target="_blank" rel="noopener noreferrer" className="underline text-brand-600 hover:text-brand-700">
                       Install the GitHub App
                     </a>{' '}
                     on <strong>{parsedGitHub.owner}</strong> to grant access.
@@ -865,7 +888,7 @@ function PackagesTab({ projectId }: { projectId: string }) {
                       type="button"
                       onClick={handleGitHubLink}
                       disabled={linkingGitHub}
-                      className="underline text-brand-600 hover:text-blue-700"
+                      className="underline text-brand-600 hover:text-brand-700"
                     >
                       {linkingGitHub ? 'Linking…' : 'Link your GitHub account'}
                     </button>
@@ -873,12 +896,18 @@ function PackagesTab({ projectId }: { projectId: string }) {
                 )}
                 {!needsGitHubLink && accessInstallURL && (
                   <>{' '}
-                    <a href={accessInstallURL} target="_blank" rel="noopener noreferrer" className="underline text-brand-600 hover:text-blue-700">
+                    <a href={accessInstallURL} target="_blank" rel="noopener noreferrer" className="underline text-brand-600 hover:text-brand-700">
                       Install the GitHub App
                     </a>{' '}
                     to enable uploads.
                   </>
                 )}
+              </p>
+            )}
+            {!installationWarning && installationSuccess && (
+              <p className="text-xs text-green-600 mt-1 flex items-center gap-1">
+                <svg className="h-3.5 w-3.5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" /></svg>
+                {installationSuccess}
               </p>
             )}
           </div>
@@ -933,7 +962,7 @@ function PackagesTab({ projectId }: { projectId: string }) {
                             type="button"
                             onClick={handleGitHubLink}
                             disabled={linkingGitHub}
-                            className="underline text-brand-600 hover:text-blue-700"
+                            className="underline text-brand-600 hover:text-brand-700"
                           >
                             {linkingGitHub ? 'Linking…' : 'Link your GitHub account'}
                           </button>
@@ -941,7 +970,7 @@ function PackagesTab({ projectId }: { projectId: string }) {
                       )}
                       {!needsGitHubLink && accessInstallURL && (
                         <>{' '}
-                          <a href={accessInstallURL} target="_blank" rel="noopener noreferrer" className="underline text-brand-600 hover:text-blue-700">
+                          <a href={accessInstallURL} target="_blank" rel="noopener noreferrer" className="underline text-brand-600 hover:text-brand-700">
                             Install the GitHub App
                           </a>{' '}
                           on <strong>{parsedGitHub.owner}</strong> to grant access.
@@ -1004,7 +1033,7 @@ function PackagesTab({ projectId }: { projectId: string }) {
                             type="button"
                             onClick={handleGitHubLink}
                             disabled={linkingGitHub}
-                            className="underline text-brand-600 hover:text-blue-700"
+                            className="underline text-brand-600 hover:text-brand-700"
                           >
                             {linkingGitHub ? 'Linking…' : 'Link your GitHub account'}
                           </button>
@@ -1012,12 +1041,18 @@ function PackagesTab({ projectId }: { projectId: string }) {
                       )}
                       {!needsGitHubLink && accessInstallURL && (
                         <>{' '}
-                          <a href={accessInstallURL} target="_blank" rel="noopener noreferrer" className="underline text-brand-600 hover:text-blue-700">
+                          <a href={accessInstallURL} target="_blank" rel="noopener noreferrer" className="underline text-brand-600 hover:text-brand-700">
                             Install the GitHub App
                           </a>{' '}
                           to enable uploads.
                         </>
                       )}
+                    </p>
+                  )}
+                  {!installationWarning && installationSuccess && (
+                    <p className="text-xs text-green-600 mt-1 flex items-center gap-1">
+                      <svg className="h-3.5 w-3.5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" /></svg>
+                      {installationSuccess}
                     </p>
                   )}
                 </div>
@@ -1055,8 +1090,15 @@ function PackagesTab({ projectId }: { projectId: string }) {
                   {pkg.github_owner && pkg.github_repo && (
                     <div className="text-xs text-gray-400 mt-0.5">
                       GitHub: {pkg.github_owner}/{pkg.github_repo}
-                      {pkg.installation_id > 0 && ' (App)'}
-                      {pkg.sarif_upload_enabled && ' · SARIF upload'}
+                      {pkg.installation_id > 0 && (
+                        <span className="text-green-600"> · App installed</span>
+                      )}
+                      {pkg.sarif_upload_enabled && pkg.installation_id > 0 && (
+                        <span className="text-green-600"> · Code Scanning enabled</span>
+                      )}
+                      {pkg.sarif_upload_enabled && !pkg.installation_id && (
+                        <span className="text-amber-500"> · SARIF upload (no App)</span>
+                      )}
                     </div>
                   )}
                   {pkg.analysis_prompt && (
@@ -1068,7 +1110,7 @@ function PackagesTab({ projectId }: { projectId: string }) {
                 <div className="flex gap-2">
                   <button
                     onClick={() => startEdit(pkg)}
-                    className="text-brand-500 text-xs hover:text-blue-700"
+                    className="text-brand-500 text-xs hover:text-brand-700"
                   >
                     Edit
                   </button>
@@ -2182,7 +2224,7 @@ function GitHubTabInline({ projectId }: { projectId: string }) {
 
   useEffect(() => {
     const handler = (e: MessageEvent) => {
-      if (e.data === 'github-linked') {
+      if (e.origin === window.location.origin && e.data?.type === 'github-linked') {
         setLinkingGitHub(false);
         queryClient.invalidateQueries({ queryKey: ['github-link-status'] });
         queryClient.invalidateQueries({ queryKey: ['github-installations'] });

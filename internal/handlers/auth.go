@@ -251,6 +251,24 @@ func (h *Handler) GetCurrentSession(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// ListMyIdentities returns the linked identities for the current user.
+func (h *Handler) ListMyIdentities(w http.ResponseWriter, r *http.Request) {
+	user := GetUserFromContext(r.Context())
+	if user == nil {
+		respondError(w, http.StatusUnauthorized, "Not authenticated")
+		return
+	}
+	identities, err := h.queries.ListUserIdentities(r.Context(), user.ID)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "Failed to list identities")
+		return
+	}
+	if identities == nil {
+		identities = []models.UserIdentity{}
+	}
+	respondJSON(w, http.StatusOK, identities)
+}
+
 // Logout destroys the current session.
 func (h *Handler) Logout(w http.ResponseWriter, r *http.Request) {
 	cookie, err := r.Cookie(sessionCookieName)

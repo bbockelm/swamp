@@ -379,7 +379,7 @@ function BackupRow({
           {b.status === 'completed' && (
             <button
               onClick={onRestore}
-              className="text-xs px-2 py-1 rounded border border-blue-300 text-blue-700 hover:bg-blue-50"
+              className="text-xs px-2 py-1 rounded border border-brand-300 text-brand-700 hover:bg-brand-50"
               title="Restore from this backup"
             >
               Restore
