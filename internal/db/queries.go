@@ -1659,6 +1659,37 @@ func (q *Queries) ListProjectFindingAnnotations(ctx context.Context, projectID s
 	return annotations, nil
 }
 
+// GetOpenFindingsSummary returns a compact summary of all open
+// (non-dismissed) findings for a project, suitable for the MCP tool response.
+func (q *Queries) GetOpenFindingsSummary(ctx context.Context, projectID string) ([]models.FindingSummary, error) {
+	rows, err := q.pool.Query(ctx, `
+		SELECT f.rule_id, f.level, f.file_path, f.start_line, f.message,
+		       COALESCE(fa.status, 'open') AS status, COALESCE(fa.note, '') AS note
+		FROM findings f
+		LEFT JOIN LATERAL (
+		    SELECT fa2.status, fa2.note
+		    FROM finding_annotations fa2 WHERE fa2.finding_id = f.id
+		    ORDER BY fa2.updated_at DESC LIMIT 1
+		) fa ON true
+		WHERE f.project_id = $1
+		  AND COALESCE(fa.status, 'open') NOT IN ('false_positive', 'not_relevant')
+		ORDER BY CASE f.level WHEN 'error' THEN 1 WHEN 'warning' THEN 2 WHEN 'note' THEN 3 ELSE 4 END,
+		         f.file_path, f.start_line`, projectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []models.FindingSummary
+	for rows.Next() {
+		var s models.FindingSummary
+		if err := rows.Scan(&s.RuleID, &s.Level, &s.FilePath, &s.StartLine, &s.Message, &s.Status, &s.Note); err != nil {
+			return nil, err
+		}
+		out = append(out, s)
+	}
+	return out, nil
+}
+
 // GetOpenFindingsSummaryForPackages returns a compact summary of open
 // (non-dismissed) findings for the specified packages in a project,
 // suitable for injecting into an analysis prompt.
