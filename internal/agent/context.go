@@ -18,23 +18,24 @@ import (
 // shared helper used by both the local Executor and the ProcessExecutor.
 func gatherAnalysisContext(ctx context.Context, queries *db.Queries, enc *crypto.Encryptor, store *storage.Store, projectID string, packages []models.SoftwarePackage) *models.AnalysisContext {
 	ac := &models.AnalysisContext{}
+	packageIDs := make([]string, 0, len(packages))
+	for _, pkg := range packages {
+		if pkg.ID != "" {
+			packageIDs = append(packageIDs, pkg.ID)
+		}
+	}
 
-	// Get open findings for this project.
-	findings, err := queries.GetOpenFindingsSummary(ctx, projectID)
+	// Get open findings for the packages currently being analyzed.
+	findings, err := queries.GetOpenFindingsSummaryForPackages(ctx, projectID, packageIDs)
 	if err != nil {
 		log.Warn().Err(err).Str("project_id", projectID).Msg("Failed to get open findings for context")
 	} else {
 		ac.OpenFindings = findings
 	}
 
-	// Determine the branch being analyzed (use first package).
-	branch := ""
-	if len(packages) > 0 {
-		branch = packages[0].GitBranch
-	}
-
-	// Get notes from recent completed analyses.
-	noteRefs, err := queries.GetRecentAnalysisNotes(ctx, projectID, branch, 3)
+	// Get notes only from recent completed analyses that used the exact same
+	// package set as this run.
+	noteRefs, err := queries.GetRecentAnalysisNotesForPackages(ctx, projectID, packageIDs, 3)
 	if err != nil {
 		log.Warn().Err(err).Str("project_id", projectID).Msg("Failed to get recent analysis notes")
 	} else {

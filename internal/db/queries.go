@@ -1610,23 +1610,29 @@ func (q *Queries) ListProjectFindingAnnotations(ctx context.Context, projectID s
 	return annotations, nil
 }
 
-// GetOpenFindingsSummary returns a compact summary of open (non-dismissed)
-// findings for a project, suitable for injecting into an analysis prompt.
+// GetOpenFindingsSummaryForPackages returns a compact summary of open
+// (non-dismissed) findings for the specified packages in a project,
+// suitable for injecting into an analysis prompt.
 // Each row is: rule_id, level, file_path, start_line, message, status.
-func (q *Queries) GetOpenFindingsSummary(ctx context.Context, projectID string) ([]models.FindingSummary, error) {
+func (q *Queries) GetOpenFindingsSummaryForPackages(ctx context.Context, projectID string, packageIDs []string) ([]models.FindingSummary, error) {
+	if len(packageIDs) == 0 {
+		return nil, nil
+	}
 	rows, err := q.pool.Query(ctx, `
 		SELECT f.rule_id, f.level, f.file_path, f.start_line, f.message,
 		       COALESCE(fa.status, 'open') AS status, COALESCE(fa.note, '') AS note
 		FROM findings f
+		JOIN analysis_results ar ON ar.id = f.result_id
 		LEFT JOIN LATERAL (
 		    SELECT fa2.status, fa2.note
 		    FROM finding_annotations fa2 WHERE fa2.finding_id = f.id
 		    ORDER BY fa2.updated_at DESC LIMIT 1
 		) fa ON true
 		WHERE f.project_id = $1
+		  AND ar.package_id = ANY($2::uuid[])
 		  AND COALESCE(fa.status, 'open') NOT IN ('false_positive', 'not_relevant')
 		ORDER BY CASE f.level WHEN 'error' THEN 1 WHEN 'warning' THEN 2 WHEN 'note' THEN 3 ELSE 4 END,
-		         f.file_path, f.start_line`, projectID)
+		         f.file_path, f.start_line`, projectID, packageIDs)
 	if err != nil {
 		return nil, err
 	}
@@ -1642,35 +1648,32 @@ func (q *Queries) GetOpenFindingsSummary(ctx context.Context, projectID string) 
 	return out, nil
 }
 
-// GetRecentAnalysisNotes retrieves analysis_notes content from the last N
-// completed analyses for the project. It joins through analysis_results to get
-// the S3 key and metadata. The caller must decrypt and read the content from S3.
-// If gitBranch is non-empty, it filters to analyses that used a matching branch
-// (via analysis_packages → software_packages) or the default branch.
-func (q *Queries) GetRecentAnalysisNotes(ctx context.Context, projectID string, gitBranch string, limit int) ([]models.AnalysisNoteRef, error) {
+// GetRecentAnalysisNotesForPackages retrieves analysis_notes content from the
+// last N completed analyses for the project that analyzed exactly the same set
+// of packages. It joins through analysis_results to get the S3 key and metadata.
+// The caller must decrypt and read the content from S3.
+func (q *Queries) GetRecentAnalysisNotesForPackages(ctx context.Context, projectID string, packageIDs []string, limit int) ([]models.AnalysisNoteRef, error) {
+	if len(packageIDs) == 0 {
+		return nil, nil
+	}
+
 	query := `
 		SELECT a.id, a.completed_at, ar.s3_key, a.encrypted_dek, a.dek_nonce
 		FROM analyses a
 		JOIN analysis_results ar ON ar.analysis_id = a.id AND ar.result_type = 'analysis_notes'
 		WHERE a.project_id = $1
-		  AND a.status = 'completed'`
-	args := []any{projectID}
-	argN := 2
-
-	if gitBranch != "" {
-		query += fmt.Sprintf(`
-		  AND EXISTS (
-		    SELECT 1 FROM analysis_packages ap
-		    JOIN software_packages sp ON sp.id = ap.package_id
+		  AND a.status = 'completed'
+		  AND (
+		    SELECT COUNT(*) FROM analysis_packages ap
 		    WHERE ap.analysis_id = a.id
-		      AND (sp.git_branch = $%d OR sp.git_branch IN ('main', 'master'))
-		  )`, argN)
-		args = append(args, gitBranch)
-		argN++
-	}
-
-	query += fmt.Sprintf(` ORDER BY a.completed_at DESC LIMIT $%d`, argN)
-	args = append(args, limit)
+		  ) = cardinality($2::uuid[])
+		  AND NOT EXISTS (
+		    SELECT 1 FROM analysis_packages ap
+		    WHERE ap.analysis_id = a.id
+		      AND ap.package_id <> ALL($2::uuid[])
+		  )
+		ORDER BY a.completed_at DESC LIMIT $3`
+	args := []any{projectID, packageIDs, limit}
 
 	rows, err := q.pool.Query(ctx, query, args...)
 	if err != nil {
