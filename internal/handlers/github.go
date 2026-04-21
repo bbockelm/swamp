@@ -786,6 +786,201 @@ func (h *Handler) UserRepoAccess(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusOK, resp)
 }
 
+// projectInstallationView is the per-installation response for the project
+// installations endpoint.
+type projectInstallationView struct {
+	models.GitHubAppInstallation
+	LinkedToProject bool      `json:"linked_to_project"`
+	EnabledBy       *string   `json:"enabled_by,omitempty"`
+	EnabledByName   string    `json:"enabled_by_name,omitempty"`
+	EnabledAt       *time.Time `json:"enabled_at,omitempty"`
+	Packages        []packageInstallInfo `json:"packages"`
+}
+
+type packageInstallInfo struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	GitHubOwner string `json:"github_owner"`
+	GitHubRepo  string `json:"github_repo"`
+}
+
+// ListProjectInstallations returns all GitHub App installations relevant to a
+// project: those explicitly linked via the M-N table and those in use by
+// packages in the project. Admins additionally see all known installations.
+func (h *Handler) ListProjectInstallations(w http.ResponseWriter, r *http.Request) {
+	projectID := chi.URLParam(r, "projectID")
+	user := GetUserFromContext(r.Context())
+	if user == nil {
+		respondError(w, http.StatusUnauthorized, "Not authenticated")
+		return
+	}
+	isAdmin := UserHasRole(r.Context(), RoleAdmin)
+	if !isAdmin {
+		ok, err := h.queries.UserCanAccessProject(r.Context(), user.ID, projectID, "admin")
+		if err != nil || !ok {
+			respondError(w, http.StatusForbidden, "Access denied")
+			return
+		}
+	}
+
+	// Collect all installations we want to surface.
+	installMap := make(map[int64]models.GitHubAppInstallation)
+
+	if isAdmin {
+		all, err := h.queries.ListGitHubInstallations(r.Context())
+		if err != nil {
+			respondError(w, http.StatusInternalServerError, "Failed to list installations")
+			return
+		}
+		for _, inst := range all {
+			installMap[inst.InstallationID] = inst
+		}
+	}
+
+	// Explicit project links.
+	links, err := h.queries.ListProjectInstallationLinks(r.Context(), projectID)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "Failed to list project installation links")
+		return
+	}
+	linkMap := make(map[int64]models.ProjectInstallationLink)
+	for _, l := range links {
+		linkMap[l.InstallationID] = l
+		if _, ok := installMap[l.InstallationID]; !ok {
+			inst, err := h.queries.GetInstallationByID(r.Context(), l.InstallationID)
+			if err == nil {
+				installMap[l.InstallationID] = *inst
+			}
+		}
+	}
+
+	// Installations in use by packages.
+	pkgs, err := h.queries.ListProjectPackages(r.Context(), projectID)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "Failed to list project packages")
+		return
+	}
+	pkgsByInstall := make(map[int64][]packageInstallInfo)
+	for _, pkg := range pkgs {
+		if pkg.InstallationID <= 0 {
+			continue
+		}
+		pkgsByInstall[pkg.InstallationID] = append(pkgsByInstall[pkg.InstallationID], packageInstallInfo{
+			ID:          pkg.ID,
+			Name:        pkg.Name,
+			GitHubOwner: pkg.GitHubOwner,
+			GitHubRepo:  pkg.GitHubRepo,
+		})
+		if _, ok := installMap[pkg.InstallationID]; !ok {
+			inst, err := h.queries.GetInstallationByID(r.Context(), pkg.InstallationID)
+			if err == nil {
+				installMap[pkg.InstallationID] = *inst
+			}
+		}
+	}
+
+	// Build the combined response slice.
+	views := make([]projectInstallationView, 0, len(installMap))
+	for id, inst := range installMap {
+		view := projectInstallationView{
+			GitHubAppInstallation: inst,
+			Packages:              pkgsByInstall[id],
+		}
+		if view.Packages == nil {
+			view.Packages = []packageInstallInfo{}
+		}
+		if link, ok := linkMap[id]; ok {
+			view.LinkedToProject = true
+			view.EnabledBy = link.EnabledBy
+			view.EnabledByName = link.EnabledByName
+			view.EnabledAt = &link.EnabledAt
+		}
+		views = append(views, view)
+	}
+
+	// Sort: linked-to-project first, then by account login.
+	for i := 1; i < len(views); i++ {
+		for j := i; j > 0; j-- {
+			a, b := views[j-1], views[j]
+			if (!a.LinkedToProject && b.LinkedToProject) ||
+				(a.LinkedToProject == b.LinkedToProject && a.AccountLogin > b.AccountLogin) {
+				views[j-1], views[j] = views[j], views[j-1]
+			}
+		}
+	}
+
+	respondJSON(w, http.StatusOK, map[string]any{"installations": views})
+}
+
+// AddProjectInstallation explicitly links a GitHub App installation to a
+// project. Requires project admin or site admin.
+func (h *Handler) AddProjectInstallation(w http.ResponseWriter, r *http.Request) {
+	projectID := chi.URLParam(r, "projectID")
+	installationIDStr := chi.URLParam(r, "installationID")
+	user := GetUserFromContext(r.Context())
+	if user == nil {
+		respondError(w, http.StatusUnauthorized, "Not authenticated")
+		return
+	}
+	isAdmin := UserHasRole(r.Context(), RoleAdmin)
+	if !isAdmin {
+		ok, err := h.queries.UserCanAccessProject(r.Context(), user.ID, projectID, "admin")
+		if err != nil || !ok {
+			respondError(w, http.StatusForbidden, "Access denied")
+			return
+		}
+	}
+	installationID, err := strconv.ParseInt(installationIDStr, 10, 64)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "Invalid installation ID")
+		return
+	}
+	// Verify the installation exists in SWAMP's DB.
+	if _, err := h.queries.GetInstallationByID(r.Context(), installationID); err != nil {
+		respondError(w, http.StatusNotFound, "Installation not found")
+		return
+	}
+	if err := h.queries.AddProjectInstallation(r.Context(), projectID, installationID, user.ID); err != nil {
+		log.Error().Err(err).Str("project_id", projectID).Int64("installation_id", installationID).
+			Msg("Failed to add project installation link")
+		respondError(w, http.StatusInternalServerError, "Failed to link installation")
+		return
+	}
+	respondJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// RemoveProjectInstallation removes the explicit link between a project and a
+// GitHub App installation. Requires project admin or site admin.
+func (h *Handler) RemoveProjectInstallation(w http.ResponseWriter, r *http.Request) {
+	projectID := chi.URLParam(r, "projectID")
+	installationIDStr := chi.URLParam(r, "installationID")
+	user := GetUserFromContext(r.Context())
+	if user == nil {
+		respondError(w, http.StatusUnauthorized, "Not authenticated")
+		return
+	}
+	isAdmin := UserHasRole(r.Context(), RoleAdmin)
+	if !isAdmin {
+		ok, err := h.queries.UserCanAccessProject(r.Context(), user.ID, projectID, "admin")
+		if err != nil || !ok {
+			respondError(w, http.StatusForbidden, "Access denied")
+			return
+		}
+	}
+	installationID, err := strconv.ParseInt(installationIDStr, 10, 64)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "Invalid installation ID")
+		return
+	}
+	if err := h.queries.RemoveProjectInstallation(r.Context(), projectID, installationID); err != nil {
+		log.Error().Err(err).Str("project_id", projectID).Int64("installation_id", installationID).
+			Msg("Failed to remove project installation link")
+		respondError(w, http.StatusInternalServerError, "Failed to unlink installation")
+		return
+	}
+	respondJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
 // ListWebhookDeliveries returns webhook delivery logs for a project.
 func (h *Handler) ListWebhookDeliveries(w http.ResponseWriter, r *http.Request) {
 	projectID := chi.URLParam(r, "projectID")

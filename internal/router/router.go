@@ -417,6 +417,12 @@ func New(cfg *config.Config, pool *pgxpool.Pool, store *storage.Store) (*chi.Mux
 						r.Put("/", h.UpdateProjectGitHubConfig)
 						r.Delete("/", h.DeleteProjectGitHubConfig)
 						r.Get("/webhooks", h.ListWebhookDeliveries)
+						// M-N project ↔ installation links
+						r.Get("/installations", h.ListProjectInstallations)
+						r.Route("/installations/{installationID}", func(r chi.Router) {
+							r.Post("/", h.AddProjectInstallation)
+							r.Delete("/", h.RemoveProjectInstallation)
+						})
 					})
 
 					// Available providers (readable by anyone with project access)

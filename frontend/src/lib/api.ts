@@ -477,6 +477,26 @@ export interface GitHubWebhookDelivery {
   created_at: string;
 }
 
+// M-N project ↔ installation relationship types.
+export interface PackageInstallInfo {
+  id: string;
+  name: string;
+  github_owner: string;
+  github_repo: string;
+}
+
+export interface ProjectInstallationView extends GitHubAppInstallation {
+  linked_to_project: boolean;
+  enabled_by?: string;
+  enabled_by_name?: string;
+  enabled_at?: string;
+  packages: PackageInstallInfo[];
+}
+
+export interface ProjectInstallationsResponse {
+  installations: ProjectInstallationView[];
+}
+
 // --- API client ---
 
 export const api = {
@@ -1031,5 +1051,16 @@ export const api = {
       projectId: string,
     ): Promise<GitHubWebhookDelivery[]> =>
       fetchJSON(`${BASE}/projects/${projectId}/github/webhooks`),
+    // M-N project ↔ installation endpoints
+    listProjectInstallations: (projectId: string): Promise<ProjectInstallationsResponse> =>
+      fetchJSON(`${BASE}/projects/${projectId}/github/installations`),
+    addProjectInstallation: (projectId: string, installationId: number): Promise<{ ok: boolean }> =>
+      fetchJSON(`${BASE}/projects/${projectId}/github/installations/${installationId}`, {
+        method: 'POST',
+      }),
+    removeProjectInstallation: (projectId: string, installationId: number): Promise<{ ok: boolean }> =>
+      fetchJSON(`${BASE}/projects/${projectId}/github/installations/${installationId}`, {
+        method: 'DELETE',
+      }),
   },
 };

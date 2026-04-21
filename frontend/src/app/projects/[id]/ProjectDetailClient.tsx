@@ -129,7 +129,7 @@ export default function ProjectDetailClient() {
 
       {/* GitHub tab */}
       {tab === 'github' && canEdit && (
-        <GitHubTab projectId={id} />
+        <GitHubTab projectId={id} canManageInstallations={isAdmin} />
       )}
 
       {/* Settings tab */}
@@ -159,9 +159,9 @@ function PackagesTab({
   packages?: SoftwarePackage[];
   canEdit: boolean;
 }) {
+  const [editingId, setEditingId] = useState<string | null>(null);
   const queryClient = useQueryClient();
   const [adding, setAdding] = useState(false);
-  const [editingId, setEditingId] = useState<string | null>(null);
   const [name, setName] = useState('');
   const [gitUrl, setGitUrl] = useState('');
   const [gitBranch, setGitBranch] = useState('main');
@@ -1042,8 +1042,9 @@ function FindingsTab({
   );
 }
 
-function GitHubTab({ projectId }: { projectId: string }) {
+function GitHubTab({ projectId, canManageInstallations }: { projectId: string; canManageInstallations: boolean }) {
   const [linkingGitHub, setLinkingGitHub] = useState(false);
+  const [selectedInstallationId, setSelectedInstallationId] = useState<number>(0);
   const queryClient = useQueryClient();
 
   const { data: linkStatus } = useQuery({
@@ -1053,6 +1054,14 @@ function GitHubTab({ projectId }: { projectId: string }) {
   });
 
   const { data: installations, isLoading } = useQuery({
+    queryKey: ['project-github-installations', projectId],
+    queryFn: async () => {
+      const resp = await api.github.listProjectInstallations(projectId);
+      return resp.installations ?? [];
+    },
+  });
+
+  const { data: allInstallations } = useQuery({
     queryKey: ['github-installations'],
     queryFn: async () => {
       const resp = await api.github.listInstallations();
@@ -1066,19 +1075,20 @@ function GitHubTab({ projectId }: { projectId: string }) {
     staleTime: 300_000,
   });
 
-  const { data: githubConfig } = useQuery({
-    queryKey: ['project-github-config', projectId],
-    queryFn: async () => {
-      try { return await api.github.getConfig(projectId); } catch { return null; }
+  const addLinkMutation = useMutation({
+    mutationFn: (installationId: number) => api.github.addProjectInstallation(projectId, installationId),
+    onSuccess: () => {
+      setSelectedInstallationId(0);
+      queryClient.invalidateQueries({ queryKey: ['project-github-installations', projectId] });
     },
   });
 
-  const { data: packages } = useQuery({
-    queryKey: ['packages', projectId],
-    queryFn: () => api.packages.list(projectId),
+  const removeLinkMutation = useMutation({
+    mutationFn: (installationId: number) => api.github.removeProjectInstallation(projectId, installationId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['project-github-installations', projectId] });
+    },
   });
-
-  const activeInstallationId = githubConfig?.installation_id ?? 0;
 
   // Listen for the link callback popup closing and refresh status
   useEffect(() => {
@@ -1087,11 +1097,12 @@ function GitHubTab({ projectId }: { projectId: string }) {
         setLinkingGitHub(false);
         queryClient.invalidateQueries({ queryKey: ['github-link-status'] });
         queryClient.invalidateQueries({ queryKey: ['github-installations'] });
+        queryClient.invalidateQueries({ queryKey: ['project-github-installations', projectId] });
       }
     };
     window.addEventListener('message', handler);
     return () => window.removeEventListener('message', handler);
-  }, [queryClient]);
+  }, [projectId, queryClient]);
 
   const handleLinkGitHub = async () => {
     setLinkingGitHub(true);
@@ -1158,15 +1169,42 @@ function GitHubTab({ projectId }: { projectId: string }) {
 
       {/* Installations list */}
       <div className="bg-white p-6 rounded-lg border">
-        <h2 className="text-lg font-semibold mb-4">GitHub App Installations</h2>
+        <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+          <h2 className="text-lg font-semibold">GitHub App Installations</h2>
+          {canManageInstallations && (
+            <div className="flex items-center gap-2">
+              <select
+                value={selectedInstallationId}
+                onChange={(e) => setSelectedInstallationId(Number(e.target.value))}
+                className="border rounded px-2 py-1.5 text-sm"
+              >
+                <option value={0}>Link an installation to this project...</option>
+                {(allInstallations ?? []).map((inst) => (
+                  <option key={inst.installation_id} value={inst.installation_id}>
+                    {inst.account_login} ({inst.account_type}) #{inst.installation_id}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                disabled={selectedInstallationId <= 0 || addLinkMutation.isPending}
+                onClick={() => addLinkMutation.mutate(selectedInstallationId)}
+                className="bg-brand-600 text-white px-3 py-1.5 text-sm rounded hover:bg-brand-700 disabled:opacity-50"
+              >
+                {addLinkMutation.isPending ? 'Linking...' : 'Link'}
+              </button>
+            </div>
+          )}
+        </div>
         {!installations?.length ? (
           <p className="text-sm text-gray-500">
-            No GitHub App installations found. Install the app on a GitHub organization or account to get started.
+            No project-visible GitHub App installations found. Link one to this project or configure package-level installations.
           </p>
         ) : (
           <div className="border rounded divide-y">
             {installations.map((inst) => {
-              const isActive = activeInstallationId > 0 && inst.installation_id === activeInstallationId;
+              const linkedToProject = !!inst.linked_to_project;
+              const packageCount = inst.packages?.length ?? 0;
               return (
                 <div key={inst.installation_id} className="px-4 py-3 flex items-center justify-between">
                   <div className="flex items-center gap-3">
@@ -1187,25 +1225,40 @@ function GitHubTab({ projectId }: { projectId: string }) {
                     </div>
                   </div>
                   <div className="flex flex-col items-end gap-1.5 shrink-0">
-                    {isActive ? (
-                      <span className="text-xs text-green-700 bg-green-50 border border-green-200 px-2 py-1 rounded">Active for this project</span>
+                    {linkedToProject ? (
+                      <span className="text-xs text-green-700 bg-green-50 border border-green-200 px-2 py-1 rounded">
+                        Linked to project
+                      </span>
                     ) : (
-                      <span className="text-xs text-gray-400 bg-gray-50 border border-gray-200 px-2 py-1 rounded">Available</span>
+                      <span className="text-xs text-amber-700 bg-amber-50 border border-amber-200 px-2 py-1 rounded">Used by package only</span>
                     )}
-                    {isActive && (() => {
-                      const linked = packages?.filter((p) => p.installation_id === inst.installation_id) ?? [];
-                      return linked.length > 0 ? (
-                        <div className="flex flex-wrap gap-1 justify-end">
-                          {linked.map((p) => (
-                            <span key={p.id} className="text-xs text-gray-600 bg-gray-100 px-1.5 py-0.5 rounded font-mono">
-                              {p.github_owner && p.github_repo ? `${p.github_owner}/${p.github_repo}` : p.name}
-                            </span>
-                          ))}
-                        </div>
-                      ) : (
-                        <span className="text-xs text-gray-400 italic">No packages linked yet</span>
-                      );
-                    })()}
+                    {inst.enabled_at && (
+                      <span className="text-xs text-gray-400">
+                        Enabled {new Date(inst.enabled_at).toLocaleString()}
+                        {inst.enabled_by_name ? ` by ${inst.enabled_by_name}` : ''}
+                      </span>
+                    )}
+                    {packageCount > 0 ? (
+                      <div className="flex flex-wrap gap-1 justify-end max-w-md">
+                        {inst.packages.map((p) => (
+                          <span key={p.id} className="text-xs text-gray-600 bg-gray-100 px-1.5 py-0.5 rounded font-mono">
+                            {p.github_owner && p.github_repo ? `${p.github_owner}/${p.github_repo}` : p.name}
+                          </span>
+                        ))}
+                      </div>
+                    ) : (
+                      <span className="text-xs text-gray-400 italic">No packages currently use this installation</span>
+                    )}
+                    {canManageInstallations && linkedToProject && (
+                      <button
+                        type="button"
+                        disabled={removeLinkMutation.isPending}
+                        onClick={() => removeLinkMutation.mutate(inst.installation_id)}
+                        className="text-xs text-red-700 bg-red-50 border border-red-200 px-2 py-1 rounded hover:bg-red-100 disabled:opacity-50"
+                      >
+                        {removeLinkMutation.isPending ? 'Removing...' : 'Unlink from project'}
+                      </button>
+                    )}
                   </div>
                 </div>
               );
@@ -1213,7 +1266,7 @@ function GitHubTab({ projectId }: { projectId: string }) {
           </div>
         )}
         <p className="text-xs text-gray-400 mt-3">
-          The installation marked <strong>Active for this project</strong> is the one configured in the project GitHub settings. Others are available to your account but not currently linked to this project.
+          Linked installations are available to the whole project. Installations labeled used by package only are present because at least one package references them.
         </p>
       </div>
 

@@ -445,6 +445,17 @@ type GitHubWebhookDelivery struct {
 	CreatedAt     time.Time       `json:"created_at"`
 }
 
+// ProjectInstallationLink records a GitHub App installation explicitly linked
+// to a project by an admin via the project_github_installations M-N table.
+type ProjectInstallationLink struct {
+	ID             string    `json:"id"`
+	ProjectID      string    `json:"project_id"`
+	InstallationID int64     `json:"installation_id"`
+	EnabledBy      *string   `json:"enabled_by,omitempty"`
+	EnabledByName  string    `json:"enabled_by_name,omitempty"`
+	EnabledAt      time.Time `json:"enabled_at"`
+}
+
 // GitHubStatus is the summary returned by the GitHub status endpoint.
 type GitHubStatus struct {
 	Configured    bool                     `json:"configured"`

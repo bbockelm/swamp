@@ -2574,6 +2574,14 @@ func (q *Queries) ListInstallationsForUser(ctx context.Context, userID string) (
 		 FROM github_app_installations gi
 		 WHERE gi.installed_by_user_id = $1
 		    OR gi.installation_id IN (
+		        -- installations explicitly linked to projects the user owns or admins
+		        SELECT pgi.installation_id FROM project_github_installations pgi
+		        JOIN projects p ON p.id = pgi.project_id
+		        WHERE p.owner_id = $1
+		           OR EXISTS (SELECT 1 FROM group_members gm
+		                      WHERE gm.group_id = p.admin_group_id AND gm.user_id = $1)
+		    )
+		    OR gi.installation_id IN (
 		        -- installations used by projects the user owns or admins
 		        SELECT pgc.installation_id FROM project_github_config pgc
 		        JOIN projects p ON p.id = pgc.project_id
@@ -2742,6 +2750,55 @@ func (q *Queries) ListWebhookDeliveries(ctx context.Context, projectID string, l
 			return nil, err
 		}
 		out = append(out, d)
+	}
+	return out, rows.Err()
+}
+
+// ---- Project GitHub Installation Links (M-N) ----
+
+// AddProjectInstallation creates an explicit link between a project and a
+// GitHub App installation. Returns nil if the link already exists.
+func (q *Queries) AddProjectInstallation(ctx context.Context, projectID string, installationID int64, enabledBy string) error {
+	_, err := q.pool.Exec(ctx,
+		`INSERT INTO project_github_installations (project_id, installation_id, enabled_by)
+		 VALUES ($1, $2, $3)
+		 ON CONFLICT (project_id, installation_id) DO NOTHING`,
+		projectID, installationID, enabledBy)
+	return err
+}
+
+// RemoveProjectInstallation removes the explicit link between a project and
+// a GitHub App installation.
+func (q *Queries) RemoveProjectInstallation(ctx context.Context, projectID string, installationID int64) error {
+	_, err := q.pool.Exec(ctx,
+		`DELETE FROM project_github_installations
+		 WHERE project_id = $1 AND installation_id = $2`,
+		projectID, installationID)
+	return err
+}
+
+// ListProjectInstallationLinks returns all explicit installation links for a
+// project, enriched with the display name of the user who enabled each.
+func (q *Queries) ListProjectInstallationLinks(ctx context.Context, projectID string) ([]models.ProjectInstallationLink, error) {
+	rows, err := q.pool.Query(ctx,
+		`SELECT pgi.id, pgi.project_id, pgi.installation_id,
+		        pgi.enabled_by, COALESCE(u.display_name, ''), pgi.enabled_at
+		 FROM project_github_installations pgi
+		 LEFT JOIN users u ON u.id = pgi.enabled_by
+		 WHERE pgi.project_id = $1
+		 ORDER BY pgi.enabled_at`, projectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []models.ProjectInstallationLink
+	for rows.Next() {
+		var l models.ProjectInstallationLink
+		if err := rows.Scan(&l.ID, &l.ProjectID, &l.InstallationID,
+			&l.EnabledBy, &l.EnabledByName, &l.EnabledAt); err != nil {
+			return nil, err
+		}
+		out = append(out, l)
 	}
 	return out, rows.Err()
 }
