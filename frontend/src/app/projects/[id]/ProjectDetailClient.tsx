@@ -1066,6 +1066,20 @@ function GitHubTab({ projectId }: { projectId: string }) {
     staleTime: 300_000,
   });
 
+  const { data: githubConfig } = useQuery({
+    queryKey: ['project-github-config', projectId],
+    queryFn: async () => {
+      try { return await api.github.getConfig(projectId); } catch { return null; }
+    },
+  });
+
+  const { data: packages } = useQuery({
+    queryKey: ['packages', projectId],
+    queryFn: () => api.packages.list(projectId),
+  });
+
+  const activeInstallationId = githubConfig?.installation_id ?? 0;
+
   // Listen for the link callback popup closing and refresh status
   useEffect(() => {
     const handler = (e: MessageEvent) => {
@@ -1144,39 +1158,62 @@ function GitHubTab({ projectId }: { projectId: string }) {
 
       {/* Installations list */}
       <div className="bg-white p-6 rounded-lg border">
-        <h2 className="text-lg font-semibold mb-4">Your Installations</h2>
+        <h2 className="text-lg font-semibold mb-4">GitHub App Installations</h2>
         {!installations?.length ? (
           <p className="text-sm text-gray-500">
             No GitHub App installations found. Install the app on a GitHub organization or account to get started.
           </p>
         ) : (
           <div className="border rounded divide-y">
-            {installations.map((inst) => (
-              <div key={inst.installation_id} className="px-4 py-3 flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <div className="w-8 h-8 bg-gray-100 rounded-full flex items-center justify-center">
-                    <svg className="w-4 h-4 text-gray-500" fill="currentColor" viewBox="0 0 16 16">
-                      {inst.account_type === 'Organization' ? (
-                        <path fillRule="evenodd" d="M1.5 14.25c0 .138.112.25.25.25H4v-1.25a.75.75 0 01.75-.75h2.5a.75.75 0 01.75.75v1.25h2.25a.25.25 0 00.25-.25V1.75a.25.25 0 00-.25-.25h-8.5a.25.25 0 00-.25.25v12.5zM1.75 16A1.75 1.75 0 010 14.25V1.75C0 .784.784 0 1.75 0h8.5C11.216 0 12 .784 12 1.75v12.5c0 .085-.006.168-.018.25h2.268a.25.25 0 00.25-.25V8.285a.25.25 0 00-.111-.208l-1.055-.703a.75.75 0 11.832-1.248l1.055.703c.487.325.779.871.779 1.456v5.965A1.75 1.75 0 0114.25 16h-3.5a.75.75 0 01-.197-.026c-.099.017-.2.026-.303.026h-3a.75.75 0 01-.75-.75V14h-1v1.25a.75.75 0 01-.75.75h-3zM3 3.75A.75.75 0 013.75 3h.5a.75.75 0 010 1.5h-.5A.75.75 0 013 3.75zM3.75 6a.75.75 0 000 1.5h.5a.75.75 0 000-1.5h-.5zM3 9.75A.75.75 0 013.75 9h.5a.75.75 0 010 1.5h-.5A.75.75 0 013 9.75zM7.75 9a.75.75 0 000 1.5h.5a.75.75 0 000-1.5h-.5zM7 6.75A.75.75 0 017.75 6h.5a.75.75 0 010 1.5h-.5A.75.75 0 017 6.75zM7.75 3a.75.75 0 000 1.5h.5a.75.75 0 000-1.5h-.5z" />
-                      ) : (
-                        <path fillRule="evenodd" d="M10.5 5a2.5 2.5 0 11-5 0 2.5 2.5 0 015 0zm.061 3.073a4 4 0 10-5.123 0 6.004 6.004 0 00-3.431 5.142.75.75 0 001.498.07 4.5 4.5 0 018.99 0 .75.75 0 101.498-.07 6.005 6.005 0 00-3.432-5.142z" />
-                      )}
-                    </svg>
+            {installations.map((inst) => {
+              const isActive = activeInstallationId > 0 && inst.installation_id === activeInstallationId;
+              return (
+                <div key={inst.installation_id} className="px-4 py-3 flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="w-8 h-8 bg-gray-100 rounded-full flex items-center justify-center">
+                      <svg className="w-4 h-4 text-gray-500" fill="currentColor" viewBox="0 0 16 16">
+                        {inst.account_type === 'Organization' ? (
+                          <path fillRule="evenodd" d="M1.5 14.25c0 .138.112.25.25.25H4v-1.25a.75.75 0 01.75-.75h2.5a.75.75 0 01.75.75v1.25h2.25a.25.25 0 00.25-.25V1.75a.25.25 0 00-.25-.25h-8.5a.25.25 0 00-.25.25v12.5zM1.75 16A1.75 1.75 0 010 14.25V1.75C0 .784.784 0 1.75 0h8.5C11.216 0 12 .784 12 1.75v12.5c0 .085-.006.168-.018.25h2.268a.25.25 0 00.25-.25V8.285a.25.25 0 00-.111-.208l-1.055-.703a.75.75 0 11.832-1.248l1.055.703c.487.325.779.871.779 1.456v5.965A1.75 1.75 0 0114.25 16h-3.5a.75.75 0 01-.197-.026c-.099.017-.2.026-.303.026h-3a.75.75 0 01-.75-.75V14h-1v1.25a.75.75 0 01-.75.75h-3zM3 3.75A.75.75 0 013.75 3h.5a.75.75 0 010 1.5h-.5A.75.75 0 013 3.75zM3.75 6a.75.75 0 000 1.5h.5a.75.75 0 000-1.5h-.5zM3 9.75A.75.75 0 013.75 9h.5a.75.75 0 010 1.5h-.5A.75.75 0 013 9.75zM7.75 9a.75.75 0 000 1.5h.5a.75.75 0 000-1.5h-.5zM7 6.75A.75.75 0 017.75 6h.5a.75.75 0 010 1.5h-.5A.75.75 0 017 6.75zM7.75 3a.75.75 0 000 1.5h.5a.75.75 0 000-1.5h-.5z" />
+                        ) : (
+                          <path fillRule="evenodd" d="M10.5 5a2.5 2.5 0 11-5 0 2.5 2.5 0 015 0zm.061 3.073a4 4 0 10-5.123 0 6.004 6.004 0 00-3.431 5.142.75.75 0 001.498.07 4.5 4.5 0 018.99 0 .75.75 0 101.498-.07 6.005 6.005 0 00-3.432-5.142z" />
+                        )}
+                      </svg>
+                    </div>
+                    <div>
+                      <p className="font-medium text-sm">{inst.account_login}</p>
+                      <p className="text-xs text-gray-400">
+                        {inst.account_type} · Installation #{inst.installation_id}
+                      </p>
+                    </div>
                   </div>
-                  <div>
-                    <p className="font-medium text-sm">{inst.account_login}</p>
-                    <p className="text-xs text-gray-400">
-                      {inst.account_type} · Installation #{inst.installation_id}
-                    </p>
+                  <div className="flex flex-col items-end gap-1.5 shrink-0">
+                    {isActive ? (
+                      <span className="text-xs text-green-700 bg-green-50 border border-green-200 px-2 py-1 rounded">Active for this project</span>
+                    ) : (
+                      <span className="text-xs text-gray-400 bg-gray-50 border border-gray-200 px-2 py-1 rounded">Available</span>
+                    )}
+                    {isActive && (() => {
+                      const linked = packages?.filter((p) => p.installation_id === inst.installation_id) ?? [];
+                      return linked.length > 0 ? (
+                        <div className="flex flex-wrap gap-1 justify-end">
+                          {linked.map((p) => (
+                            <span key={p.id} className="text-xs text-gray-600 bg-gray-100 px-1.5 py-0.5 rounded font-mono">
+                              {p.github_owner && p.github_repo ? `${p.github_owner}/${p.github_repo}` : p.name}
+                            </span>
+                          ))}
+                        </div>
+                      ) : (
+                        <span className="text-xs text-gray-400 italic">No packages linked yet</span>
+                      );
+                    })()}
                   </div>
                 </div>
-                <span className="text-xs text-green-600 bg-green-50 px-2 py-1 rounded">Active</span>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
         <p className="text-xs text-gray-400 mt-3">
-          Installations are automatically linked to packages based on the repository owner. Configure GitHub settings on each package.
+          The installation marked <strong>Active for this project</strong> is the one configured in the project GitHub settings. Others are available to your account but not currently linked to this project.
         </p>
       </div>
 

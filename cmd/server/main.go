@@ -159,6 +159,8 @@ func run() error {
 	go backfillTokenUsageBackground(ctx, queries, store, enc)
 	// Background normalization of legacy OpenCode token-usage rows.
 	go normalizeOpenCodeTokenUsageBackground(ctx, queries)
+	// One-off startup repair for stale SARIF metadata (finding_count / severity_counts).
+	go repairSARIFMetadataFromFindingsBackground(ctx, queries)
 
 	// In dev mode, create the admin account and print a one-time login URL.
 	if cfg.IsDevelopment() {
@@ -689,6 +691,21 @@ func normalizeOpenCodeTokenUsageBackground(ctx context.Context, queries *db.Quer
 	}
 
 	log.Info().Int("updated", updated).Int("failed", failed).Msg("Token usage normalize: complete")
+}
+
+// repairSARIFMetadataFromFindingsBackground performs a one-off metadata repair
+// at startup, rebuilding SARIF summaries from the findings table.
+func repairSARIFMetadataFromFindingsBackground(ctx context.Context, queries *db.Queries) {
+	updated, err := queries.RepairSARIFMetadataFromFindings(ctx)
+	if err != nil {
+		log.Error().Err(err).Msg("SARIF metadata repair: failed")
+		return
+	}
+	if updated == 0 {
+		log.Info().Msg("SARIF metadata repair: no updates needed")
+		return
+	}
+	log.Info().Int64("updated", updated).Msg("SARIF metadata repair: complete")
 }
 
 // runBackfillTokenUsage is the CLI subcommand version of the backfill.

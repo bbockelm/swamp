@@ -39,10 +39,12 @@ export function SARIFViewer({
   projectId,
   analysisId,
   resultId,
+  onFindingsCountChange,
 }: {
   projectId: string;
   analysisId: string;
   resultId: string;
+  onFindingsCountChange?: (count: number) => void;
 }) {
   const router = useRouter();
   const [sarif, setSarif] = useState<SARIFLog | null>(null);
@@ -59,13 +61,17 @@ export function SARIFViewer({
       })
       .then((data) => {
         setSarif(data);
+        const runs = (data?.runs || []) as SARIFRun[];
+        const count = runs.flatMap((run) => run.results || []).length;
+        onFindingsCountChange?.(count);
         setLoading(false);
       })
       .catch((err) => {
         setError(err.message);
+        onFindingsCountChange?.(0);
         setLoading(false);
       });
-  }, [projectId, analysisId, resultId]);
+  }, [projectId, analysisId, resultId, onFindingsCountChange]);
 
   // Fetch findings for this analysis to create links.
   useEffect(() => {

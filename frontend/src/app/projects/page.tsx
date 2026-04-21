@@ -2222,6 +2222,20 @@ function GitHubTabInline({ projectId }: { projectId: string }) {
     staleTime: 300_000,
   });
 
+  const { data: githubConfig } = useQuery({
+    queryKey: ['project-github-config', projectId],
+    queryFn: async () => {
+      try { return await api.github.getConfig(projectId); } catch { return null; }
+    },
+  });
+
+  const { data: packages } = useQuery({
+    queryKey: ['packages', projectId],
+    queryFn: () => api.packages.list(projectId),
+  });
+
+  const activeInstallationId = githubConfig?.installation_id ?? 0;
+
   useEffect(() => {
     const handler = (e: MessageEvent) => {
       if (e.origin === window.location.origin && e.data?.type === 'github-linked') {
@@ -2280,20 +2294,43 @@ function GitHubTabInline({ projectId }: { projectId: string }) {
         <p className="text-sm text-gray-500">No GitHub App installations found.</p>
       ) : (
         <div className="border rounded divide-y">
-          {installations.map((inst) => (
-            <div key={inst.installation_id} className="px-3 py-2 flex items-center justify-between">
-              <div>
-                <span className="font-medium text-sm">{inst.account_login}</span>
-                <span className="text-xs text-gray-400 ml-2">{inst.account_type}</span>
+          {installations.map((inst) => {
+            const isActive = activeInstallationId > 0 && inst.installation_id === activeInstallationId;
+            return (
+              <div key={inst.installation_id} className="px-3 py-2 flex items-center justify-between">
+                <div>
+                  <span className="font-medium text-sm">{inst.account_login}</span>
+                  <span className="text-xs text-gray-400 ml-2">{inst.account_type}</span>
+                </div>
+                <div className="flex flex-col items-end gap-1 shrink-0">
+                  {isActive ? (
+                    <span className="text-xs text-green-700 bg-green-50 border border-green-200 px-2 py-0.5 rounded">Active for this project</span>
+                  ) : (
+                    <span className="text-xs text-gray-400 bg-gray-50 border border-gray-200 px-2 py-0.5 rounded">Available</span>
+                  )}
+                  {isActive && (() => {
+                    const linked = packages?.filter((p) => p.installation_id === inst.installation_id) ?? [];
+                    return linked.length > 0 ? (
+                      <div className="flex flex-wrap gap-1 justify-end">
+                        {linked.map((p) => (
+                          <span key={p.id} className="text-xs text-gray-500 bg-gray-100 px-1.5 py-0.5 rounded font-mono">
+                            {p.github_owner && p.github_repo ? `${p.github_owner}/${p.github_repo}` : p.name}
+                          </span>
+                        ))}
+                      </div>
+                    ) : (
+                      <span className="text-xs text-gray-400 italic">No packages linked yet</span>
+                    );
+                  })()}
+                </div>
               </div>
-              <span className="text-xs text-green-600 bg-green-50 px-2 py-0.5 rounded">Active</span>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
 
       <p className="text-xs text-gray-400">
-        Installations are automatically linked to packages based on the repository owner.
+        The installation marked <strong>Active for this project</strong> is configured in the project GitHub settings.
       </p>
 
       <Link href={`/projects/${projectId}?tab=github`} className="text-brand-600 hover:underline text-xs">

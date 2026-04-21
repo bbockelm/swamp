@@ -51,6 +51,7 @@ export default function AnalysisDetailClient() {
   }>('/projects/[id]/analyses/[analysisId]');
   const queryClient = useQueryClient();
   const router = useRouter();
+  const [sarifFindingsCount, setSarifFindingsCount] = useState<number | null>(null);
 
   const { data: project } = useQuery({
     queryKey: ["project", projectId],
@@ -151,6 +152,7 @@ export default function AnalysisDetailClient() {
   const promptResult = results?.find((r) => r.result_type === "analysis_prompt");
   const contextResult = results?.find((r) => r.result_type === "analysis_context");
   const sarifUploadSummary = summarizeSARIFUploads(results);
+  const displayedFindingsCount = sarifFindingsCount ?? sarifResult?.finding_count ?? 0;
 
   const specialTypes = new Set([
     "sarif", "markdown", "markdown_report", "agent_log",
@@ -164,6 +166,14 @@ export default function AnalysisDetailClient() {
     ? analysis.agent_config.provider_label
     : "";
   const hasGitHubInstallation = (githubConfig?.installation_id ?? 0) > 0;
+  const hasSarifUploadActivity =
+    sarifUploadSummary.attempted > 0 ||
+    sarifUploadSummary.uploaded > 0 ||
+    sarifUploadSummary.failed > 0 ||
+    !!analysis.sarif_upload_url;
+  const showGitHubUploadSummary =
+    sarifUploadSummary.total > 0 &&
+    (hasGitHubInstallation || hasSarifUploadActivity);
 
   return (
     <div>
@@ -400,7 +410,7 @@ export default function AnalysisDetailClient() {
                   </a>
                   <span className="text-gray-300">|</span>
                   <a href="#findings" className="text-sm text-gray-500 hover:text-brand-600">
-                    Findings ({sarifResult.finding_count})
+                    Findings ({displayedFindingsCount})
                   </a>
                   <span className="text-gray-300">|</span>
                 </>
@@ -449,7 +459,7 @@ export default function AnalysisDetailClient() {
             <div id="findings">
               <div className="flex justify-between items-center mb-2">
                 <h3 className="font-medium">
-                  Findings ({sarifResult.finding_count})
+                  Findings ({displayedFindingsCount})
                 </h3>
                 <div className="flex items-center gap-3 print:hidden">
                   {markdownResult && (
@@ -473,6 +483,7 @@ export default function AnalysisDetailClient() {
                 projectId={projectId}
                 analysisId={analysisId}
                 resultId={sarifResult.id}
+                onFindingsCountChange={setSarifFindingsCount}
               />
             </div>
           )}
@@ -547,12 +558,13 @@ export default function AnalysisDetailClient() {
         <TokenUsageBox usage={analysis.token_usage} />
       )}
 
-      {hasGitHubInstallation && sarifUploadSummary.total > 0 && (
+      {showGitHubUploadSummary && (
         <SARIFUploadSummaryCard
           summary={sarifUploadSummary}
           fallbackURL={analysis.sarif_upload_url}
           projectId={projectId}
           analysisId={analysisId}
+          canRetry={hasGitHubInstallation}
         />
       )}
 
@@ -643,11 +655,13 @@ function SARIFUploadSummaryCard({
   fallbackURL,
   projectId,
   analysisId,
+  canRetry,
 }: {
   summary: ReturnType<typeof summarizeSARIFUploads>;
   fallbackURL?: string;
   projectId: string;
   analysisId: string;
+  canRetry: boolean;
 }) {
   const alertsURL = summary.alertsURL || fallbackURL || "";
   const queryClient = useQueryClient();
@@ -679,8 +693,9 @@ function SARIFUploadSummaryCard({
         <div className="flex items-center gap-3">
           <button
             onClick={() => retryMutation.mutate()}
-            disabled={retryMutation.isPending}
+            disabled={retryMutation.isPending || !canRetry}
             className="text-sm px-3 py-1 rounded border border-brand-300 text-brand-700 hover:bg-brand-50 disabled:opacity-50 whitespace-nowrap"
+            title={canRetry ? "Retry GitHub SARIF upload" : "GitHub app installation is not configured for this project"}
           >
             {retryMutation.isPending ? "Uploading…" : "Retry Upload"}
           </button>
@@ -717,6 +732,11 @@ function SARIFUploadSummaryCard({
       <p className="text-xs text-gray-500 mt-3">
         Per-file status and concrete upload errors are available in the findings table.
       </p>
+      {!canRetry && (
+        <p className="text-xs text-amber-700 mt-2">
+          Retry is unavailable because this project currently has no GitHub app installation configured.
+        </p>
+      )}
       {retryMutation.isError && (
         <p className="text-xs text-red-600 mt-2">
           Retry failed: {(retryMutation.error as Error)?.message || "Unknown error"}

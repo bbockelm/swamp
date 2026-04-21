@@ -176,7 +176,15 @@ function AnalysisCard({ analysis: a, expanded, onToggle }: { analysis: Analysis;
   const canResubmit = a.status === 'completed' || a.status === 'failed' || a.status === 'cancelled' || a.status === 'timed_out';
   const canCancel = a.status === 'running' || a.status === 'pending';
 
-  const sarifResult = results?.find((r) => r.result_type === 'sarif');
+  const sarifResults = results?.filter((r) => r.result_type === 'sarif') ?? [];
+  const sarifFindingCount = sarifResults.reduce((sum, r) => sum + (r.finding_count || 0), 0);
+  const sarifSeverityCounts = sarifResults.reduce<Record<string, number>>((acc, r) => {
+    if (!r.severity_counts) return acc;
+    for (const [k, v] of Object.entries(r.severity_counts)) {
+      acc[k] = (acc[k] || 0) + Number(v || 0);
+    }
+    return acc;
+  }, {});
   const markdownResult = results?.find((r) => r.result_type === 'markdown' || r.result_type === 'markdown_report');
 
   return (
@@ -329,15 +337,15 @@ function AnalysisCard({ analysis: a, expanded, onToggle }: { analysis: Analysis;
             <div className="space-y-2">
               <h4 className="text-xs font-medium text-gray-500 uppercase">Results</h4>
               <div className="flex flex-wrap gap-2">
-                {sarifResult && (
+                {sarifResults.length > 0 && (
                   <span className="inline-flex items-center gap-1.5 text-xs bg-white border rounded px-2.5 py-1.5">
                     <svg className="w-3.5 h-3.5 text-orange-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                     </svg>
-                    {sarifResult.finding_count} finding{sarifResult.finding_count !== 1 ? 's' : ''}
-                    {sarifResult.severity_counts && Object.keys(sarifResult.severity_counts).length > 0 && (
+                    {sarifFindingCount} finding{sarifFindingCount !== 1 ? 's' : ''}
+                    {Object.keys(sarifSeverityCounts).length > 0 && (
                       <span className="text-gray-400 ml-1">
-                        ({Object.entries(sarifResult.severity_counts).map(([k, v]) => `${v} ${k}`).join(', ')})
+                        ({Object.entries(sarifSeverityCounts).map(([k, v]) => `${v} ${k}`).join(', ')})
                       </span>
                     )}
                   </span>

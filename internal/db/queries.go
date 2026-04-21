@@ -1174,6 +1174,55 @@ func (q *Queries) UpdateAnalysisResultMetadata(ctx context.Context, id, summary 
 	return err
 }
 
+// RepairSARIFMetadataFromFindings rebuilds SARIF result metadata from the
+// authoritative findings table. It updates summary, finding_count, and
+// severity_counts for SARIF artifacts where the stored metadata differs.
+// Returns the number of updated analysis_results rows.
+func (q *Queries) RepairSARIFMetadataFromFindings(ctx context.Context) (int64, error) {
+	tag, err := q.pool.Exec(ctx, `
+		WITH stats AS (
+			SELECT
+				ar.id AS result_id,
+				COALESCE(COUNT(f.id), 0)::int AS total,
+				COALESCE(SUM(CASE WHEN f.level = 'error' THEN 1 ELSE 0 END), 0)::int AS high,
+				COALESCE(SUM(CASE WHEN f.level = 'warning' THEN 1 ELSE 0 END), 0)::int AS medium,
+				COALESCE(SUM(CASE WHEN f.level = 'note' THEN 1 ELSE 0 END), 0)::int AS low,
+				COALESCE(SUM(CASE WHEN f.level NOT IN ('error', 'warning', 'note') THEN 1 ELSE 0 END), 0)::int AS info
+			FROM analysis_results ar
+			LEFT JOIN findings f ON f.result_id = ar.id
+			WHERE ar.result_type = 'sarif'
+			GROUP BY ar.id
+		)
+		UPDATE analysis_results ar
+		SET
+			finding_count = s.total,
+			severity_counts = jsonb_build_object(
+				'critical', 0,
+				'high', s.high,
+				'medium', s.medium,
+				'low', s.low,
+				'info', s.info
+			),
+			summary = FORMAT('Found %s findings: %s high, %s medium, %s low', s.total, s.high, s.medium, s.low)
+		FROM stats s
+		WHERE ar.id = s.result_id
+		  AND (
+			ar.finding_count IS DISTINCT FROM s.total OR
+			ar.severity_counts IS DISTINCT FROM jsonb_build_object(
+				'critical', 0,
+				'high', s.high,
+				'medium', s.medium,
+				'low', s.low,
+				'info', s.info
+			) OR
+			ar.summary IS DISTINCT FROM FORMAT('Found %s findings: %s high, %s medium, %s low', s.total, s.high, s.medium, s.low)
+		  )`)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
+}
+
 // SetResultSARIFUploadURL records the GitHub Code Scanning alerts URL on a result.
 func (q *Queries) SetResultSARIFUploadURL(ctx context.Context, resultID, url string) error {
 	_, err := q.pool.Exec(ctx, `
@@ -2034,21 +2083,19 @@ func (q *Queries) GetDashboardStats(ctx context.Context, userID string, isAdmin 
 		}
 	}
 
-	// Finding counts from completed analyses' SARIF results
+	// Total findings from the findings table (authoritative source).
 	if isAdmin {
 		_ = q.pool.QueryRow(ctx, `
-			SELECT COALESCE(SUM(ar.finding_count), 0)
-			FROM analysis_results ar
-			WHERE ar.result_type='sarif'`).Scan(&s.TotalFindings)
+			SELECT COUNT(*) FROM findings`).Scan(&s.TotalFindings)
 	} else {
 		_ = q.pool.QueryRow(ctx, `
-			SELECT COALESCE(SUM(ar.finding_count), 0)
-			FROM analysis_results ar
-			JOIN analyses a ON ar.analysis_id=a.id
-			JOIN projects p ON a.project_id=p.id
+			SELECT COUNT(*)
+			FROM findings f
+			JOIN analyses a ON f.analysis_id=a.id
+			JOIN projects p ON f.project_id=p.id
 			LEFT JOIN group_members gm ON gm.user_id=$1
 			  AND (gm.group_id = p.read_group_id OR gm.group_id = p.write_group_id OR gm.group_id = p.admin_group_id)
-			WHERE ar.result_type='sarif' AND (p.owner_id=$1 OR gm.id IS NOT NULL)`, userID).Scan(&s.TotalFindings)
+			WHERE p.owner_id=$1 OR gm.id IS NOT NULL`, userID).Scan(&s.TotalFindings)
 	}
 
 	// Aggregate severity counts from SARIF results
