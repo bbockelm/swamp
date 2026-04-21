@@ -7,9 +7,9 @@ import Link from "next/link";
 import { AnalysisStatus } from "@/components/AnalysisStatus";
 import { SARIFViewer } from "@/components/SARIFViewer";
 import { MarkdownReport, RenderedMarkdown } from "@/components/MarkdownReport";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useResolvedParams } from "@/lib/useResolvedParams";
-import { StreamLine, processLogLines, extractTokenUsage, accumulateUsage, formatTokenCount, type StreamTokenUsage } from "@/lib/stream-utils";
+import { StreamLine, processLogLines, extractStreamMessage, extractTokenUsage, accumulateUsage, formatTokenCount, type StreamTokenUsage } from "@/lib/stream-utils";
 import type { TokenUsage } from "@/lib/api";
 
 function timeAgo(dateStr: string): string {
@@ -55,6 +55,17 @@ export default function AnalysisDetailClient() {
   const { data: project } = useQuery({
     queryKey: ["project", projectId],
     queryFn: () => api.projects.get(projectId),
+  });
+
+  const { data: githubConfig } = useQuery({
+    queryKey: ["project-github-config", projectId],
+    queryFn: async () => {
+      try {
+        return await api.github.getConfig(projectId);
+      } catch {
+        return null;
+      }
+    },
   });
 
   const canEdit = project?.my_role === 'write' || project?.my_role === 'admin';
@@ -152,6 +163,7 @@ export default function AnalysisDetailClient() {
   const providerLabel = typeof analysis.agent_config?.provider_label === "string"
     ? analysis.agent_config.provider_label
     : "";
+  const hasGitHubInstallation = (githubConfig?.installation_id ?? 0) > 0;
 
   return (
     <div>
@@ -374,20 +386,6 @@ export default function AnalysisDetailClient() {
         )}
       </div>
 
-      {/* Token Usage */}
-      {analysis.token_usage && analysis.token_usage.length > 0 && (
-        <TokenUsageBox usage={analysis.token_usage} />
-      )}
-
-      {sarifUploadSummary.total > 0 && (
-        <SARIFUploadSummaryCard
-          summary={sarifUploadSummary}
-          fallbackURL={analysis.sarif_upload_url}
-          projectId={projectId}
-          analysisId={analysisId}
-        />
-      )}
-
       {/* Results */}
       {results && results.filter((r) => r.result_type !== "agent_log").length > 0 ? (
         <div className="space-y-6 mb-6">
@@ -544,6 +542,20 @@ export default function AnalysisDetailClient() {
         <p className="text-sm text-gray-500 mt-4 mb-6">No results were produced for this analysis.</p>
       )}
 
+      {/* Metadata after highlighted results/findings */}
+      {analysis.token_usage && analysis.token_usage.length > 0 && (
+        <TokenUsageBox usage={analysis.token_usage} />
+      )}
+
+      {hasGitHubInstallation && sarifUploadSummary.total > 0 && (
+        <SARIFUploadSummaryCard
+          summary={sarifUploadSummary}
+          fallbackURL={analysis.sarif_upload_url}
+          projectId={projectId}
+          analysisId={analysisId}
+        />
+      )}
+
       {/* Output: live WS stream while active, archived logs after completion */}
       <div className="print:hidden">
       {!isTerminal ? (
@@ -585,6 +597,7 @@ function TokenUsageBox({ usage }: { usage: TokenUsage[] }) {
         <table className="w-full text-sm">
           <thead>
             <tr className="text-xs text-gray-500 uppercase border-b">
+              <th className="text-left py-1 pr-4">Provider</th>
               <th className="text-left py-1 pr-4">Model</th>
               <th className="text-right py-1 px-2">Input</th>
               <th className="text-right py-1 px-2">Output</th>
@@ -595,7 +608,8 @@ function TokenUsageBox({ usage }: { usage: TokenUsage[] }) {
           </thead>
           <tbody>
             {usage.map((u) => (
-              <tr key={u.model} className="border-b border-gray-100">
+              <tr key={`${u.provider || "unknown"}:${u.model}`} className="border-b border-gray-100">
+                <td className="py-1.5 pr-4 text-xs text-gray-600">{u.provider || "unknown"}</td>
                 <td className="py-1.5 pr-4 font-mono text-xs">{u.model}</td>
                 <td className="py-1.5 px-2 text-right font-mono">{formatTokenCount(u.input_tokens)}</td>
                 <td className="py-1.5 px-2 text-right font-mono">{formatTokenCount(u.output_tokens)}</td>
@@ -608,6 +622,7 @@ function TokenUsageBox({ usage }: { usage: TokenUsage[] }) {
             ))}
             {usage.length > 1 && (
               <tr className="font-semibold">
+                <td className="py-1.5 pr-4 text-xs text-gray-500">—</td>
                 <td className="py-1.5 pr-4 text-xs">Total</td>
                 <td className="py-1.5 px-2 text-right font-mono">{formatTokenCount(totalInput)}</td>
                 <td className="py-1.5 px-2 text-right font-mono">{formatTokenCount(totalOutput)}</td>
@@ -656,7 +671,7 @@ function SARIFUploadSummaryCard({
     <div className="bg-gray-50 border rounded p-4 mb-6">
       <div className="flex items-start justify-between gap-4">
         <div>
-          <h3 className="text-sm font-semibold text-gray-700">GitHub SARIF Upload</h3>
+          <h3 className="text-sm font-semibold text-gray-700">GitHub Findings Upload</h3>
           <p className="text-xs text-gray-500 mt-1">
             {summary.total} SARIF artifact{summary.total === 1 ? "" : "s"} in this analysis
           </p>
@@ -926,6 +941,28 @@ function TerminalStream({
   const totalOutput = usageEntries.reduce((s, u) => s + u.output_tokens, 0);
   const totalCost = usageEntries.reduce((s, u) => s + u.cost_usd, 0);
 
+  const displayLines = useMemo(() => {
+    const out: string[] = [];
+    for (const raw of lines) {
+      const parsed = extractStreamMessage(raw);
+      if (parsed !== "") {
+        out.push(...parsed.split("\n"));
+        continue;
+      }
+
+      // Hide unrenderable JSON events (for example step_finish token updates),
+      // but keep plain-text lines visible.
+      const trimmed = raw.trim();
+      if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
+        continue;
+      }
+      if (raw) {
+        out.push(raw);
+      }
+    }
+    return out;
+  }, [lines]);
+
   return (
     <div className="mb-6">
       <div className="flex items-center gap-2 mb-2">
@@ -948,7 +985,7 @@ function TerminalStream({
         ref={containerRef}
         className="bg-gray-950 p-4 rounded-lg border border-gray-800 max-h-[32rem] overflow-y-auto overflow-x-hidden space-y-1"
       >
-        {lines.length === 0 ? (
+        {displayLines.length === 0 ? (
           <div className="text-gray-500 italic text-sm flex items-center gap-2">
             {analysisStatus === "failed" || analysisStatus === "cancelled" || analysisStatus === "timed_out" ? (
               <>Worker exited before producing output.</>
@@ -961,7 +998,7 @@ function TerminalStream({
             )}
           </div>
         ) : (
-          lines.map((line, i) => <StreamLine key={i} line={line} />)
+          displayLines.map((line, i) => <StreamLine key={i} line={line} />)
         )}
       </div>
     </div>
@@ -1075,7 +1112,15 @@ function LogContent({
     return <p className="text-sm text-gray-500 px-3 pb-2">Loading...</p>;
 
   const rawLines = content.split("\n");
-  const formattedLines = processLogLines(rawLines);
+  const parsedLines = processLogLines(rawLines);
+  const formattedLines = parsedLines.length > 0
+    ? parsedLines
+    : rawLines.filter((line) => {
+        const trimmed = line.trim();
+        if (!trimmed) return true;
+        if (trimmed.startsWith("{") && trimmed.endsWith("}")) return false;
+        return true;
+      });
 
   return (
     <div>
@@ -1112,14 +1157,11 @@ function LogContent({
             ? formattedLines.map((line, i) => (
                 <StreamLine key={i} line={line} />
               ))
-            : rawLines.map((line, i) => (
-                <div
-                  key={i}
-                  className="text-green-400 font-mono text-xs whitespace-pre-wrap break-words"
-                >
-                  {line || "\u00A0"}
+            : (
+                <div className="text-gray-500 italic text-sm">
+                  No formatted output available.
                 </div>
-              ))}
+              )}
       </div>
     </div>
   );

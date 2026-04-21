@@ -633,6 +633,9 @@ func (wh *WorkerHandler) UploadResult(w http.ResponseWriter, r *http.Request) {
 	if resultType == "agent_log" && filename == "agent_stdout.log" {
 		lines := strings.Split(string(plaintext), "\n")
 		usages := agent.ExtractTokenUsage(lines)
+		if normalized, changed := agent.ApplyAnalysisTokenUsageIdentity(usages, analysis); changed {
+			usages = normalized
+		}
 		if len(usages) > 0 {
 			if err := wh.h.queries.ReplaceAnalysisTokenUsage(r.Context(), analysisID, usages); err != nil {
 				log.Error().Err(err).Str("analysis_id", analysisID).Msg("Failed to save token usage")

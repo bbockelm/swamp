@@ -157,6 +157,8 @@ func run() error {
 
 	// Background backfill of token usage for historical analyses.
 	go backfillTokenUsageBackground(ctx, queries, store, enc)
+	// Background normalization of legacy OpenCode token-usage rows.
+	go normalizeOpenCodeTokenUsageBackground(ctx, queries)
 
 	// In dev mode, create the admin account and print a one-time login URL.
 	if cfg.IsDevelopment() {
@@ -610,6 +612,9 @@ func backfillTokenUsageForIDs(ctx context.Context, ids []string, queries *db.Que
 
 		lines := strings.Split(string(plaintext), "\n")
 		usages := agent.ExtractTokenUsage(lines)
+		if normalized, changed := agent.ApplyAnalysisTokenUsageIdentity(usages, analysis); changed {
+			usages = normalized
+		}
 		if len(usages) == 0 {
 			continue
 		}
@@ -634,6 +639,56 @@ func backfillTokenUsageForIDs(ctx context.Context, ids []string, queries *db.Que
 		backfilled++
 	}
 	return
+}
+
+// normalizeOpenCodeTokenUsageBackground rewrites legacy token-usage rows where
+// model='opencode' so the model/provider come from analysis configuration.
+func normalizeOpenCodeTokenUsageBackground(ctx context.Context, queries *db.Queries) {
+	ids, err := queries.ListAnalysisIDsWithOpenCodeUsage(ctx)
+	if err != nil {
+		log.Error().Err(err).Msg("Token usage normalize: failed to list analyses")
+		return
+	}
+	if len(ids) == 0 {
+		return
+	}
+
+	log.Info().Int("count", len(ids)).Msg("Token usage normalize: starting OpenCode identity rewrite")
+	updated, failed := 0, 0
+	for _, analysisID := range ids {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+
+		analysis, err := queries.GetAnalysis(ctx, analysisID)
+		if err != nil {
+			log.Error().Err(err).Str("analysis_id", analysisID).Msg("Token usage normalize: failed to load analysis")
+			failed++
+			continue
+		}
+
+		usages, err := queries.GetAnalysisTokenUsage(ctx, analysisID)
+		if err != nil {
+			log.Error().Err(err).Str("analysis_id", analysisID).Msg("Token usage normalize: failed to load usage")
+			failed++
+			continue
+		}
+
+		normalized, changed := agent.ApplyAnalysisTokenUsageIdentity(usages, analysis)
+		if !changed {
+			continue
+		}
+		if err := queries.ReplaceAnalysisTokenUsage(ctx, analysisID, normalized); err != nil {
+			log.Error().Err(err).Str("analysis_id", analysisID).Msg("Token usage normalize: failed to store usage")
+			failed++
+			continue
+		}
+		updated++
+	}
+
+	log.Info().Int("updated", updated).Int("failed", failed).Msg("Token usage normalize: complete")
 }
 
 // runBackfillTokenUsage is the CLI subcommand version of the backfill.

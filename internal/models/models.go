@@ -458,6 +458,7 @@ type GitHubStatus struct {
 type TokenUsage struct {
 	ID              string  `json:"id"`
 	AnalysisID      string  `json:"analysis_id"`
+	Provider        string  `json:"provider"`
 	Model           string  `json:"model"`
 	InputTokens     int64   `json:"input_tokens"`
 	OutputTokens    int64   `json:"output_tokens"`

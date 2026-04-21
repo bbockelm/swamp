@@ -2670,11 +2670,11 @@ func (q *Queries) ListWebhookDeliveries(ctx context.Context, projectID string, l
 // GetAnalysisTokenUsage returns per-model token usage for a single analysis.
 func (q *Queries) GetAnalysisTokenUsage(ctx context.Context, analysisID string) ([]models.TokenUsage, error) {
 	rows, err := q.pool.Query(ctx, `
-		SELECT id, analysis_id, model, input_tokens, output_tokens,
+		SELECT id, analysis_id, provider, model, input_tokens, output_tokens,
 		       cache_read_tokens, cache_write_tokens, cost_usd
 		FROM analysis_token_usage
 		WHERE analysis_id = $1
-		ORDER BY model`, analysisID)
+		ORDER BY provider, model`, analysisID)
 	if err != nil {
 		return nil, err
 	}
@@ -2682,7 +2682,7 @@ func (q *Queries) GetAnalysisTokenUsage(ctx context.Context, analysisID string) 
 	var out []models.TokenUsage
 	for rows.Next() {
 		var u models.TokenUsage
-		if err := rows.Scan(&u.ID, &u.AnalysisID, &u.Model,
+		if err := rows.Scan(&u.ID, &u.AnalysisID, &u.Provider, &u.Model,
 			&u.InputTokens, &u.OutputTokens,
 			&u.CacheReadTokens, &u.CacheWriteTokens, &u.CostUSD); err != nil {
 			return nil, err
@@ -2711,10 +2711,10 @@ func (q *Queries) ReplaceAnalysisTokenUsage(ctx context.Context, analysisID stri
 	for _, u := range usages {
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO analysis_token_usage
-				(analysis_id, model, input_tokens, output_tokens,
+				(analysis_id, provider, model, input_tokens, output_tokens,
 				 cache_read_tokens, cache_write_tokens, cost_usd)
-			VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-			analysisID, u.Model, u.InputTokens, u.OutputTokens,
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+			analysisID, u.Provider, u.Model, u.InputTokens, u.OutputTokens,
 			u.CacheReadTokens, u.CacheWriteTokens, u.CostUSD); err != nil {
 			return err
 		}
@@ -2724,6 +2724,7 @@ func (q *Queries) ReplaceAnalysisTokenUsage(ctx context.Context, analysisID stri
 
 // AggregatedTokenUsage is token usage summed across analyses per model.
 type AggregatedTokenUsage struct {
+	Provider         string  `json:"provider"`
 	Model            string  `json:"model"`
 	AnalysisCount    int     `json:"analysis_count"`
 	InputTokens      int64   `json:"input_tokens"`
@@ -2741,17 +2742,19 @@ func (q *Queries) GetAggregatedTokenUsage(ctx context.Context, userID string, is
 	var args []any
 	if isAdmin {
 		query = `
-			SELECT u.model,
+			SELECT COALESCE(NULLIF(u.provider, ''), 'unknown') AS provider,
+			       u.model,
 			       COUNT(DISTINCT u.analysis_id) AS analysis_count,
 			       SUM(u.input_tokens), SUM(u.output_tokens),
 			       SUM(u.cache_read_tokens), SUM(u.cache_write_tokens),
 			       SUM(u.cost_usd)
 			FROM analysis_token_usage u
-			GROUP BY u.model
+			GROUP BY provider, u.model
 			ORDER BY SUM(u.input_tokens) + SUM(u.output_tokens) DESC`
 	} else {
 		query = `
-			SELECT u.model,
+			SELECT COALESCE(NULLIF(u.provider, ''), 'unknown') AS provider,
+			       u.model,
 			       COUNT(DISTINCT u.analysis_id) AS analysis_count,
 			       SUM(u.input_tokens), SUM(u.output_tokens),
 			       SUM(u.cache_read_tokens), SUM(u.cache_write_tokens),
@@ -2760,7 +2763,7 @@ func (q *Queries) GetAggregatedTokenUsage(ctx context.Context, userID string, is
 			JOIN analyses a ON a.id = u.analysis_id
 			JOIN projects p ON p.id = a.project_id
 			JOIN group_members gm ON gm.group_id = p.group_id AND gm.user_id = $1
-			GROUP BY u.model
+			GROUP BY provider, u.model
 			ORDER BY SUM(u.input_tokens) + SUM(u.output_tokens) DESC`
 		args = append(args, userID)
 	}
@@ -2773,7 +2776,7 @@ func (q *Queries) GetAggregatedTokenUsage(ctx context.Context, userID string, is
 	var out []AggregatedTokenUsage
 	for rows.Next() {
 		var a AggregatedTokenUsage
-		if err := rows.Scan(&a.Model, &a.AnalysisCount,
+		if err := rows.Scan(&a.Provider, &a.Model, &a.AnalysisCount,
 			&a.InputTokens, &a.OutputTokens,
 			&a.CacheReadTokens, &a.CacheWriteTokens, &a.CostUSD); err != nil {
 			return nil, err
@@ -2791,6 +2794,29 @@ func (q *Queries) ListAnalysisIDsWithoutUsage(ctx context.Context) ([]string, er
 		LEFT JOIN analysis_token_usage u ON u.analysis_id = a.id
 		WHERE a.status = 'completed' AND u.id IS NULL
 		ORDER BY a.created_at DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
+// ListAnalysisIDsWithOpenCodeUsage returns analysis IDs that still have
+// OpenCode sentinel token-usage rows (model = 'opencode').
+func (q *Queries) ListAnalysisIDsWithOpenCodeUsage(ctx context.Context) ([]string, error) {
+	rows, err := q.pool.Query(ctx, `
+		SELECT DISTINCT analysis_id
+		FROM analysis_token_usage
+		WHERE LOWER(model) = 'opencode'
+		ORDER BY analysis_id`)
 	if err != nil {
 		return nil, err
 	}

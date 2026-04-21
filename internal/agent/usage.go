@@ -113,18 +113,14 @@ func parseOpenCodeStepFinishUsage(raw map[string]json.RawMessage, totals map[str
 			} `json:"cache"`
 		} `json:"tokens"`
 		Cost    float64 `json:"cost"`
-		ModelID string  `json:"modelID"`
 	}
 	if err := json.Unmarshal(raw["part"], &part); err != nil || part.Tokens == nil {
 		return
 	}
 
-	model := part.ModelID
-	if model == "" {
-		model = "opencode"
-	}
-
-	u := getOrCreate(totals, model)
+	// OpenCode rows are normalized later using the analysis configuration
+	// (selected provider + selected model).
+	u := getOrCreate(totals, "opencode")
 	u.InputTokens += part.Tokens.Input
 	u.OutputTokens += part.Tokens.Output
 	if part.Tokens.Cache != nil {
@@ -132,6 +128,53 @@ func parseOpenCodeStepFinishUsage(raw map[string]json.RawMessage, totals map[str
 		u.CacheWriteTokens += part.Tokens.Cache.Write
 	}
 	u.CostUSD += part.Cost
+}
+
+// ApplyAnalysisTokenUsageIdentity enriches token-usage rows with provider
+// identity from the analysis configuration and normalizes OpenCode sentinel
+// model rows ("opencode") to the configured analysis model.
+//
+// Returns a new usage slice and a boolean indicating whether any row changed.
+func ApplyAnalysisTokenUsageIdentity(usages []models.TokenUsage, analysis *models.Analysis) ([]models.TokenUsage, bool) {
+	if analysis == nil || len(usages) == 0 {
+		return usages, false
+	}
+
+	provider := ""
+	if len(analysis.AgentConfig) > 0 {
+		var cfg map[string]any
+		if err := json.Unmarshal(analysis.AgentConfig, &cfg); err == nil {
+			if s, ok := cfg["provider_label"].(string); ok {
+				provider = strings.TrimSpace(s)
+			}
+			if provider == "" {
+				if s, ok := cfg["llm_provider_id"].(string); ok {
+					provider = strings.TrimSpace(s)
+				}
+			}
+		}
+	}
+
+	configuredModel := strings.TrimSpace(analysis.AgentModel)
+	changed := false
+	out := make([]models.TokenUsage, len(usages))
+	for i := range usages {
+		u := usages[i]
+
+		if provider != "" && u.Provider != provider {
+			u.Provider = provider
+			changed = true
+		}
+
+		if strings.EqualFold(strings.TrimSpace(u.Model), "opencode") && configuredModel != "" && u.Model != configuredModel {
+			u.Model = configuredModel
+			changed = true
+		}
+
+		out[i] = u
+	}
+
+	return out, changed
 }
 
 // isTokenBearingEvent checks if a raw JSON line is a token-usage event

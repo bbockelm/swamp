@@ -475,6 +475,7 @@ function DashboardContent({ userName }: { userName: string }) {
             <table className="w-full text-sm">
               <thead>
                 <tr className="text-xs text-gray-500 uppercase border-b">
+                  <th className="text-left py-1 pr-4">Provider</th>
                   <th className="text-left py-1 pr-4">Model</th>
                   <th className="text-right py-1 px-2">Analyses</th>
                   <th className="text-right py-1 px-2">Input</th>
@@ -486,7 +487,8 @@ function DashboardContent({ userName }: { userName: string }) {
               </thead>
               <tbody>
                 {stats.token_usage.map((u: AggregatedTokenUsage) => (
-                  <tr key={u.model} className="border-b border-gray-100">
+                  <tr key={`${u.provider || "unknown"}:${u.model}`} className="border-b border-gray-100">
+                    <td className="py-1.5 pr-4 text-xs text-gray-600">{u.provider || "unknown"}</td>
                     <td className="py-1.5 pr-4 font-mono text-xs">{u.model}</td>
                     <td className="py-1.5 px-2 text-right">{u.analysis_count}</td>
                     <td className="py-1.5 px-2 text-right font-mono">{fmtTok(u.input_tokens)}</td>
@@ -500,6 +502,7 @@ function DashboardContent({ userName }: { userName: string }) {
                 ))}
                 {stats.token_usage.length > 1 && (
                   <tr className="font-semibold">
+                    <td className="py-1.5 pr-4 text-xs text-gray-500">—</td>
                     <td className="py-1.5 pr-4 text-xs">Total</td>
                     <td className="py-1.5 px-2 text-right">
                       {stats.token_usage.reduce((s: number, u: AggregatedTokenUsage) => s + u.analysis_count, 0)}
