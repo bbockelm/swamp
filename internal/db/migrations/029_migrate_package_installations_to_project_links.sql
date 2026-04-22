@@ -2,7 +2,7 @@
 -- +goose Up
 -- Backfill deprecated package-level installation links into project-level links.
 INSERT INTO project_github_installations (project_id, installation_id, enabled_by)
-SELECT DISTINCT sp.project_id, sp.installation_id, NULL
+SELECT DISTINCT sp.project_id, sp.installation_id, NULL::uuid
 FROM software_packages sp
 WHERE sp.installation_id IS NOT NULL
   AND sp.installation_id <> 0
