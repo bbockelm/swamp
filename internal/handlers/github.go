@@ -432,10 +432,10 @@ func (h *Handler) CheckRepoAccess(w http.ResponseWriter, r *http.Request) {
 // GET /api/v1/github/link
 func (h *Handler) GetGitHubLinkStatus(w http.ResponseWriter, r *http.Request) {
 	type response struct {
-		Linked        bool   `json:"linked"`
-		GitHubLogin   string `json:"github_login,omitempty"`
-		OAuthURL      string `json:"oauth_url,omitempty"`
-		OAuthConfigured bool `json:"oauth_configured"`
+		Linked          bool   `json:"linked"`
+		GitHubLogin     string `json:"github_login,omitempty"`
+		OAuthURL        string `json:"oauth_url,omitempty"`
+		OAuthConfigured bool   `json:"oauth_configured"`
 	}
 
 	user := GetUserFromContext(r.Context())
@@ -668,14 +668,14 @@ func (h *Handler) UserRepoAccess(w http.ResponseWriter, r *http.Request) {
 		DefaultBranch  string `json:"default_branch,omitempty"`
 	}
 	type response struct {
-		Linked              bool                  `json:"linked"`
-		HasInstallation     bool                  `json:"has_installation"`
-		Accessible          bool                  `json:"accessible"`
-		DefaultBranch       string                `json:"default_branch,omitempty"`
-		InstallationID      int64                 `json:"installation_id,omitempty"`
-		Error               string                `json:"error,omitempty"`
-		InstallURL          string                `json:"install_url,omitempty"`
-		NeedsLink           bool                  `json:"needs_link"`
+		Linked               bool                  `json:"linked"`
+		HasInstallation      bool                  `json:"has_installation"`
+		Accessible           bool                  `json:"accessible"`
+		DefaultBranch        string                `json:"default_branch,omitempty"`
+		InstallationID       int64                 `json:"installation_id,omitempty"`
+		Error                string                `json:"error,omitempty"`
+		InstallURL           string                `json:"install_url,omitempty"`
+		NeedsLink            bool                  `json:"needs_link"`
 		MatchedInstallations []matchedInstallation `json:"matched_installations,omitempty"`
 	}
 
@@ -790,10 +790,10 @@ func (h *Handler) UserRepoAccess(w http.ResponseWriter, r *http.Request) {
 // installations endpoint.
 type projectInstallationView struct {
 	models.GitHubAppInstallation
-	LinkedToProject bool      `json:"linked_to_project"`
-	EnabledBy       *string   `json:"enabled_by,omitempty"`
-	EnabledByName   string    `json:"enabled_by_name,omitempty"`
-	EnabledAt       *time.Time `json:"enabled_at,omitempty"`
+	LinkedToProject bool                 `json:"linked_to_project"`
+	EnabledBy       *string              `json:"enabled_by,omitempty"`
+	EnabledByName   string               `json:"enabled_by_name,omitempty"`
+	EnabledAt       *time.Time           `json:"enabled_at,omitempty"`
 	Packages        []packageInstallInfo `json:"packages"`
 }
 
@@ -1150,8 +1150,8 @@ func (h *Handler) HandleGitHubWebhook(w http.ResponseWriter, r *http.Request) {
 			Event:  "push",
 			Branch: branch,
 			Meta: map[string]interface{}{
-				"ref":   payload.Ref,
-				"repo":  payload.Repository.FullName,
+				"ref":         payload.Ref,
+				"repo":        payload.Repository.FullName,
 				"push_sender": payload.Sender.Login,
 			},
 		}
@@ -1183,13 +1183,13 @@ func (h *Handler) HandleGitHubWebhook(w http.ResponseWriter, r *http.Request) {
 			Branch: payload.PullRequest.Head.Ref,
 			Commit: payload.PullRequest.Head.SHA,
 			Meta: map[string]interface{}{
-				"pr_number":  payload.PullRequest.Number,
-				"pr_url":     prURL,
-				"pr_action":  payload.Action,
-				"head_ref":   payload.PullRequest.Head.Ref,
-				"head_sha":   payload.PullRequest.Head.SHA,
-				"base_ref":   payload.PullRequest.Base.Ref,
-				"repo":       payload.Repository.FullName,
+				"pr_number": payload.PullRequest.Number,
+				"pr_url":    prURL,
+				"pr_action": payload.Action,
+				"head_ref":  payload.PullRequest.Head.Ref,
+				"head_sha":  payload.PullRequest.Head.SHA,
+				"base_ref":  payload.PullRequest.Base.Ref,
+				"repo":      payload.Repository.FullName,
 			},
 		}
 		analysisID, triggerErr := h.triggerWebhookAnalysis(r.Context(), ghCfg, payload.Sender.Login, info)
@@ -1229,11 +1229,11 @@ func (h *Handler) HandleGitHubWebhook(w http.ResponseWriter, r *http.Request) {
 			Event:  "release",
 			Branch: payload.Release.TagName,
 			Meta: map[string]interface{}{
-				"tag":         payload.Release.TagName,
+				"tag":          payload.Release.TagName,
 				"release_name": payload.Release.Name,
-				"release_url": releaseURL,
-				"prerelease":  payload.Release.Prerelease,
-				"repo":        payload.Repository.FullName,
+				"release_url":  releaseURL,
+				"prerelease":   payload.Release.Prerelease,
+				"repo":         payload.Repository.FullName,
 			},
 		}
 		analysisID, triggerErr := h.triggerWebhookAnalysis(r.Context(), ghCfg, payload.Sender.Login, info)
@@ -1258,10 +1258,10 @@ func (h *Handler) HandleGitHubWebhook(w http.ResponseWriter, r *http.Request) {
 
 // webhookTriggerInfo carries metadata about the triggering event.
 type webhookTriggerInfo struct {
-	Event    string                 // "push", "pull_request", "release"
-	Branch   string                 // branch name or tag
-	Commit   string                 // commit SHA if known
-	Meta     map[string]interface{} // additional fields (pr_number, pr_url, tag, etc.)
+	Event  string                 // "push", "pull_request", "release"
+	Branch string                 // branch name or tag
+	Commit string                 // commit SHA if known
+	Meta   map[string]interface{} // additional fields (pr_number, pr_url, tag, etc.)
 }
 
 // triggerWebhookAnalysis creates and starts an analysis triggered by a webhook.
@@ -1282,8 +1282,8 @@ func (h *Handler) triggerWebhookAnalysis(ctx context.Context, ghCfg *models.Proj
 	if ghCfg.WebhookProviderID != nil && *ghCfg.WebhookProviderID != "" {
 		agentConfig["llm_provider_id"] = *ghCfg.WebhookProviderID
 		agentConfig["provider_source"] = "global"
-		if prov, err := h.queries.GetLLMProvider(ctx, *ghCfg.WebhookProviderID); err == nil {
-			agentConfig["provider_label"] = prov.Label
+		if label := h.resolveProviderLabel(ctx, ghCfg.ProjectID, *ghCfg.WebhookProviderID, "global"); label != "" {
+			agentConfig["provider_label"] = label
 		}
 	}
 	configBytes, _ := json.Marshal(agentConfig)

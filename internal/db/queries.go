@@ -2880,18 +2880,63 @@ func (q *Queries) GetAggregatedTokenUsage(ctx context.Context, userID string, is
 	var args []any
 	if isAdmin {
 		query = `
-			SELECT COALESCE(NULLIF(u.provider, ''), 'unknown') AS provider,
+			SELECT COALESCE(
+			       NULLIF(
+			         CASE
+			           WHEN u.provider = 'env-anthropic' THEN 'Anthropic (env)'
+			           WHEN u.provider = 'env-external' THEN 'External LLM (env)'
+			           WHEN u.provider != '' THEN COALESCE(gl_u.label, pk_u.label, u.provider)
+			           ELSE ''
+			         END,
+			         ''
+			       ),
+			       NULLIF(a.agent_config->>'provider_label', ''),
+			       NULLIF(
+			         CASE
+			           WHEN a.agent_config->>'provider_source' = 'env' AND a.agent_config->>'llm_provider_id' = 'env-anthropic' THEN 'Anthropic (env)'
+			           WHEN a.agent_config->>'provider_source' = 'env' AND a.agent_config->>'llm_provider_id' = 'env-external' THEN 'External LLM (env)'
+			           ELSE COALESCE(gl_cfg.label, pk_cfg.label, '')
+			         END,
+			         ''
+			       ),
+			       'unknown'
+			     ) AS provider,
 			       u.model,
 			       COUNT(DISTINCT u.analysis_id) AS analysis_count,
 			       SUM(u.input_tokens), SUM(u.output_tokens),
 			       SUM(u.cache_read_tokens), SUM(u.cache_write_tokens),
 			       SUM(u.cost_usd)
 			FROM analysis_token_usage u
+			JOIN analyses a ON a.id = u.analysis_id
+			LEFT JOIN llm_providers gl_u ON gl_u.id = u.provider
+			LEFT JOIN project_provider_keys pk_u ON pk_u.id = u.provider AND pk_u.project_id = a.project_id
+			LEFT JOIN llm_providers gl_cfg ON gl_cfg.id = a.agent_config->>'llm_provider_id'
+			LEFT JOIN project_provider_keys pk_cfg ON pk_cfg.id = a.agent_config->>'llm_provider_id' AND pk_cfg.project_id = a.project_id
 			GROUP BY provider, u.model
 			ORDER BY SUM(u.input_tokens) + SUM(u.output_tokens) DESC`
 	} else {
 		query = `
-			SELECT COALESCE(NULLIF(u.provider, ''), 'unknown') AS provider,
+			SELECT COALESCE(
+			       NULLIF(
+			         CASE
+			           WHEN u.provider = 'env-anthropic' THEN 'Anthropic (env)'
+			           WHEN u.provider = 'env-external' THEN 'External LLM (env)'
+			           WHEN u.provider != '' THEN COALESCE(gl_u.label, pk_u.label, u.provider)
+			           ELSE ''
+			         END,
+			         ''
+			       ),
+			       NULLIF(a.agent_config->>'provider_label', ''),
+			       NULLIF(
+			         CASE
+			           WHEN a.agent_config->>'provider_source' = 'env' AND a.agent_config->>'llm_provider_id' = 'env-anthropic' THEN 'Anthropic (env)'
+			           WHEN a.agent_config->>'provider_source' = 'env' AND a.agent_config->>'llm_provider_id' = 'env-external' THEN 'External LLM (env)'
+			           ELSE COALESCE(gl_cfg.label, pk_cfg.label, '')
+			         END,
+			         ''
+			       ),
+			       'unknown'
+			     ) AS provider,
 			       u.model,
 			       COUNT(DISTINCT u.analysis_id) AS analysis_count,
 			       SUM(u.input_tokens), SUM(u.output_tokens),
@@ -2900,7 +2945,16 @@ func (q *Queries) GetAggregatedTokenUsage(ctx context.Context, userID string, is
 			FROM analysis_token_usage u
 			JOIN analyses a ON a.id = u.analysis_id
 			JOIN projects p ON p.id = a.project_id
-			JOIN group_members gm ON gm.group_id = p.group_id AND gm.user_id = $1
+			LEFT JOIN llm_providers gl_u ON gl_u.id = u.provider
+			LEFT JOIN project_provider_keys pk_u ON pk_u.id = u.provider AND pk_u.project_id = a.project_id
+			LEFT JOIN llm_providers gl_cfg ON gl_cfg.id = a.agent_config->>'llm_provider_id'
+			LEFT JOIN project_provider_keys pk_cfg ON pk_cfg.id = a.agent_config->>'llm_provider_id' AND pk_cfg.project_id = a.project_id
+			WHERE p.owner_id = $1
+			   OR EXISTS (
+			       SELECT 1 FROM group_members gm
+			       WHERE gm.user_id = $1
+			         AND (gm.group_id = p.read_group_id OR gm.group_id = p.write_group_id OR gm.group_id = p.admin_group_id)
+			   )
 			GROUP BY provider, u.model
 			ORDER BY SUM(u.input_tokens) + SUM(u.output_tokens) DESC`
 		args = append(args, userID)

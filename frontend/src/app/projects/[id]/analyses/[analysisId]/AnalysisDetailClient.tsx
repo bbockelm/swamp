@@ -9,7 +9,7 @@ import { SARIFViewer } from "@/components/SARIFViewer";
 import { MarkdownReport, RenderedMarkdown } from "@/components/MarkdownReport";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useResolvedParams } from "@/lib/useResolvedParams";
-import { StreamLine, processLogLines, extractStreamMessage, extractTokenUsage, accumulateUsage, formatTokenCount, type StreamTokenUsage } from "@/lib/stream-utils";
+import { StreamLine, processLogLines, extractStreamMessage, extractTokenUsage, accumulateUsage, formatTokenCount, streamDisplayLines, type StreamTokenUsage } from "@/lib/stream-utils";
 import type { TokenUsage } from "@/lib/api";
 
 function timeAgo(dateStr: string): string {
@@ -961,27 +961,7 @@ function TerminalStream({
   const totalOutput = usageEntries.reduce((s, u) => s + u.output_tokens, 0);
   const totalCost = usageEntries.reduce((s, u) => s + u.cost_usd, 0);
 
-  const displayLines = useMemo(() => {
-    const out: string[] = [];
-    for (const raw of lines) {
-      const parsed = extractStreamMessage(raw);
-      if (parsed !== "") {
-        out.push(...parsed.split("\n"));
-        continue;
-      }
-
-      // Hide unrenderable JSON events (for example step_finish token updates),
-      // but keep plain-text lines visible.
-      const trimmed = raw.trim();
-      if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
-        continue;
-      }
-      if (raw) {
-        out.push(raw);
-      }
-    }
-    return out;
-  }, [lines]);
+  const displayLines = useMemo(() => streamDisplayLines(lines), [lines]);
 
   return (
     <div className="mb-6">

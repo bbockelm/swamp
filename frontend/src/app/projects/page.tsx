@@ -22,7 +22,7 @@ import { SARIFViewer } from "@/components/SARIFViewer";
 import { MarkdownReport } from "@/components/MarkdownReport";
 import { GitBranchInput, type GitBranchInputHandle } from "@/components/GitBranchInput";
 import { FindingsTable } from "@/components/FindingsTable";
-import { StreamLine, extractStreamMessage } from "@/lib/stream-utils";
+import { StreamLine, extractStreamMessage, streamDisplayLines } from "@/lib/stream-utils";
 
 const ANALYSES_PAGE_SIZE = 10;
 
@@ -1897,6 +1897,8 @@ function TerminalStream({ analysisId }: { analysisId: string }) {
       containerRef.current.scrollTop = containerRef.current.scrollHeight;
   }, [lines]);
 
+  const displayLines = useMemo(() => streamDisplayLines(lines), [lines]);
+
   return (
     <div>
       <h4 className="font-medium text-sm mb-1">Live Output</h4>
@@ -1904,7 +1906,7 @@ function TerminalStream({ analysisId }: { analysisId: string }) {
         ref={containerRef}
         className="bg-gray-950 p-3 rounded-lg border border-gray-800 max-h-64 overflow-y-auto overflow-x-hidden space-y-0.5"
       >
-        {lines.length === 0 && (
+        {displayLines.length === 0 && (
           <div className="text-gray-500 italic text-sm flex items-center gap-2">
             {status === "connecting" ? (
               <>
@@ -1924,7 +1926,7 @@ function TerminalStream({ analysisId }: { analysisId: string }) {
             )}
           </div>
         )}
-        {lines.map((line, i) => (
+        {displayLines.map((line, i) => (
           <StreamLine key={i} line={line} />
         ))}
       </div>

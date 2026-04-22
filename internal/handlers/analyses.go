@@ -132,8 +132,8 @@ func (h *Handler) CreateAnalysis(w http.ResponseWriter, r *http.Request) {
 		agentConfig["provider_source"] = req.ProviderSource
 
 		// Look up human-readable label for display.
-		if prov, err := h.queries.GetLLMProvider(r.Context(), req.ProviderID); err == nil {
-			agentConfig["provider_label"] = prov.Label
+		if label := h.resolveProviderLabel(r.Context(), projectID, req.ProviderID, req.ProviderSource); label != "" {
+			agentConfig["provider_label"] = label
 		}
 	}
 	configBytes, _ := json.Marshal(agentConfig)
@@ -222,12 +222,12 @@ func (h *Handler) GetAnalysis(w http.ResponseWriter, r *http.Request) {
 	if analysis.AgentConfig != nil && len(analysis.AgentConfig) > 0 {
 		agentConfig := make(map[string]interface{})
 		if err := json.Unmarshal(analysis.AgentConfig, &agentConfig); err == nil {
-			if providerID, ok := agentConfig["llm_provider_id"]; ok && providerID != "" {
-				if prov, err := h.queries.GetLLMProvider(r.Context(), providerID.(string)); err == nil {
-					agentConfig["provider_label"] = prov.Label
-					if configBytes, err := json.Marshal(agentConfig); err == nil {
-						analysis.AgentConfig = json.RawMessage(configBytes)
-					}
+			providerID, _ := agentConfig["llm_provider_id"].(string)
+			providerSource, _ := agentConfig["provider_source"].(string)
+			if label := h.resolveProviderLabel(r.Context(), analysis.ProjectID, providerID, providerSource); label != "" {
+				agentConfig["provider_label"] = label
+				if configBytes, err := json.Marshal(agentConfig); err == nil {
+					analysis.AgentConfig = json.RawMessage(configBytes)
 				}
 			}
 		}
@@ -238,21 +238,38 @@ func (h *Handler) GetAnalysis(w http.ResponseWriter, r *http.Request) {
 
 	// Fetch token usage and enrich with provider labels
 	tokenUsage, _ := h.queries.GetAnalysisTokenUsage(r.Context(), analysisID)
+	providerLabel := ""
+	providerID := ""
+	providerSource := ""
+	if analysis.AgentConfig != nil && len(analysis.AgentConfig) > 0 {
+		agentConfig := make(map[string]interface{})
+		if err := json.Unmarshal(analysis.AgentConfig, &agentConfig); err == nil {
+			providerLabel, _ = agentConfig["provider_label"].(string)
+			providerID, _ = agentConfig["llm_provider_id"].(string)
+			providerSource, _ = agentConfig["provider_source"].(string)
+		}
+	}
 
 	// Enrich token usage with provider labels if they are UUIDs
 	if len(tokenUsage) > 0 {
 		seenProviders := make(map[string]string) // uuid -> label cache
 		for i := range tokenUsage {
 			u := &tokenUsage[i]
+			if providerLabel != "" && (u.Provider == "" || len(u.Provider) == 36 || u.Provider == providerID) {
+				u.Provider = providerLabel
+				continue
+			}
 			// If provider is empty or looks like a UUID, try to look it up
 			if u.Provider == "" || len(u.Provider) == 36 { // UUID length
 				if label, ok := seenProviders[u.Provider]; ok {
 					u.Provider = label
 				} else if u.Provider != "" {
-					if prov, err := h.queries.GetLLMProvider(r.Context(), u.Provider); err == nil {
-						seenProviders[u.Provider] = prov.Label
-						u.Provider = prov.Label
+					if label := h.resolveProviderLabel(r.Context(), analysis.ProjectID, u.Provider, providerSource); label != "" {
+						seenProviders[u.Provider] = label
+						u.Provider = label
 					}
+				} else if label := h.resolveProviderLabel(r.Context(), analysis.ProjectID, providerID, providerSource); label != "" {
+					u.Provider = label
 				}
 			}
 		}

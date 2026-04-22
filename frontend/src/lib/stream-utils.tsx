@@ -183,6 +183,32 @@ export function processLogLines(rawLines: string[]): string[] {
   return out;
 }
 
+/**
+ * Convert raw WebSocket stream lines into displayable lines.
+ *
+ * This keeps parsed human-readable events, drops unrenderable JSON events
+ * (for example step_finish token updates), and preserves plain text fallback.
+ */
+export function streamDisplayLines(rawLines: string[]): string[] {
+  const out: string[] = [];
+  for (const raw of rawLines) {
+    const parsed = extractStreamMessage(raw);
+    if (parsed !== "") {
+      out.push(...parsed.split("\n"));
+      continue;
+    }
+
+    const trimmed = raw.trim();
+    if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
+      continue;
+    }
+    if (raw) {
+      out.push(raw);
+    }
+  }
+  return out;
+}
+
 export function truncateStr(s: string, n: number): string {
   return s.length <= n ? s : s.slice(0, n) + "…";
 }
