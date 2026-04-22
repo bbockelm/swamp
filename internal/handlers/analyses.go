@@ -219,7 +219,7 @@ func (h *Handler) GetAnalysis(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Enrich agent_config with provider label if needed.
-	if analysis.AgentConfig != nil && len(analysis.AgentConfig) > 0 {
+	if len(analysis.AgentConfig) > 0 {
 		agentConfig := make(map[string]interface{})
 		if err := json.Unmarshal(analysis.AgentConfig, &agentConfig); err == nil {
 			providerID, _ := agentConfig["llm_provider_id"].(string)
@@ -241,7 +241,7 @@ func (h *Handler) GetAnalysis(w http.ResponseWriter, r *http.Request) {
 	providerLabel := ""
 	providerID := ""
 	providerSource := ""
-	if analysis.AgentConfig != nil && len(analysis.AgentConfig) > 0 {
+	if len(analysis.AgentConfig) > 0 {
 		agentConfig := make(map[string]interface{})
 		if err := json.Unmarshal(analysis.AgentConfig, &agentConfig); err == nil {
 			providerLabel, _ = agentConfig["provider_label"].(string)
