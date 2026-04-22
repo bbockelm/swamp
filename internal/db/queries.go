@@ -2913,7 +2913,7 @@ func (q *Queries) GetAggregatedTokenUsage(ctx context.Context, userID string, is
 			         ''
 			       ),
 			       NULLIF(u.provider, ''),
-			       'unknown'
+			       'anthropic'
 			     ) AS provider,
 			       u.model,
 			       COUNT(DISTINCT u.analysis_id) AS analysis_count,
@@ -2952,7 +2952,7 @@ func (q *Queries) GetAggregatedTokenUsage(ctx context.Context, userID string, is
 			         ''
 			       ),
 			       NULLIF(u.provider, ''),
-			       'unknown'
+			       'anthropic'
 			     ) AS provider,
 			       u.model,
 			       COUNT(DISTINCT u.analysis_id) AS analysis_count,
