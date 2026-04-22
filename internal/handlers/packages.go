@@ -23,6 +23,21 @@ func parseGitHubURL(gitURL string) (owner, repo string) {
 	return "", ""
 }
 
+func (h *Handler) ensureProjectInstallationLink(r *http.Request, projectID string, installationID int64) (bool, int) {
+	if installationID == 0 {
+		return true, 0
+	}
+	user := GetUserFromContext(r.Context())
+	if user == nil || !h.userCanUseInstallation(r.Context(), user.ID, installationID) {
+		return false, http.StatusForbidden
+	}
+	if err := h.queries.AddProjectInstallation(r.Context(), projectID, installationID, user.ID); err != nil {
+		log.Error().Err(err).Str("project_id", projectID).Int64("installation_id", installationID).Msg("Failed to link GitHub installation to project")
+		return false, http.StatusInternalServerError
+	}
+	return true, 0
+}
+
 // --- Software Packages CRUD ---
 
 func (h *Handler) ListPackages(w http.ResponseWriter, r *http.Request) {
@@ -59,21 +74,17 @@ func (h *Handler) CreatePackage(w http.ResponseWriter, r *http.Request) {
 			pkg.GitHubRepo = repo
 		}
 	}
-	// If we have a GitHub owner/repo but no installation ID, try to inherit
-	// from the project's GitHub config, then fall back to matching by owner
-	// in the installations table. Only use installations the user can access.
-	if pkg.GitHubOwner != "" && pkg.InstallationID == 0 {
-		user := GetUserFromContext(r.Context())
-		if ghCfg, err := h.queries.GetProjectGitHubConfig(r.Context(), projectID); err == nil && ghCfg.InstallationID != 0 {
-			if user != nil && h.userCanUseInstallation(r.Context(), user.ID, ghCfg.InstallationID) {
-				pkg.InstallationID = ghCfg.InstallationID
-			}
-		} else if inst, err := h.queries.GetInstallationByOwner(r.Context(), pkg.GitHubOwner); err == nil {
-			if user != nil && h.userCanUseInstallation(r.Context(), user.ID, inst.InstallationID) {
-				pkg.InstallationID = inst.InstallationID
-			}
+	installationToLink := pkg.InstallationID
+	if ok, status := h.ensureProjectInstallationLink(r, projectID, installationToLink); !ok {
+		if status == http.StatusForbidden {
+			respondError(w, http.StatusForbidden, "You are not authorized to use this GitHub App installation")
+		} else {
+			respondError(w, http.StatusInternalServerError, "Failed to link GitHub App installation to project")
 		}
+		return
 	}
+	// Package-level installation links are deprecated in favor of project links.
+	pkg.InstallationID = 0
 	if err := h.queries.CreatePackage(r.Context(), &pkg); err != nil {
 		log.Error().Err(err).Msg("Failed to create package")
 		respondError(w, http.StatusInternalServerError, "Failed to create package")
@@ -125,21 +136,6 @@ func (h *Handler) UpdatePackage(w http.ResponseWriter, r *http.Request) {
 			pkg.GitHubOwner = owner
 			pkg.GitHubRepo = repo
 		}
-		// Auto-match installation if the URL changed and no explicit ID was provided.
-		// Only use installations the user can access.
-		if updates.InstallationID == nil && pkg.GitHubOwner != "" {
-			user := GetUserFromContext(r.Context())
-			projectID := chi.URLParam(r, "projectID")
-			if ghCfg, err := h.queries.GetProjectGitHubConfig(r.Context(), projectID); err == nil && ghCfg.InstallationID != 0 {
-				if user != nil && h.userCanUseInstallation(r.Context(), user.ID, ghCfg.InstallationID) {
-					pkg.InstallationID = ghCfg.InstallationID
-				}
-			} else if inst, err := h.queries.GetInstallationByOwner(r.Context(), pkg.GitHubOwner); err == nil {
-				if user != nil && h.userCanUseInstallation(r.Context(), user.ID, inst.InstallationID) {
-					pkg.InstallationID = inst.InstallationID
-				}
-			}
-		}
 	}
 	if updates.GitBranch != nil {
 		pkg.GitBranch = *updates.GitBranch
@@ -156,33 +152,26 @@ func (h *Handler) UpdatePackage(w http.ResponseWriter, r *http.Request) {
 	if updates.GitHubRepo != nil {
 		pkg.GitHubRepo = *updates.GitHubRepo
 	}
-	if updates.InstallationID != nil {
-		if *updates.InstallationID != 0 {
-			user := GetUserFromContext(r.Context())
-			if user == nil || !h.userCanUseInstallation(r.Context(), user.ID, *updates.InstallationID) {
-				respondError(w, http.StatusForbidden, "You are not authorized to use this GitHub App installation")
-				return
-			}
-		}
-		pkg.InstallationID = *updates.InstallationID
-	}
 	if updates.SARIFUploadEnabled != nil {
 		pkg.SARIFUploadEnabled = *updates.SARIFUploadEnabled
 	}
-	// Auto-match installation if SARIF is enabled but no installation is set.
-	if pkg.SARIFUploadEnabled && pkg.InstallationID == 0 && pkg.GitHubOwner != "" {
-		user := GetUserFromContext(r.Context())
-		projectID := chi.URLParam(r, "projectID")
-		if ghCfg, err := h.queries.GetProjectGitHubConfig(r.Context(), projectID); err == nil && ghCfg.InstallationID != 0 {
-			if user != nil && h.userCanUseInstallation(r.Context(), user.ID, ghCfg.InstallationID) {
-				pkg.InstallationID = ghCfg.InstallationID
-			}
-		} else if inst, err := h.queries.GetInstallationByOwner(r.Context(), pkg.GitHubOwner); err == nil {
-			if user != nil && h.userCanUseInstallation(r.Context(), user.ID, inst.InstallationID) {
-				pkg.InstallationID = inst.InstallationID
-			}
-		}
+
+	projectID := chi.URLParam(r, "projectID")
+	installationToLink := int64(0)
+	if updates.InstallationID != nil {
+		installationToLink = *updates.InstallationID
 	}
+	if ok, status := h.ensureProjectInstallationLink(r, projectID, installationToLink); !ok {
+		if status == http.StatusForbidden {
+			respondError(w, http.StatusForbidden, "You are not authorized to use this GitHub App installation")
+		} else {
+			respondError(w, http.StatusInternalServerError, "Failed to link GitHub App installation to project")
+		}
+		return
+	}
+
+	// Package-level installation links are deprecated in favor of project links.
+	pkg.InstallationID = 0
 	if err := h.queries.UpdatePackage(r.Context(), pkg); err != nil {
 		log.Error().Err(err).Msg("Failed to update package")
 		respondError(w, http.StatusInternalServerError, "Failed to update package")

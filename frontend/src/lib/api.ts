@@ -427,6 +427,7 @@ export interface GitHubUserRepoAccessResult {
   accessible: boolean;
   default_branch?: string;
   installation_id?: number;
+  installation_account_login?: string;
   error?: string;
   install_url?: string;
   needs_link: boolean;

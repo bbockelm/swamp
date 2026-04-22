@@ -695,7 +695,7 @@ func (e *Executor) uploadOutputDir(ctx context.Context, outputDir, analysisID st
 
 			if e.ghInteg != nil {
 				if results.Results[i].PackageID != nil {
-					if pkg, ok := pkgByID[*results.Results[i].PackageID]; ok && pkg.SARIFUploadEnabled && pkg.GitHubOwner != "" && pkg.GitHubRepo != "" && pkg.InstallationID != 0 {
+					if pkg, ok := pkgByID[*results.Results[i].PackageID]; ok && pkg.SARIFUploadEnabled && pkg.GitHubOwner != "" && pkg.GitHubRepo != "" {
 						attempted = true
 						log.Info().
 							Str("analysis_id", analysisID).

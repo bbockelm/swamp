@@ -437,7 +437,7 @@ func (s *Server) startAnalysis(ctx context.Context, req mcp.CallToolRequest) (*m
 	githubConfigured := 0
 	for _, p := range pkgsForLog {
 		packageMeta = append(packageMeta, p.Name+"("+p.GitBranch+")")
-		if p.InstallationID != 0 && p.GitHubOwner != "" && p.GitHubRepo != "" {
+		if p.GitHubOwner != "" && p.GitHubRepo != "" {
 			githubConfigured++
 		}
 	}

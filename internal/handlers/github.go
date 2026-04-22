@@ -330,17 +330,33 @@ func (h *Handler) ListPackageBranches(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusBadRequest, "GitHub App is not configured")
 		return
 	}
+	projectID := chi.URLParam(r, "projectID")
 	pkgID := chi.URLParam(r, "packageID")
 	pkg, err := h.queries.GetPackage(r.Context(), pkgID)
 	if err != nil {
 		respondError(w, http.StatusNotFound, "Package not found")
 		return
 	}
-	if pkg.GitHubOwner == "" || pkg.GitHubRepo == "" || pkg.InstallationID == 0 {
+	if pkg.GitHubOwner == "" || pkg.GitHubRepo == "" {
 		respondError(w, http.StatusBadRequest, "Package has no GitHub App integration configured")
 		return
 	}
-	branches, err := h.ghClient.ListBranches(r.Context(), pkg.InstallationID, pkg.GitHubOwner, pkg.GitHubRepo)
+	installationID := int64(0)
+	if inst, err := h.queries.GetProjectInstallationByOwner(r.Context(), projectID, pkg.GitHubOwner); err == nil {
+		installationID = inst.InstallationID
+	}
+	if installationID == 0 {
+		if ghCfg, err := h.queries.GetProjectGitHubConfig(r.Context(), projectID); err == nil && ghCfg.InstallationID != 0 {
+			if ghCfg.GitHubOwner == "" || strings.EqualFold(ghCfg.GitHubOwner, pkg.GitHubOwner) {
+				installationID = ghCfg.InstallationID
+			}
+		}
+	}
+	if installationID == 0 {
+		respondError(w, http.StatusBadRequest, "No project-linked GitHub App installation matches this repository owner")
+		return
+	}
+	branches, err := h.ghClient.ListBranches(r.Context(), installationID, pkg.GitHubOwner, pkg.GitHubRepo)
 	if err != nil {
 		log.Error().Err(err).Str("package_id", pkgID).Msg("Failed to list branches")
 		respondError(w, http.StatusBadGateway, "Failed to list branches from GitHub")
@@ -673,6 +689,7 @@ func (h *Handler) UserRepoAccess(w http.ResponseWriter, r *http.Request) {
 		Accessible           bool                  `json:"accessible"`
 		DefaultBranch        string                `json:"default_branch,omitempty"`
 		InstallationID       int64                 `json:"installation_id,omitempty"`
+		InstallationAccount  string                `json:"installation_account_login,omitempty"`
 		Error                string                `json:"error,omitempty"`
 		InstallURL           string                `json:"install_url,omitempty"`
 		NeedsLink            bool                  `json:"needs_link"`
@@ -710,6 +727,7 @@ func (h *Handler) UserRepoAccess(w http.ResponseWriter, r *http.Request) {
 			// Installation covers this repo — find its ID.
 			if inst, err := h.queries.GetInstallationByOwner(r.Context(), owner); err == nil && inst != nil {
 				resp.InstallationID = inst.InstallationID
+				resp.InstallationAccount = inst.AccountLogin
 			}
 		}
 		if !result.HasInstallation {
@@ -754,11 +772,12 @@ func (h *Handler) UserRepoAccess(w http.ResponseWriter, r *http.Request) {
 			accessible, defaultBranch, err := h.ghClient.UserCanAccessRepo(r.Context(), token, swampInst.InstallationID, owner, repo)
 			if err == nil && accessible {
 				respondJSON(w, http.StatusOK, response{
-					Linked:          true,
-					HasInstallation: true,
-					Accessible:      true,
-					DefaultBranch:   defaultBranch,
-					InstallationID:  swampInst.InstallationID,
+					Linked:              true,
+					HasInstallation:     true,
+					Accessible:          true,
+					DefaultBranch:       defaultBranch,
+					InstallationID:      swampInst.InstallationID,
+					InstallationAccount: swampInst.AccountLogin,
 				})
 				return
 			}
@@ -861,22 +880,31 @@ func (h *Handler) ListProjectInstallations(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	pkgsByInstall := make(map[int64][]packageInstallInfo)
+	ownerInstallCache := make(map[string]int64)
 	for _, pkg := range pkgs {
-		if pkg.InstallationID <= 0 {
+		if pkg.GitHubOwner == "" {
 			continue
 		}
-		pkgsByInstall[pkg.InstallationID] = append(pkgsByInstall[pkg.InstallationID], packageInstallInfo{
+		ownerKey := strings.ToLower(pkg.GitHubOwner)
+		instID, ok := ownerInstallCache[ownerKey]
+		if !ok {
+			if inst, err := h.queries.GetProjectInstallationByOwner(r.Context(), projectID, pkg.GitHubOwner); err == nil {
+				instID = inst.InstallationID
+				if _, known := installMap[instID]; !known {
+					installMap[instID] = *inst
+				}
+			}
+			ownerInstallCache[ownerKey] = instID
+		}
+		if instID <= 0 {
+			continue
+		}
+		pkgsByInstall[instID] = append(pkgsByInstall[instID], packageInstallInfo{
 			ID:          pkg.ID,
 			Name:        pkg.Name,
 			GitHubOwner: pkg.GitHubOwner,
 			GitHubRepo:  pkg.GitHubRepo,
 		})
-		if _, ok := installMap[pkg.InstallationID]; !ok {
-			inst, err := h.queries.GetInstallationByID(r.Context(), pkg.InstallationID)
-			if err == nil {
-				installMap[pkg.InstallationID] = *inst
-			}
-		}
 	}
 
 	// Build the combined response slice.
@@ -1320,7 +1348,7 @@ func (h *Handler) triggerWebhookAnalysis(ctx context.Context, ghCfg *models.Proj
 	githubConfigured := 0
 	for _, p := range packages {
 		packageMeta = append(packageMeta, p.Name+"("+p.GitBranch+")")
-		if p.InstallationID != 0 && p.GitHubOwner != "" && p.GitHubRepo != "" {
+		if p.GitHubOwner != "" && p.GitHubRepo != "" {
 			githubConfigured++
 		}
 	}

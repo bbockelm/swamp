@@ -6,6 +6,8 @@ import (
 	"os"
 	"strings"
 
+	"github.com/rs/zerolog/log"
+
 	"github.com/bbockelm/swamp/internal/agent"
 	"github.com/bbockelm/swamp/internal/backup"
 	"github.com/bbockelm/swamp/internal/config"
@@ -188,7 +190,10 @@ func (h *Handler) DashboardStats(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Include aggregated token usage in the dashboard stats.
-	usage, _ := h.queries.GetAggregatedTokenUsage(r.Context(), user.ID, isAdmin)
+	usage, err := h.queries.GetAggregatedTokenUsage(r.Context(), user.ID, isAdmin)
+	if err != nil {
+		log.Error().Err(err).Str("user_id", user.ID).Bool("is_admin", isAdmin).Msg("Failed to aggregate dashboard token usage")
+	}
 	if usage == nil {
 		usage = []db.AggregatedTokenUsage{}
 	}

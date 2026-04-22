@@ -688,7 +688,7 @@ func (wh *WorkerHandler) trackSARIFUploadAttempt(ctx context.Context, analysis *
 		}
 	}
 
-	if pkg != nil && pkg.SARIFUploadEnabled && pkg.GitHubOwner != "" && pkg.GitHubRepo != "" && pkg.InstallationID != 0 {
+	if pkg != nil && pkg.SARIFUploadEnabled && pkg.GitHubOwner != "" && pkg.GitHubRepo != "" {
 		attempted = true
 		log.Info().
 			Str("analysis_id", analysis.ID).

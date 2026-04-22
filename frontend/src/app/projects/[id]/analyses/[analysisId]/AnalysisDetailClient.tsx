@@ -69,6 +69,19 @@ export default function AnalysisDetailClient() {
     },
   });
 
+  const { data: projectInstallations } = useQuery({
+    queryKey: ["project-github-installations", projectId],
+    queryFn: async () => {
+      try {
+        const resp = await api.github.listProjectInstallations(projectId);
+        return resp.installations ?? [];
+      } catch {
+        // Non-admin users may not be able to list project installations.
+        return [];
+      }
+    },
+  });
+
   const canEdit = project?.my_role === 'write' || project?.my_role === 'admin';
 
   const { data: analysis, isLoading } = useQuery({
@@ -165,7 +178,61 @@ export default function AnalysisDetailClient() {
   const providerLabel = typeof analysis.agent_config?.provider_label === "string"
     ? analysis.agent_config.provider_label
     : "";
-  const hasGitHubInstallation = (githubConfig?.installation_id ?? 0) > 0;
+  const installationDisplayByID = new Map<number, string>();
+  const installationIDByOwner = new Map<string, number>();
+  for (const inst of projectInstallations ?? []) {
+    installationDisplayByID.set(
+      inst.installation_id,
+      `${inst.account_login} (#${inst.installation_id})`,
+    );
+    if (inst.account_login) {
+      installationIDByOwner.set(String(inst.account_login).toLowerCase(), inst.installation_id);
+    }
+  }
+  const displayInstallation = (installationID: number) =>
+    installationDisplayByID.get(installationID) ?? `Installation #${installationID}`;
+
+  const packageRetryTargets = (analysis.packages ?? [])
+    .map((pkg) => {
+      const owner = pkg.github_owner ?? "";
+      const installationID = owner ? (installationIDByOwner.get(owner.toLowerCase()) ?? 0) : 0;
+      return { pkg, installationID };
+    })
+    .filter(
+      ({ pkg, installationID }) =>
+        installationID > 0 &&
+        !!pkg.github_owner &&
+        !!pkg.github_repo &&
+        !!pkg.sarif_upload_enabled,
+    );
+  const hasPackageRetryTarget = packageRetryTargets.length > 0;
+  const hasProjectRetryTarget =
+    (githubConfig?.sarif_upload_enabled ?? false) &&
+    (githubConfig?.installation_id ?? 0) > 0;
+  const hasGitHubInstallation = hasPackageRetryTarget || hasProjectRetryTarget;
+
+  const retryTargets: Array<{ source: string; installation: string; detail: string }> = [];
+  for (const target of packageRetryTargets) {
+    retryTargets.push({
+      source: "Package",
+      installation: displayInstallation(target.installationID),
+      detail:
+        target.pkg.github_owner && target.pkg.github_repo
+          ? `${target.pkg.github_owner}/${target.pkg.github_repo}`
+          : target.pkg.name,
+    });
+  }
+  if (hasProjectRetryTarget) {
+    retryTargets.push({
+      source: "Project",
+      installation: displayInstallation(githubConfig?.installation_id ?? 0),
+      detail:
+        githubConfig?.github_owner && githubConfig?.github_repo
+          ? `${githubConfig.github_owner}/${githubConfig.github_repo}`
+          : project?.name ?? "Project-level upload",
+    });
+  }
+
   const hasSarifUploadActivity =
     sarifUploadSummary.attempted > 0 ||
     sarifUploadSummary.uploaded > 0 ||
@@ -565,6 +632,7 @@ export default function AnalysisDetailClient() {
           projectId={projectId}
           analysisId={analysisId}
           canRetry={hasGitHubInstallation}
+          retryTargets={retryTargets}
         />
       )}
 
@@ -656,12 +724,14 @@ function SARIFUploadSummaryCard({
   projectId,
   analysisId,
   canRetry,
+  retryTargets,
 }: {
   summary: ReturnType<typeof summarizeSARIFUploads>;
   fallbackURL?: string;
   projectId: string;
   analysisId: string;
   canRetry: boolean;
+  retryTargets: Array<{ source: string; installation: string; detail: string }>;
 }) {
   const alertsURL = summary.alertsURL || fallbackURL || "";
   const queryClient = useQueryClient();
@@ -732,9 +802,34 @@ function SARIFUploadSummaryCard({
       <p className="text-xs text-gray-500 mt-3">
         Per-file status and concrete upload errors are available in the findings table.
       </p>
+      {retryTargets.length > 0 && (
+        <div className="mt-3 border rounded bg-white overflow-hidden">
+          <div className="px-3 py-2 border-b bg-gray-50 text-xs font-semibold text-gray-700 uppercase tracking-wide">
+            Retry Upload Targets
+          </div>
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-xs text-gray-500 uppercase border-b">
+                <th className="text-left py-1.5 px-3">Source</th>
+                <th className="text-left py-1.5 px-3">Installation</th>
+                <th className="text-left py-1.5 px-3">Repository</th>
+              </tr>
+            </thead>
+            <tbody>
+              {retryTargets.map((t, i) => (
+                <tr key={`${t.source}:${t.installation}:${t.detail}:${i}`} className="border-b border-gray-100 last:border-b-0">
+                  <td className="py-1.5 px-3 text-xs text-gray-600">{t.source}</td>
+                  <td className="py-1.5 px-3 text-xs font-medium text-gray-800">{t.installation}</td>
+                  <td className="py-1.5 px-3 text-xs text-gray-600">{t.detail}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
       {!canRetry && (
         <p className="text-xs text-amber-700 mt-2">
-          Retry is unavailable because this project currently has no GitHub app installation configured.
+          Retry is unavailable because no package or project-level GitHub SARIF upload target is currently configured.
         </p>
       )}
       {retryMutation.isError && (

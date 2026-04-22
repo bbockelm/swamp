@@ -84,9 +84,9 @@ type Client struct {
 	tokens map[int64]*cachedToken
 
 	// Cached app metadata from GET /app.
-	appSlug    string // e.g. "my-swamp-app"
-	appHTMLURL string // e.g. "https://github.com/apps/my-swamp-app"
-	appInfoErr error
+	appSlug     string // e.g. "my-swamp-app"
+	appHTMLURL  string // e.g. "https://github.com/apps/my-swamp-app"
+	appInfoErr  error
 	appInfoOnce sync.Once
 }
 
@@ -550,8 +550,24 @@ func (c *Client) CloneCredential(ctx context.Context, projectID string) (*models
 	}, nil
 }
 
+func (c *Client) resolveProjectInstallationForPackage(ctx context.Context, pkg *models.SoftwarePackage, owner string) (int64, string) {
+	if pkg == nil || owner == "" {
+		return 0, "none"
+	}
+	if inst, err := c.queries.GetProjectInstallationByOwner(ctx, pkg.ProjectID, owner); err == nil {
+		return inst.InstallationID, "project_link"
+	}
+	if ghCfg, err := c.queries.GetProjectGitHubConfig(ctx, pkg.ProjectID); err == nil && ghCfg.InstallationID != 0 {
+		if ghCfg.GitHubOwner == "" || strings.EqualFold(ghCfg.GitHubOwner, owner) {
+			return ghCfg.InstallationID, "project_config"
+		}
+	}
+	return 0, "none"
+}
+
 // CloneCredentialForPackage returns a clone credential using a package's
-// own GitHub config fields. Falls back to project-level config.
+// own GitHub config fields and project-level installation links.
+// Falls back to project-level GitHub config.
 func (c *Client) CloneCredentialForPackage(ctx context.Context, pkg *models.SoftwarePackage) (*models.GitCloneCredential, error) {
 	if c == nil || !c.Configured() {
 		if pkg != nil {
@@ -570,16 +586,9 @@ func (c *Client) CloneCredentialForPackage(ctx context.Context, pkg *models.Soft
 		ownerSource = "git_url"
 		owner, repo = parseGitHubRepo(pkg.GitURL)
 	}
-	installSource := "package"
-	installationID := pkg.InstallationID
-	if installationID == 0 && owner != "" {
-		installSource = "owner_lookup"
-		if inst, err := c.queries.GetInstallationByOwner(ctx, owner); err == nil {
-			installationID = inst.InstallationID
-		}
-	}
+	installationID, installSource := c.resolveProjectInstallationForPackage(ctx, pkg, owner)
 
-	// Use package-level GitHub config if present.
+	// Use package repo plus project-linked installation if present.
 	if owner != "" && repo != "" && installationID != 0 {
 		token, err := c.GetInstallationToken(ctx, installationID)
 		if err != nil {
@@ -600,15 +609,28 @@ func (c *Client) CloneCredentialForPackage(ctx context.Context, pkg *models.Soft
 			Branch:   pkg.GitBranch,
 		}, nil
 	}
-	// Fall back to project-level config.
+	if owner != "" && repo != "" {
+		log.Debug().
+			Str("package_id", pkg.ID).
+			Str("package", pkg.Name).
+			Str("owner", owner).
+			Str("repo", repo).
+			Str("owner_source", ownerSource).
+			Str("installation_source", installSource).
+			Msg("No project-linked installation found for package owner")
+		return nil, nil
+	}
+
+	// Fall back to project-level config only when package repo fields are unavailable.
 	log.Debug().
 		Str("package_id", pkg.ID).
 		Str("package", pkg.Name).
 		Str("owner", owner).
 		Str("repo", repo).
 		Str("owner_source", ownerSource).
+		Str("installation_source", installSource).
 		Int64("installation_id", installationID).
-		Msg("Package-level clone credential unavailable; trying project-level GitHub config")
+		Msg("Package clone credential unavailable from project links; trying project-level GitHub config")
 
 	cred, err := c.CloneCredential(ctx, pkg.ProjectID)
 	if err != nil {
@@ -652,21 +674,32 @@ func (c *Client) UploadSARIFForProject(ctx context.Context, projectID string, sa
 }
 
 // UploadSARIFForPackage uploads SARIF to GitHub Code Scanning using a
-// package's own GitHub config. Falls back to project-level config.
+// package's repo plus project-linked installation. Falls back to project-level config.
 func (c *Client) UploadSARIFForPackage(ctx context.Context, pkg *models.SoftwarePackage, sarifData []byte) (string, error) {
 	if c == nil || !c.Configured() {
 		return "", nil
 	}
-	// Use package-level GitHub config if present.
-	if pkg.GitHubOwner != "" && pkg.GitHubRepo != "" && pkg.InstallationID != 0 && pkg.SARIFUploadEnabled {
+	if !pkg.SARIFUploadEnabled {
+		return "", nil
+	}
+	owner := pkg.GitHubOwner
+	repo := pkg.GitHubRepo
+	if owner == "" || repo == "" {
+		owner, repo = parseGitHubRepo(pkg.GitURL)
+	}
+	installationID, _ := c.resolveProjectInstallationForPackage(ctx, pkg, owner)
+	if owner != "" && repo != "" && installationID != 0 {
 		commitSHA := extractCommitSHA(sarifData)
 		if commitSHA == "" {
 			commitSHA = "HEAD"
 		}
-		return c.UploadSARIF(ctx, pkg.InstallationID, pkg.GitHubOwner, pkg.GitHubRepo,
+		return c.UploadSARIF(ctx, installationID, owner, repo,
 			commitSHA, pkg.GitBranch, sarifData)
 	}
-	// Fall back to project-level.
+	if owner != "" && repo != "" {
+		return "", fmt.Errorf("no project-linked GitHub App installation found for owner %q", owner)
+	}
+	// Fall back to project-level only when package repo fields are unavailable.
 	return c.UploadSARIFForProject(ctx, pkg.ProjectID, sarifData)
 }
 
@@ -905,7 +938,7 @@ func (c *Client) GetUser(ctx context.Context, accessToken string) (*GitHubUser, 
 
 // UserInstallation represents a GitHub App installation visible to a user.
 type UserInstallation struct {
-	ID      int64  `json:"id"`
+	ID      int64 `json:"id"`
 	Account struct {
 		Login string `json:"login"`
 		Type  string `json:"type"`

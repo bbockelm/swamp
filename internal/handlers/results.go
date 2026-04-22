@@ -144,11 +144,11 @@ func (h *Handler) RetrySARIFUpload(w http.ResponseWriter, r *http.Request) {
 	}
 
 	type resultStatus struct {
-		ResultID  string `json:"result_id"`
-		Filename  string `json:"filename"`
-		Uploaded  bool   `json:"uploaded"`
-		URL       string `json:"url,omitempty"`
-		Error     string `json:"error,omitempty"`
+		ResultID string `json:"result_id"`
+		Filename string `json:"filename"`
+		Uploaded bool   `json:"uploaded"`
+		URL      string `json:"url,omitempty"`
+		Error    string `json:"error,omitempty"`
 	}
 
 	var uploaded, attempted int
@@ -208,7 +208,7 @@ func (h *Handler) RetrySARIFUpload(w http.ResponseWriter, r *http.Request) {
 		}
 
 		var uploadURL, uploadErr string
-		if pkg != nil && pkg.SARIFUploadEnabled && pkg.GitHubOwner != "" && pkg.GitHubRepo != "" && pkg.InstallationID != 0 {
+		if pkg != nil && pkg.SARIFUploadEnabled && pkg.GitHubOwner != "" && pkg.GitHubRepo != "" {
 			url, err := h.ghClient.UploadSARIFForPackage(r.Context(), pkg, plaintext)
 			if err != nil {
 				uploadErr = err.Error()

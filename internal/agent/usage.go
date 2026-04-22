@@ -112,7 +112,7 @@ func parseOpenCodeStepFinishUsage(raw map[string]json.RawMessage, totals map[str
 				Write int64 `json:"write"`
 			} `json:"cache"`
 		} `json:"tokens"`
-		Cost    float64 `json:"cost"`
+		Cost float64 `json:"cost"`
 	}
 	if err := json.Unmarshal(raw["part"], &part); err != nil || part.Tokens == nil {
 		return
@@ -144,13 +144,8 @@ func ApplyAnalysisTokenUsageIdentity(usages []models.TokenUsage, analysis *model
 	if len(analysis.AgentConfig) > 0 {
 		var cfg map[string]any
 		if err := json.Unmarshal(analysis.AgentConfig, &cfg); err == nil {
-			if s, ok := cfg["provider_label"].(string); ok {
+			if s, ok := cfg["llm_provider_id"].(string); ok {
 				provider = strings.TrimSpace(s)
-			}
-			if provider == "" {
-				if s, ok := cfg["llm_provider_id"].(string); ok {
-					provider = strings.TrimSpace(s)
-				}
 			}
 		}
 	}

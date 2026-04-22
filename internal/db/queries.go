@@ -2564,6 +2564,26 @@ func (q *Queries) GetInstallationByOwner(ctx context.Context, owner string) (*mo
 	return &i, nil
 }
 
+// GetProjectInstallationByOwner looks up a GitHub installation linked to a
+// project whose account_login matches the given owner (case-insensitive).
+func (q *Queries) GetProjectInstallationByOwner(ctx context.Context, projectID, owner string) (*models.GitHubAppInstallation, error) {
+	var i models.GitHubAppInstallation
+	err := q.pool.QueryRow(ctx,
+		`SELECT gi.id, gi.installation_id, gi.account_login, gi.account_type,
+		        gi.permissions, gi.installed_by_user_id, gi.created_at, gi.updated_at
+		 FROM project_github_installations pgi
+		 JOIN github_app_installations gi ON gi.installation_id = pgi.installation_id
+		 WHERE pgi.project_id = $1 AND lower(gi.account_login) = lower($2)
+		 ORDER BY pgi.enabled_at DESC
+		 LIMIT 1`, projectID, owner).
+		Scan(&i.ID, &i.InstallationID, &i.AccountLogin, &i.AccountType,
+			&i.Permissions, &i.InstalledByUserID, &i.CreatedAt, &i.UpdatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return &i, nil
+}
+
 // ListInstallationsForUser returns installations visible to a non-admin user:
 // installations they created, or installations linked to projects they admin.
 func (q *Queries) ListInstallationsForUser(ctx context.Context, userID string) ([]models.GitHubAppInstallation, error) {
@@ -2586,15 +2606,6 @@ func (q *Queries) ListInstallationsForUser(ctx context.Context, userID string) (
 		        SELECT pgc.installation_id FROM project_github_config pgc
 		        JOIN projects p ON p.id = pgc.project_id
 		        WHERE pgc.installation_id != 0
-		          AND (p.owner_id = $1
-		               OR EXISTS (SELECT 1 FROM group_members gm
-		                          WHERE gm.group_id = p.admin_group_id AND gm.user_id = $1))
-		    )
-		    OR gi.installation_id IN (
-		        -- installations used by packages in projects the user owns or admins
-		        SELECT sp.installation_id FROM software_packages sp
-		        JOIN projects p ON p.id = sp.project_id
-		        WHERE sp.installation_id != 0
 		          AND (p.owner_id = $1
 		               OR EXISTS (SELECT 1 FROM group_members gm
 		                          WHERE gm.group_id = p.admin_group_id AND gm.user_id = $1))
@@ -2883,22 +2894,25 @@ func (q *Queries) GetAggregatedTokenUsage(ctx context.Context, userID string, is
 			SELECT COALESCE(
 			       NULLIF(
 			         CASE
-			           WHEN u.provider = 'env-anthropic' THEN 'Anthropic (env)'
-			           WHEN u.provider = 'env-external' THEN 'External LLM (env)'
-			           WHEN u.provider != '' THEN COALESCE(gl_u.label, pk_u.label, u.provider)
+			           WHEN u.provider = 'env-anthropic' THEN 'anthropic'
+			           WHEN u.provider = 'env-external' THEN 'external'
+			           WHEN gl_u.id IS NOT NULL THEN gl_u.api_schema
+			           WHEN pk_u.id IS NOT NULL THEN pk_u.provider
 			           ELSE ''
 			         END,
 			         ''
 			       ),
-			       NULLIF(a.agent_config->>'provider_label', ''),
 			       NULLIF(
 			         CASE
-			           WHEN a.agent_config->>'provider_source' = 'env' AND a.agent_config->>'llm_provider_id' = 'env-anthropic' THEN 'Anthropic (env)'
-			           WHEN a.agent_config->>'provider_source' = 'env' AND a.agent_config->>'llm_provider_id' = 'env-external' THEN 'External LLM (env)'
-			           ELSE COALESCE(gl_cfg.label, pk_cfg.label, '')
+			           WHEN a.agent_config->>'provider_source' = 'env' AND a.agent_config->>'llm_provider_id' = 'env-anthropic' THEN 'anthropic'
+			           WHEN a.agent_config->>'provider_source' = 'env' AND a.agent_config->>'llm_provider_id' = 'env-external' THEN 'external'
+			           WHEN gl_cfg.id IS NOT NULL THEN gl_cfg.api_schema
+			           WHEN pk_cfg.id IS NOT NULL THEN pk_cfg.provider
+			           ELSE ''
 			         END,
 			         ''
 			       ),
+			       NULLIF(u.provider, ''),
 			       'unknown'
 			     ) AS provider,
 			       u.model,
@@ -2908,33 +2922,36 @@ func (q *Queries) GetAggregatedTokenUsage(ctx context.Context, userID string, is
 			       SUM(u.cost_usd)
 			FROM analysis_token_usage u
 			JOIN analyses a ON a.id = u.analysis_id
-			LEFT JOIN llm_providers gl_u ON gl_u.id = u.provider
-			LEFT JOIN project_provider_keys pk_u ON pk_u.id = u.provider AND pk_u.project_id = a.project_id
-			LEFT JOIN llm_providers gl_cfg ON gl_cfg.id = a.agent_config->>'llm_provider_id'
-			LEFT JOIN project_provider_keys pk_cfg ON pk_cfg.id = a.agent_config->>'llm_provider_id' AND pk_cfg.project_id = a.project_id
-			GROUP BY provider, u.model
+			LEFT JOIN llm_providers gl_u ON gl_u.id::text = u.provider
+			LEFT JOIN project_provider_keys pk_u ON pk_u.id::text = u.provider AND pk_u.project_id = a.project_id
+			LEFT JOIN llm_providers gl_cfg ON gl_cfg.id::text = a.agent_config->>'llm_provider_id'
+			LEFT JOIN project_provider_keys pk_cfg ON pk_cfg.id::text = a.agent_config->>'llm_provider_id' AND pk_cfg.project_id = a.project_id
+			GROUP BY 1, 2
 			ORDER BY SUM(u.input_tokens) + SUM(u.output_tokens) DESC`
 	} else {
 		query = `
 			SELECT COALESCE(
 			       NULLIF(
 			         CASE
-			           WHEN u.provider = 'env-anthropic' THEN 'Anthropic (env)'
-			           WHEN u.provider = 'env-external' THEN 'External LLM (env)'
-			           WHEN u.provider != '' THEN COALESCE(gl_u.label, pk_u.label, u.provider)
+			           WHEN u.provider = 'env-anthropic' THEN 'anthropic'
+			           WHEN u.provider = 'env-external' THEN 'external'
+			           WHEN gl_u.id IS NOT NULL THEN gl_u.api_schema
+			           WHEN pk_u.id IS NOT NULL THEN pk_u.provider
 			           ELSE ''
 			         END,
 			         ''
 			       ),
-			       NULLIF(a.agent_config->>'provider_label', ''),
 			       NULLIF(
 			         CASE
-			           WHEN a.agent_config->>'provider_source' = 'env' AND a.agent_config->>'llm_provider_id' = 'env-anthropic' THEN 'Anthropic (env)'
-			           WHEN a.agent_config->>'provider_source' = 'env' AND a.agent_config->>'llm_provider_id' = 'env-external' THEN 'External LLM (env)'
-			           ELSE COALESCE(gl_cfg.label, pk_cfg.label, '')
+			           WHEN a.agent_config->>'provider_source' = 'env' AND a.agent_config->>'llm_provider_id' = 'env-anthropic' THEN 'anthropic'
+			           WHEN a.agent_config->>'provider_source' = 'env' AND a.agent_config->>'llm_provider_id' = 'env-external' THEN 'external'
+			           WHEN gl_cfg.id IS NOT NULL THEN gl_cfg.api_schema
+			           WHEN pk_cfg.id IS NOT NULL THEN pk_cfg.provider
+			           ELSE ''
 			         END,
 			         ''
 			       ),
+			       NULLIF(u.provider, ''),
 			       'unknown'
 			     ) AS provider,
 			       u.model,
@@ -2945,17 +2962,17 @@ func (q *Queries) GetAggregatedTokenUsage(ctx context.Context, userID string, is
 			FROM analysis_token_usage u
 			JOIN analyses a ON a.id = u.analysis_id
 			JOIN projects p ON p.id = a.project_id
-			LEFT JOIN llm_providers gl_u ON gl_u.id = u.provider
-			LEFT JOIN project_provider_keys pk_u ON pk_u.id = u.provider AND pk_u.project_id = a.project_id
-			LEFT JOIN llm_providers gl_cfg ON gl_cfg.id = a.agent_config->>'llm_provider_id'
-			LEFT JOIN project_provider_keys pk_cfg ON pk_cfg.id = a.agent_config->>'llm_provider_id' AND pk_cfg.project_id = a.project_id
+			LEFT JOIN llm_providers gl_u ON gl_u.id::text = u.provider
+			LEFT JOIN project_provider_keys pk_u ON pk_u.id::text = u.provider AND pk_u.project_id = a.project_id
+			LEFT JOIN llm_providers gl_cfg ON gl_cfg.id::text = a.agent_config->>'llm_provider_id'
+			LEFT JOIN project_provider_keys pk_cfg ON pk_cfg.id::text = a.agent_config->>'llm_provider_id' AND pk_cfg.project_id = a.project_id
 			WHERE p.owner_id = $1
 			   OR EXISTS (
 			       SELECT 1 FROM group_members gm
 			       WHERE gm.user_id = $1
 			         AND (gm.group_id = p.read_group_id OR gm.group_id = p.write_group_id OR gm.group_id = p.admin_group_id)
 			   )
-			GROUP BY provider, u.model
+			GROUP BY 1, 2
 			ORDER BY SUM(u.input_tokens) + SUM(u.output_tokens) DESC`
 		args = append(args, userID)
 	}

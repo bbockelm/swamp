@@ -172,7 +172,7 @@ func (h *Handler) CreateAnalysis(w http.ResponseWriter, r *http.Request) {
 	githubConfigured := 0
 	packageMeta := make([]string, 0, len(selectedPackages))
 	for _, p := range selectedPackages {
-		if p.InstallationID != 0 && p.GitHubOwner != "" && p.GitHubRepo != "" {
+		if p.GitHubOwner != "" && p.GitHubRepo != "" {
 			githubConfigured++
 		}
 		packageMeta = append(packageMeta, p.Name+"("+p.GitBranch+")")

@@ -20,6 +20,7 @@ import { AnalysisStatus } from "@/components/AnalysisStatus";
 import { Pagination, paginate } from "@/components/Pagination";
 import { SARIFViewer } from "@/components/SARIFViewer";
 import { MarkdownReport } from "@/components/MarkdownReport";
+import { ProjectGitHubTab } from "@/components/ProjectGitHubTab";
 import { GitBranchInput, type GitBranchInputHandle } from "@/components/GitBranchInput";
 import { FindingsTable } from "@/components/FindingsTable";
 import { StreamLine, extractStreamMessage, streamDisplayLines } from "@/lib/stream-utils";
@@ -521,7 +522,7 @@ function ProjectCard({
             {tab === "packages" && <PackagesTab projectId={project.id} />}
             {tab === "analyses" && <AnalysesTab projectId={project.id} />}
             {tab === "findings" && <FindingsTabInline projectId={project.id} canEdit={canEdit} />}
-            {tab === "github" && canEdit && <GitHubTabInline projectId={project.id} />}
+            {tab === "github" && canEdit && <ProjectGitHubTab projectId={project.id} canManageInstallations={isProjectAdmin} />}
             {tab === "api-keys" && isProjectAdmin && <ProviderKeysTab projectId={project.id} />}
             {tab === "settings" && canEdit && (
               <SettingsTab
@@ -555,6 +556,8 @@ function PackagesTab({ projectId }: { projectId: string }) {
   const [accessInstallURL, setAccessInstallURL] = useState<string | null>(null);
   const [needsGitHubLink, setNeedsGitHubLink] = useState(false);
   const [linkingGitHub, setLinkingGitHub] = useState(false);
+  const [linkToProjectInstallationID, setLinkToProjectInstallationID] = useState<number | null>(null);
+  const [linkToProjectError, setLinkToProjectError] = useState<string | null>(null);
 
   // Parse owner/repo from current gitUrl for warning messages.
   const parsedGitHub = useMemo(() => {
@@ -562,49 +565,136 @@ function PackagesTab({ projectId }: { projectId: string }) {
     return m ? { owner: m[1], repo: m[2] } : null;
   }, [gitUrl]);
 
+  const { data: projectInstallations } = useQuery({
+    queryKey: ["project-github-installations", projectId],
+    queryFn: async () => {
+      try {
+        const resp = await api.github.listProjectInstallations(projectId);
+        return resp.installations ?? [];
+      } catch {
+        return [];
+      }
+    },
+  });
+  const linkedProjectInstallationIDs = useMemo(
+    () =>
+      new Set(
+        (projectInstallations ?? [])
+          .filter((inst) => !!inst.linked_to_project)
+          .map((inst) => inst.installation_id),
+      ),
+    [projectInstallations],
+  );
+
+  const formatInstallationRef = useCallback(
+    (
+      installationID: number,
+      fallbackAccount: string,
+      access?: {
+        installation_account_login?: string;
+        matched_installations?: Array<{ installation_id: number; account_login: string }>;
+      },
+    ) => {
+      const account =
+        access?.installation_account_login ||
+        access?.matched_installations?.find((inst) => inst.installation_id === installationID)?.account_login ||
+        fallbackAccount;
+      return `${account} (${installationID})`;
+    },
+    [],
+  );
+
+  const setConnectedRepoMessage = useCallback((owner: string, repo: string) => {
+    setInstallationSuccess(
+      `Connected to ${owner}/${repo} via GitHub App install — results will be uploaded to GitHub Code Scanning.`,
+    );
+  }, []);
+
+  const linkProjectInstallationMutation = useMutation({
+    mutationFn: (installationId: number) => api.github.addProjectInstallation(projectId, installationId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["project-github-installations", projectId] });
+      setLinkToProjectError(null);
+      setLinkToProjectInstallationID(null);
+      if (parsedGitHub && sarifUploadEnabled) {
+        setInstallationWarning(null);
+        setConnectedRepoMessage(parsedGitHub.owner, parsedGitHub.repo);
+      }
+    },
+    onError: (error: unknown) => {
+      setLinkToProjectError(error instanceof Error ? error.message : "Failed to link GitHub App install to project.");
+    },
+  });
+
   const handleBranchDetection = useCallback((result: { ok: boolean; error?: string }) => {
     if (result.ok) {
       setBranchError(null);
       setNeedsGitHubLink(false);
+      setLinkToProjectInstallationID(null);
+      setLinkToProjectError(null);
       return;
     }
     if (parsedGitHub) {
       api.github.userRepoAccess(parsedGitHub.owner, parsedGitHub.repo).then((access) => {
         if (access.accessible) {
+          const installationID = access.installation_id ?? 0;
+          if (installationID > 0 && !linkedProjectInstallationIDs.has(installationID)) {
+            setLinkToProjectInstallationID(installationID);
+            setLinkToProjectError(null);
+            setInstallationWarning(
+              `GitHub App install ${formatInstallationRef(installationID, parsedGitHub.owner, access)} can access ${parsedGitHub.owner}/${parsedGitHub.repo}. Click \"Link to project\" to enable package access in this project.`,
+            );
+            setInstallationSuccess(null);
+          } else {
+            setLinkToProjectInstallationID(null);
+          }
           setBranchError(result.error ?? 'Could not detect branches.');
         } else if (access.needs_link && !access.has_installation) {
           setBranchError('Could not access this repository — link your GitHub account to check access.');
           setNeedsGitHubLink(true);
           setAccessInstallURL(null);
+          setLinkToProjectInstallationID(null);
         } else if (!access.has_installation) {
           setBranchError('Could not access this repository — it may be private.');
           setAccessInstallURL(access.install_url ?? null);
           setNeedsGitHubLink(false);
+          setLinkToProjectInstallationID(null);
         } else {
           setBranchError(access.error ?? 'GitHub App does not have access to this repository.');
           setAccessInstallURL(null);
           setNeedsGitHubLink(false);
+          setLinkToProjectInstallationID(null);
         }
       }).catch(() => {
+        setLinkToProjectInstallationID(null);
         setBranchError(result.error ?? 'Could not detect branches.');
       });
     } else {
+      setLinkToProjectInstallationID(null);
       setBranchError(result.error ?? 'Could not detect branches.');
     }
-  }, [parsedGitHub]);
+  }, [formatInstallationRef, linkedProjectInstallationIDs, parsedGitHub]);
 
   const handleSarifToggle = useCallback(async (checked: boolean) => {
     setSarifUploadEnabled(checked);
     setInstallationWarning(null);
     setInstallationSuccess(null);
     setAccessInstallURL(null);
+    setLinkToProjectInstallationID(null);
+    setLinkToProjectError(null);
     if (!checked || !parsedGitHub) return;
     try {
       const access = await api.github.userRepoAccess(parsedGitHub.owner, parsedGitHub.repo);
       if (access.accessible) {
-        setInstallationSuccess(
-          `Connected to ${parsedGitHub.owner}/${parsedGitHub.repo} — results will be uploaded to GitHub Code Scanning.`
-        );
+        const installationID = access.installation_id ?? 0;
+        if (installationID > 0 && !linkedProjectInstallationIDs.has(installationID)) {
+          setLinkToProjectInstallationID(installationID);
+          setInstallationWarning(
+            `GitHub App install ${formatInstallationRef(installationID, parsedGitHub.owner, access)} can access ${parsedGitHub.owner}/${parsedGitHub.repo}. Click \"Link to project\" to enable package access in this project.`,
+          );
+        } else {
+          setConnectedRepoMessage(parsedGitHub.owner, parsedGitHub.repo);
+        }
       } else if (!access.has_installation) {
         setInstallationWarning(
           `No GitHub App installation found for "${parsedGitHub.owner}". Results won't be uploaded until the app is installed.`
@@ -621,7 +711,7 @@ function PackagesTab({ projectId }: { projectId: string }) {
     } catch {
       // If the probe fails, don't block — the user can still enable it.
     }
-  }, [parsedGitHub]);
+  }, [formatInstallationRef, linkedProjectInstallationIDs, parsedGitHub, setConnectedRepoMessage]);
 
   // Re-check repo access when the user returns from the GitHub App install page.
   const branchInputRef = useRef<GitBranchInputHandle>(null);
@@ -632,15 +722,26 @@ function PackagesTab({ projectId }: { projectId: string }) {
       api.github.userRepoAccess(parsedGitHub.owner, parsedGitHub.repo).then((access) => {
         if (access.accessible) {
           setBranchError(null);
-          setInstallationWarning(null);
+          const installationID = access.installation_id ?? 0;
+          if (installationID > 0 && !linkedProjectInstallationIDs.has(installationID)) {
+            setInstallationWarning(
+              `GitHub App install ${formatInstallationRef(installationID, parsedGitHub.owner, access)} can access ${parsedGitHub.owner}/${parsedGitHub.repo}. Click \"Link to project\" to enable package access in this project.`,
+            );
+            setInstallationSuccess(null);
+            setLinkToProjectInstallationID(installationID);
+          } else {
+            setInstallationWarning(null);
+            setLinkToProjectInstallationID(null);
+          }
           setAccessInstallURL(null);
           setNeedsGitHubLink(false);
           if (sarifUploadEnabled) {
-            setInstallationSuccess(`Connected to ${parsedGitHub.owner}/${parsedGitHub.repo} — results will be uploaded to GitHub Code Scanning.`);
+            setConnectedRepoMessage(parsedGitHub.owner, parsedGitHub.repo);
           }
           branchInputRef.current?.refetch();
         } else if (!access.needs_link) {
           setNeedsGitHubLink(false);
+          setLinkToProjectInstallationID(null);
         }
       }).catch(() => { /* ignore */ });
     };
@@ -661,7 +762,7 @@ function PackagesTab({ projectId }: { projectId: string }) {
       document.removeEventListener('visibilitychange', onVisible);
       window.removeEventListener('message', onMessage);
     };
-  }, [parsedGitHub, branchError, installationWarning]);
+  }, [formatInstallationRef, linkedProjectInstallationIDs, parsedGitHub, branchError, installationWarning, sarifUploadEnabled, setConnectedRepoMessage]);
 
   const { data: packages } = useQuery({
     queryKey: ["packages", projectId],
@@ -688,6 +789,8 @@ function PackagesTab({ projectId }: { projectId: string }) {
       setBranchError(null);
       setInstallationWarning(null);
       setInstallationSuccess(null);
+      setLinkToProjectInstallationID(null);
+      setLinkToProjectError(null);
     },
   });
 
@@ -723,13 +826,23 @@ function PackagesTab({ projectId }: { projectId: string }) {
     setBranchError(null);
     setInstallationWarning(null);
     setInstallationSuccess(null);
+    setLinkToProjectInstallationID(null);
+    setLinkToProjectError(null);
     // Auto-check access when editing a package with SARIF already enabled
     if (pkg.sarif_upload_enabled) {
       const m = pkg.git_url.match(/github\.com[/:]([^/]+)\/([^/.]+?)(?:\.git)?\/?$/i);
       if (m) {
         api.github.userRepoAccess(m[1], m[2]).then((access) => {
           if (access.accessible && access.has_installation) {
-            setInstallationSuccess(`Connected to ${m[1]}/${m[2]} — results will be uploaded to GitHub Code Scanning.`);
+            const installationID = access.installation_id ?? 0;
+            if (installationID > 0 && !linkedProjectInstallationIDs.has(installationID)) {
+              setLinkToProjectInstallationID(installationID);
+              setInstallationWarning(
+                `GitHub App install ${formatInstallationRef(installationID, m[1], access)} can access ${m[1]}/${m[2]}. Click \"Link to project\" to enable package access in this project.`,
+              );
+            } else {
+              setConnectedRepoMessage(m[1], m[2]);
+            }
           }
         }).catch(() => { /* ignore */ });
       }
@@ -746,6 +859,8 @@ function PackagesTab({ projectId }: { projectId: string }) {
     setBranchError(null);
     setInstallationWarning(null);
     setInstallationSuccess(null);
+    setLinkToProjectInstallationID(null);
+    setLinkToProjectError(null);
   };
 
   const handleGitHubLink = async () => {
@@ -770,6 +885,8 @@ function PackagesTab({ projectId }: { projectId: string }) {
             setEditingId(null);
             setBranchError(null);
             setInstallationWarning(null);
+            setLinkToProjectInstallationID(null);
+            setLinkToProjectError(null);
             if (!adding) {
               setName("");
               setGitUrl("");
@@ -832,7 +949,25 @@ function PackagesTab({ projectId }: { projectId: string }) {
                     on <strong>{parsedGitHub.owner}</strong> to grant access.
                   </>
                 )}
+                {linkToProjectInstallationID && (
+                  <>{' '}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setLinkToProjectError(null);
+                        linkProjectInstallationMutation.mutate(linkToProjectInstallationID);
+                      }}
+                      disabled={linkProjectInstallationMutation.isPending}
+                      className="underline text-brand-600 hover:text-brand-700"
+                    >
+                      {linkProjectInstallationMutation.isPending ? 'Linking to project...' : 'Link to project'}
+                    </button>
+                  </>
+                )}
               </p>
+            )}
+            {linkToProjectError && (
+              <p className="text-xs text-red-600 mt-1">{linkToProjectError}</p>
             )}
           </div>
           <div className="grid grid-cols-2 gap-3">
@@ -902,7 +1037,25 @@ function PackagesTab({ projectId }: { projectId: string }) {
                     to enable uploads.
                   </>
                 )}
+                {linkToProjectInstallationID && (
+                  <>{' '}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setLinkToProjectError(null);
+                        linkProjectInstallationMutation.mutate(linkToProjectInstallationID);
+                      }}
+                      disabled={linkProjectInstallationMutation.isPending}
+                      className="underline text-brand-600 hover:text-brand-700"
+                    >
+                      {linkProjectInstallationMutation.isPending ? 'Linking to project...' : 'Link to project'}
+                    </button>
+                  </>
+                )}
               </p>
+            )}
+            {linkToProjectError && (
+              <p className="text-xs text-red-600 mt-1">{linkToProjectError}</p>
             )}
             {!installationWarning && installationSuccess && (
               <p className="text-xs text-green-600 mt-1 flex items-center gap-1">
@@ -976,7 +1129,25 @@ function PackagesTab({ projectId }: { projectId: string }) {
                           on <strong>{parsedGitHub.owner}</strong> to grant access.
                         </>
                       )}
+                      {linkToProjectInstallationID && (
+                        <>{' '}
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setLinkToProjectError(null);
+                              linkProjectInstallationMutation.mutate(linkToProjectInstallationID);
+                            }}
+                            disabled={linkProjectInstallationMutation.isPending}
+                            className="underline text-brand-600 hover:text-brand-700"
+                          >
+                            {linkProjectInstallationMutation.isPending ? 'Linking to project...' : 'Link to project'}
+                          </button>
+                        </>
+                      )}
                     </p>
+                  )}
+                  {linkToProjectError && (
+                    <p className="text-xs text-red-600 mt-1">{linkToProjectError}</p>
                   )}
                 </div>
                 <div className="grid grid-cols-2 gap-3">
@@ -1047,7 +1218,25 @@ function PackagesTab({ projectId }: { projectId: string }) {
                           to enable uploads.
                         </>
                       )}
+                      {linkToProjectInstallationID && (
+                        <>{' '}
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setLinkToProjectError(null);
+                              linkProjectInstallationMutation.mutate(linkToProjectInstallationID);
+                            }}
+                            disabled={linkProjectInstallationMutation.isPending}
+                            className="underline text-brand-600 hover:text-brand-700"
+                          >
+                            {linkProjectInstallationMutation.isPending ? 'Linking to project...' : 'Link to project'}
+                          </button>
+                        </>
+                      )}
                     </p>
+                  )}
+                  {linkToProjectError && (
+                    <p className="text-xs text-red-600 mt-1">{linkToProjectError}</p>
                   )}
                   {!installationWarning && installationSuccess && (
                     <p className="text-xs text-green-600 mt-1 flex items-center gap-1">
@@ -1090,14 +1279,8 @@ function PackagesTab({ projectId }: { projectId: string }) {
                   {pkg.github_owner && pkg.github_repo && (
                     <div className="text-xs text-gray-400 mt-0.5">
                       GitHub: {pkg.github_owner}/{pkg.github_repo}
-                      {pkg.installation_id > 0 && (
-                        <span className="text-green-600"> · App installed</span>
-                      )}
-                      {pkg.sarif_upload_enabled && pkg.installation_id > 0 && (
+                      {pkg.sarif_upload_enabled && (
                         <span className="text-green-600"> · Code Scanning enabled</span>
-                      )}
-                      {pkg.sarif_upload_enabled && !pkg.installation_id && (
-                        <span className="text-amber-500"> · SARIF upload (no App)</span>
                       )}
                     </div>
                   )}
@@ -2196,148 +2379,6 @@ function FindingsTabInline({
         gitUrl={gitUrl}
         canEdit={canEdit}
       />
-    </div>
-  );
-}
-
-function GitHubTabInline({ projectId }: { projectId: string }) {
-  const [linkingGitHub, setLinkingGitHub] = useState(false);
-  const queryClient = useQueryClient();
-
-  const { data: linkStatus } = useQuery({
-    queryKey: ['github-link-status'],
-    queryFn: () => api.github.getLinkStatus(),
-    staleTime: 30_000,
-  });
-
-  const { data: installations, isLoading } = useQuery({
-    queryKey: ['github-installations'],
-    queryFn: async () => {
-      const resp = await api.github.listInstallations();
-      return resp.installations ?? [];
-    },
-  });
-
-  const { data: appInfo } = useQuery({
-    queryKey: ['github-app-info'],
-    queryFn: () => api.github.appInfo(),
-    staleTime: 300_000,
-  });
-
-  const { data: githubConfig } = useQuery({
-    queryKey: ['project-github-config', projectId],
-    queryFn: async () => {
-      try { return await api.github.getConfig(projectId); } catch { return null; }
-    },
-  });
-
-  const { data: packages } = useQuery({
-    queryKey: ['packages', projectId],
-    queryFn: () => api.packages.list(projectId),
-  });
-
-  const activeInstallationId = githubConfig?.installation_id ?? 0;
-
-  useEffect(() => {
-    const handler = (e: MessageEvent) => {
-      if (e.origin === window.location.origin && e.data?.type === 'github-linked') {
-        setLinkingGitHub(false);
-        queryClient.invalidateQueries({ queryKey: ['github-link-status'] });
-        queryClient.invalidateQueries({ queryKey: ['github-installations'] });
-      }
-    };
-    window.addEventListener('message', handler);
-    return () => window.removeEventListener('message', handler);
-  }, [queryClient]);
-
-  const handleLinkGitHub = async () => {
-    setLinkingGitHub(true);
-    try {
-      const resp = await api.github.startLink();
-      window.open(resp.authorize_url, 'github-link', 'width=600,height=700');
-    } catch {
-      setLinkingGitHub(false);
-    }
-  };
-
-  if (isLoading) return <p className="text-sm text-gray-400">Loading…</p>;
-
-  return (
-    <div className="space-y-4">
-      {linkStatus && !linkStatus.linked && linkStatus.oauth_configured && (
-        <div className="bg-amber-50 border border-amber-200 p-3 rounded flex items-center justify-between">
-          <p className="text-xs text-amber-700">Link your GitHub account to see installations.</p>
-          <button
-            onClick={handleLinkGitHub}
-            disabled={linkingGitHub}
-            className="bg-brand-600 text-white px-2 py-1 text-xs rounded hover:bg-brand-700 disabled:opacity-50 whitespace-nowrap ml-2"
-          >
-            {linkingGitHub ? 'Linking…' : 'Link GitHub'}
-          </button>
-        </div>
-      )}
-      {appInfo?.configured && appInfo.install_url && (
-        <div className="flex items-center justify-between">
-          <p className="text-sm text-gray-500">
-            Install the GitHub App to enable private repo access and SARIF uploads.
-          </p>
-          <a
-            href={appInfo.install_url}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="bg-brand-600 text-white px-3 py-1.5 text-sm rounded hover:bg-brand-700 whitespace-nowrap"
-          >
-            Install GitHub App
-          </a>
-        </div>
-      )}
-
-      {!installations?.length ? (
-        <p className="text-sm text-gray-500">No GitHub App installations found.</p>
-      ) : (
-        <div className="border rounded divide-y">
-          {installations.map((inst) => {
-            const isActive = activeInstallationId > 0 && inst.installation_id === activeInstallationId;
-            return (
-              <div key={inst.installation_id} className="px-3 py-2 flex items-center justify-between">
-                <div>
-                  <span className="font-medium text-sm">{inst.account_login}</span>
-                  <span className="text-xs text-gray-400 ml-2">{inst.account_type}</span>
-                </div>
-                <div className="flex flex-col items-end gap-1 shrink-0">
-                  {isActive ? (
-                    <span className="text-xs text-green-700 bg-green-50 border border-green-200 px-2 py-0.5 rounded">Active for this project</span>
-                  ) : (
-                    <span className="text-xs text-gray-400 bg-gray-50 border border-gray-200 px-2 py-0.5 rounded">Available</span>
-                  )}
-                  {isActive && (() => {
-                    const linked = packages?.filter((p) => p.installation_id === inst.installation_id) ?? [];
-                    return linked.length > 0 ? (
-                      <div className="flex flex-wrap gap-1 justify-end">
-                        {linked.map((p) => (
-                          <span key={p.id} className="text-xs text-gray-500 bg-gray-100 px-1.5 py-0.5 rounded font-mono">
-                            {p.github_owner && p.github_repo ? `${p.github_owner}/${p.github_repo}` : p.name}
-                          </span>
-                        ))}
-                      </div>
-                    ) : (
-                      <span className="text-xs text-gray-400 italic">No packages linked yet</span>
-                    );
-                  })()}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      )}
-
-      <p className="text-xs text-gray-400">
-        The installation marked <strong>Active for this project</strong> is configured in the project GitHub settings.
-      </p>
-
-      <Link href={`/projects/${projectId}?tab=github`} className="text-brand-600 hover:underline text-xs">
-        View full GitHub settings →
-      </Link>
     </div>
   );
 }
