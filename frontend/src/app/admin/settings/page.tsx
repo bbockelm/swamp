@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { api, BackupSettings, LLMProvider, DiscoveredModel, GitHubStatus } from '@/lib/api';
+import { api, BackupSettings, LLMProvider, DiscoveredModel, GitHubStatus, NRPConfig } from '@/lib/api';
 
 export default function AdminSettingsPage() {
   return (
@@ -13,10 +13,138 @@ export default function AdminSettingsPage() {
       </div>
 
       <OIDCConfigSection />
+      <NRPConfigSection />
       <LLMProvidersSection />
       <GitHubConfigSection />
       <ExecutorConfigSection />
       <BackupConfigSection />
+    </div>
+  );
+}
+
+function NRPConfigSection() {
+  const queryClient = useQueryClient();
+  const { data: config, isLoading } = useQuery<NRPConfig>({
+    queryKey: ['admin', 'nrp-config'],
+    queryFn: api.admin.getNRPConfig,
+  });
+
+  const [form, setForm] = useState<{
+    nrp_oidc_issuer: string;
+    nrp_oidc_client_id: string;
+    nrp_oidc_client_secret: string;
+    nrp_llm_exchange_url: string;
+  } | null>(null);
+  const [showSecret, setShowSecret] = useState(false);
+
+  const currentForm = form ?? {
+    nrp_oidc_issuer: config?.nrp_oidc_issuer ?? '',
+    nrp_oidc_client_id: config?.nrp_oidc_client_id ?? '',
+    nrp_oidc_client_secret: '',
+    nrp_llm_exchange_url: config?.nrp_llm_exchange_url ?? '',
+  };
+
+  const updateMut = useMutation({
+    mutationFn: (data: {
+      nrp_oidc_issuer?: string;
+      nrp_oidc_client_id?: string;
+      nrp_oidc_client_secret?: string;
+      nrp_llm_exchange_url?: string;
+    }) => api.admin.updateNRPConfig(data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['admin', 'nrp-config'] });
+    },
+  });
+
+  if (isLoading) return <div className="text-gray-400 text-sm">Loading NRP config...</div>;
+
+  return (
+    <div className="bg-white p-6 rounded-lg border space-y-4">
+      <h2 className="font-semibold text-lg">NRP Identity Linking</h2>
+      <p className="text-sm text-gray-500">
+        Configure the NRP OAuth client used for per-user NRP identity linking and the future LLM key exchange flow.
+      </p>
+
+      {config?.callback_url && (
+        <div className="p-3 bg-blue-50 rounded-md">
+          <div className="text-xs font-medium text-blue-700 mb-1">Callback URL</div>
+          <code className="text-xs text-blue-900 break-all">{config.callback_url}</code>
+          <p className="text-xs text-brand-600 mt-1">
+            Register this URL with the NRP OIDC provider as an allowed redirect URI.
+          </p>
+        </div>
+      )}
+
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          updateMut.mutate(currentForm);
+        }}
+        className="space-y-4"
+      >
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">Issuer URL</label>
+          <input
+            type="url"
+            value={currentForm.nrp_oidc_issuer}
+            onChange={(e) => setForm({ ...currentForm, nrp_oidc_issuer: e.target.value })}
+            placeholder="https://auth.example.org/realms/nrp"
+            className="w-full border rounded-md px-3 py-2 text-sm"
+          />
+        </div>
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">Client ID</label>
+          <input
+            type="text"
+            value={currentForm.nrp_oidc_client_id}
+            onChange={(e) => setForm({ ...currentForm, nrp_oidc_client_id: e.target.value })}
+            placeholder="nrp-client-id"
+            className="w-full border rounded-md px-3 py-2 text-sm"
+          />
+        </div>
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">Client Secret</label>
+          <div className="relative">
+            <input
+              type={showSecret ? 'text' : 'password'}
+              value={currentForm.nrp_oidc_client_secret}
+              onChange={(e) => setForm({ ...currentForm, nrp_oidc_client_secret: e.target.value })}
+              placeholder={config?.secret_set ? '••••• (already set, leave blank to keep)' : 'nrp-client-secret'}
+              className="w-full border rounded-md px-3 py-2 text-sm pr-16"
+            />
+            <button
+              type="button"
+              onClick={() => setShowSecret(!showSecret)}
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-gray-500 hover:text-gray-700"
+            >
+              {showSecret ? 'Hide' : 'Show'}
+            </button>
+          </div>
+        </div>
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">LLM Exchange URL</label>
+          <input
+            type="url"
+            value={currentForm.nrp_llm_exchange_url}
+            onChange={(e) => setForm({ ...currentForm, nrp_llm_exchange_url: e.target.value })}
+            placeholder="https://gitlab.nrp-nautilus.io/api/token/llm/exchange"
+            className="w-full border rounded-md px-3 py-2 text-sm"
+          />
+          <p className="text-xs text-gray-400 mt-0.5">Stored now for the future NRP token-to-LLM-key exchange flow.</p>
+        </div>
+
+        <div className="flex items-center gap-4">
+          <button
+            type="submit"
+            disabled={updateMut.isPending}
+            className="px-4 py-2 bg-brand-600 text-white rounded-md hover:bg-brand-700 disabled:opacity-50"
+          >
+            {updateMut.isPending ? 'Saving...' : 'Save NRP Settings'}
+          </button>
+          {updateMut.isSuccess && <span className="text-green-600 text-sm">Saved!</span>}
+          {updateMut.isError && <span className="text-red-600 text-sm">Error: {updateMut.error?.message}</span>}
+        </div>
+      </form>
     </div>
   );
 }
@@ -585,6 +713,7 @@ const EXECUTOR_MODES = [
   { value: 'local', label: 'Local (in-process)', desc: 'Fork/exec agent in the server process. Simple but non-persistent.' },
   { value: 'process', label: 'Process (detached daemon)', desc: 'Detached processes with flock-based liveness. Survives restarts.' },
   { value: 'kubernetes', label: 'Kubernetes', desc: 'Run analyses as Kubernetes jobs. Scalable and persistent.' },
+  { value: 'nrp', label: 'NRP', desc: 'Run analyses on Kubernetes with NRP-specific project policy checks.' },
 ];
 
 const K8S_FIELDS = [
@@ -793,7 +922,7 @@ function ExecutorConfigSection() {
         </div>
 
         {/* Kubernetes settings */}
-        {selectedMode === 'kubernetes' && (
+        {(selectedMode === 'kubernetes' || selectedMode === 'nrp') && (
           <div className="border-t pt-4">
             <h3 className="text-sm font-medium text-gray-700 mb-2">Kubernetes Settings</h3>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">

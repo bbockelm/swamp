@@ -848,6 +848,7 @@ var sensitiveConfigKeys = []string{
 	"backup_access_key",
 	"backup_secret_key",
 	"oidc_client_secret",
+	"nrp_oidc_client_secret",
 }
 
 // reencryptConfigValues re-encrypts known sensitive app_config values with

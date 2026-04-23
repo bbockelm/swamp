@@ -21,6 +21,7 @@ import { Pagination, paginate } from "@/components/Pagination";
 import { SARIFViewer } from "@/components/SARIFViewer";
 import { MarkdownReport } from "@/components/MarkdownReport";
 import { ProjectGitHubTab } from "@/components/ProjectGitHubTab";
+import { ProjectNRPTab } from "@/components/ProjectNRPTab";
 import { GitBranchInput, type GitBranchInputHandle } from "@/components/GitBranchInput";
 import { FindingsTable } from "@/components/FindingsTable";
 import { StreamLine, extractStreamMessage, streamDisplayLines } from "@/lib/stream-utils";
@@ -153,6 +154,12 @@ export default function ProjectsPage() {
     queryKey: ["admin", "users"],
     queryFn: api.admin.listUsers,
     enabled: session?.roles?.includes("admin") ?? false,
+  });
+
+  const { data: nrpLinkStatus } = useQuery({
+    queryKey: ["nrp-link-status"],
+    queryFn: api.nrp.getLinkStatus,
+    enabled: session?.authenticated ?? false,
   });
 
   const isAdmin = session?.roles?.includes("admin") ?? false;
@@ -365,6 +372,7 @@ export default function ProjectsPage() {
               groups={groups}
               users={users}
               session={session}
+              nrpConfigured={nrpLinkStatus?.oauth_configured ?? false}
               expanded={expandedId === p.id}
               onToggle={() => setExpandedId(expandedId === p.id ? null : p.id)}
             />
@@ -377,13 +385,14 @@ export default function ProjectsPage() {
 
 // ─── project card ───────────────────────────────────────────
 
-type ProjectTab = "packages" | "analyses" | "findings" | "github" | "api-keys" | "settings";
+type ProjectTab = "packages" | "analyses" | "findings" | "github" | "nrp" | "api-keys" | "settings";
 
 function ProjectCard({
   project,
   groups,
   users,
   session,
+  nrpConfigured,
   expanded,
   onToggle,
 }: {
@@ -391,6 +400,7 @@ function ProjectCard({
   groups?: Group[];
   users?: User[];
   session?: Session;
+  nrpConfigured: boolean;
   expanded: boolean;
   onToggle: () => void;
 }) {
@@ -419,6 +429,7 @@ function ProjectCard({
     { key: "analyses", label: "Analyses" },
     { key: "findings", label: "Findings" },
     ...(canEdit ? [{ key: "github" as ProjectTab, label: "GitHub" }] : []),
+    ...(nrpConfigured ? [{ key: "nrp" as ProjectTab, label: "NRP" }] : []),
     ...(isProjectAdmin ? [{ key: "api-keys" as ProjectTab, label: "LLMs" }] : []),
     ...(canEdit ? [{ key: "settings" as ProjectTab, label: "Settings" }] : []),
   ];
@@ -523,6 +534,7 @@ function ProjectCard({
             {tab === "analyses" && <AnalysesTab projectId={project.id} />}
             {tab === "findings" && <FindingsTabInline projectId={project.id} projectName={project.name} canEdit={canEdit} />}
             {tab === "github" && canEdit && <ProjectGitHubTab projectId={project.id} canManageInstallations={isProjectAdmin} />}
+            {tab === "nrp" && nrpConfigured && <ProjectNRPTab projectId={project.id} isSystemAdmin={isSystemAdmin} isProjectAdmin={isProjectAdmin} />}
             {tab === "api-keys" && isProjectAdmin && <ProviderKeysTab projectId={project.id} />}
             {tab === "settings" && canEdit && (
               <SettingsTab

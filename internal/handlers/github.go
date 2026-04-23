@@ -515,21 +515,21 @@ func (h *Handler) StartGitHubLink(w http.ResponseWriter, r *http.Request) {
 // GET /api/v1/github/link/callback?code=X&state=Y
 func (h *Handler) GitHubLinkCallback(w http.ResponseWriter, r *http.Request) {
 	if h.ghClient == nil || !h.ghClient.OAuthConfigured() {
-		respondError(w, http.StatusBadRequest, "GitHub OAuth is not configured")
+		renderIdentityLinkPopupResult(w, "github", false, "GitHub OAuth is not configured.")
 		return
 	}
 
 	code := r.URL.Query().Get("code")
 	state := r.URL.Query().Get("state")
 	if code == "" || state == "" {
-		respondError(w, http.StatusBadRequest, "Missing code or state parameter")
+		renderIdentityLinkPopupResult(w, "github", false, "Missing code or state parameter.")
 		return
 	}
 
 	// Validate state against cookie.
 	stateCookie, err := r.Cookie("github_link_state")
 	if err != nil || stateCookie.Value != state {
-		respondError(w, http.StatusBadRequest, "Invalid state parameter")
+		renderIdentityLinkPopupResult(w, "github", false, "Invalid state parameter.")
 		return
 	}
 
@@ -546,7 +546,7 @@ func (h *Handler) GitHubLinkCallback(w http.ResponseWriter, r *http.Request) {
 	tokenResp, err := h.ghClient.OAuthExchangeCode(r.Context(), code)
 	if err != nil {
 		log.Error().Err(err).Msg("GitHub OAuth token exchange failed")
-		respondError(w, http.StatusBadGateway, "Failed to exchange authorization code")
+		renderIdentityLinkPopupResult(w, "github", false, "Failed to exchange authorization code.")
 		return
 	}
 
@@ -554,7 +554,7 @@ func (h *Handler) GitHubLinkCallback(w http.ResponseWriter, r *http.Request) {
 	ghUser, err := h.ghClient.GetUser(r.Context(), tokenResp.AccessToken)
 	if err != nil {
 		log.Error().Err(err).Msg("Failed to get GitHub user info")
-		respondError(w, http.StatusBadGateway, "Failed to get GitHub user info")
+		renderIdentityLinkPopupResult(w, "github", false, "Failed to retrieve GitHub user info.")
 		return
 	}
 
@@ -565,7 +565,7 @@ func (h *Handler) GitHubLinkCallback(w http.ResponseWriter, r *http.Request) {
 			enc, err := h.encryptor.EncryptConfigValue(tokenResp.AccessToken)
 			if err != nil {
 				log.Error().Err(err).Msg("Failed to encrypt GitHub access token")
-				respondError(w, http.StatusInternalServerError, "Failed to store tokens")
+				renderIdentityLinkPopupResult(w, "github", false, "Failed to store GitHub tokens.")
 				return
 			}
 			accessTokenEnc = &enc
@@ -574,7 +574,7 @@ func (h *Handler) GitHubLinkCallback(w http.ResponseWriter, r *http.Request) {
 			enc, err := h.encryptor.EncryptConfigValue(tokenResp.RefreshToken)
 			if err != nil {
 				log.Error().Err(err).Msg("Failed to encrypt GitHub refresh token")
-				respondError(w, http.StatusInternalServerError, "Failed to store tokens")
+				renderIdentityLinkPopupResult(w, "github", false, "Failed to store GitHub tokens.")
 				return
 			}
 			refreshTokenEnc = &enc
@@ -599,12 +599,11 @@ func (h *Handler) GitHubLinkCallback(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := h.queries.UpsertGitHubIdentity(r.Context(), identity); err != nil {
 		log.Error().Err(err).Str("user_id", user.ID).Msg("Failed to upsert GitHub identity")
-		respondError(w, http.StatusInternalServerError, "Failed to link GitHub account")
+		renderIdentityLinkPopupResult(w, "github", false, "Failed to link GitHub account.")
 		return
 	}
 
-	// Redirect to a frontend page that closes the popup.
-	http.Redirect(w, r, "/github/linked", http.StatusFound)
+	renderIdentityLinkPopupResult(w, "github", true, "Linked as "+ghUser.Login)
 }
 
 // DeleteGitHubLink removes the GitHub identity link for the current user.

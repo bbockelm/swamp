@@ -134,6 +134,12 @@ type Project struct {
 	// ExternalLLMFallback overrides EXTERNAL_LLM_FALLBACK.
 	// "anthropic" = retry Phase with Anthropic on failure. "" = no fallback.
 	ExternalLLMFallback *string `json:"ext_llm_fallback,omitempty"`
+	NRPAccessEnabled bool      `json:"nrp_access_enabled"`
+	NRPAccessEnabledBy *string `json:"nrp_access_enabled_by,omitempty"`
+	NRPAccessEnabledAt *time.Time `json:"nrp_access_enabled_at,omitempty"`
+	NRPExecutionEnabled bool      `json:"nrp_execution_enabled"`
+	NRPExecutionEnabledBy *string `json:"nrp_execution_enabled_by,omitempty"`
+	NRPExecutionEnabledAt *time.Time `json:"nrp_execution_enabled_at,omitempty"`
 
 	// MyRole is the caller's effective role for this project (set by handlers, not stored).
 	MyRole string `json:"my_role,omitempty"`
@@ -454,6 +460,19 @@ type ProjectInstallationLink struct {
 	EnabledBy      *string   `json:"enabled_by,omitempty"`
 	EnabledByName  string    `json:"enabled_by_name,omitempty"`
 	EnabledAt      time.Time `json:"enabled_at"`
+}
+
+// ProjectNRPConfig is the project-scoped NRP integration state.
+type ProjectNRPConfig struct {
+	ProjectID                string     `json:"project_id"`
+	AccessEnabled            bool       `json:"access_enabled"`
+	AccessEnabledBy          *string    `json:"access_enabled_by,omitempty"`
+	AccessEnabledByName      string     `json:"access_enabled_by_name,omitempty"`
+	AccessEnabledAt          *time.Time `json:"access_enabled_at,omitempty"`
+	ExecutionEnabled         bool       `json:"execution_enabled"`
+	ExecutionEnabledBy       *string    `json:"execution_enabled_by,omitempty"`
+	ExecutionEnabledByName   string     `json:"execution_enabled_by_name,omitempty"`
+	ExecutionEnabledAt       *time.Time `json:"execution_enabled_at,omitempty"`
 }
 
 // GitHubStatus is the summary returned by the GitHub status endpoint.

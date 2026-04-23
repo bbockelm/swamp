@@ -292,6 +292,75 @@ func (c *Client) CloneURL(ctx context.Context, installationID int64, owner, repo
 	return fmt.Sprintf("https://x-access-token:%s@github.com/%s/%s.git", token, owner, repo), nil
 }
 
+// rewriteSARIFToolName patches the tool driver name and informationUri in each
+// SARIF run so that GitHub Code Scanning displays "SWAMP" instead of whatever
+// the agent wrote (e.g. "Manual Security Analysis").
+func rewriteSARIFToolName(data []byte) []byte {
+	var doc struct {
+		Runs []struct {
+			Tool struct {
+				Driver struct {
+					Name            string `json:"name"`
+					InformationURI  string `json:"informationUri,omitempty"`
+					SemanticVersion string `json:"semanticVersion,omitempty"`
+				} `json:"driver"`
+			} `json:"tool"`
+		} `json:"runs"`
+	}
+	if err := json.Unmarshal(data, &doc); err != nil || len(doc.Runs) == 0 {
+		return data
+	}
+
+	// Use a raw map so we only touch the fields we care about.
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return data
+	}
+	runsRaw, ok := raw["runs"]
+	if !ok {
+		return data
+	}
+	var runs []map[string]json.RawMessage
+	if err := json.Unmarshal(runsRaw, &runs); err != nil {
+		return data
+	}
+	for i, run := range runs {
+		toolRaw, ok := run["tool"]
+		if !ok {
+			continue
+		}
+		var tool map[string]json.RawMessage
+		if err := json.Unmarshal(toolRaw, &tool); err != nil {
+			continue
+		}
+		driverRaw, ok := tool["driver"]
+		if !ok {
+			continue
+		}
+		var driver map[string]json.RawMessage
+		if err := json.Unmarshal(driverRaw, &driver); err != nil {
+			continue
+		}
+		driver["name"], _ = json.Marshal("SWAMP")
+		driver["informationUri"], _ = json.Marshal("https://github.com/bbockelm/swamp")
+		driverBytes, _ := json.Marshal(driver)
+		tool["driver"] = driverBytes
+		toolBytes, _ := json.Marshal(tool)
+		run["tool"] = toolBytes
+		runs[i] = run
+	}
+	runsBytes, err := json.Marshal(runs)
+	if err != nil {
+		return data
+	}
+	raw["runs"] = runsBytes
+	patched, err := json.Marshal(raw)
+	if err != nil {
+		return data
+	}
+	return patched
+}
+
 // UploadSARIF uploads a SARIF file to GitHub Code Scanning API.
 // The SARIF data is gzipped and base64-encoded as required by the API.
 // Returns the URL of the uploaded SARIF analysis on success.
@@ -300,6 +369,9 @@ func (c *Client) UploadSARIF(ctx context.Context, installationID int64, owner, r
 	if err != nil {
 		return "", fmt.Errorf("getting installation token for SARIF upload: %w", err)
 	}
+
+	// Rewrite the tool name inside the SARIF so GitHub displays "SWAMP".
+	sarifData = rewriteSARIFToolName(sarifData)
 
 	// Gzip compress the SARIF data.
 	var buf bytes.Buffer

@@ -10,11 +10,12 @@ import { Pagination, paginate } from '@/components/Pagination';
 import { FindingsTable } from '@/components/FindingsTable';
 import { GitBranchInput, type GitBranchInputHandle } from '@/components/GitBranchInput';
 import { ProjectGitHubTab } from '@/components/ProjectGitHubTab';
+import { ProjectNRPTab } from '@/components/ProjectNRPTab';
 import { useResolvedParams } from '@/lib/useResolvedParams';
 
 const ANALYSES_PAGE_SIZE = 10;
 
-type Tab = 'packages' | 'analyses' | 'findings' | 'api-keys' | 'github' | 'settings';
+type Tab = 'packages' | 'analyses' | 'findings' | 'api-keys' | 'github' | 'nrp' | 'settings';
 
 export default function ProjectDetailClient() {
   const { id } = useResolvedParams<{ id: string }>('/projects/[id]');
@@ -27,6 +28,12 @@ export default function ProjectDetailClient() {
   const { data: session } = useQuery({
     queryKey: ['session'],
     queryFn: api.auth.me,
+  });
+
+  const { data: nrpLinkStatus } = useQuery({
+    queryKey: ['nrp-link-status'],
+    queryFn: api.nrp.getLinkStatus,
+    enabled: true,
   });
 
   const { data: project, isLoading } = useQuery({
@@ -77,6 +84,7 @@ export default function ProjectDetailClient() {
     { key: 'findings', label: 'Findings' },
     ...(isAdmin ? [{ key: 'api-keys' as Tab, label: 'LLMs' }] : []),
     ...(canEdit ? [{ key: 'github' as Tab, label: 'GitHub' }] : []),
+    ...(nrpLinkStatus?.oauth_configured ? [{ key: 'nrp' as Tab, label: 'NRP' }] : []),
     ...(canEdit ? [{ key: 'settings' as Tab, label: 'Settings' }] : []),
   ];
 
@@ -131,6 +139,11 @@ export default function ProjectDetailClient() {
       {/* GitHub tab */}
       {tab === 'github' && canEdit && (
         <ProjectGitHubTab projectId={id} canManageInstallations={isAdmin} />
+      )}
+
+      {/* NRP tab */}
+      {tab === 'nrp' && nrpLinkStatus?.oauth_configured && (
+        <ProjectNRPTab projectId={id} isSystemAdmin={isSiteAdmin} isProjectAdmin={isAdmin || isSiteAdmin} />
       )}
 
       {/* Settings tab */}

@@ -55,16 +55,17 @@ func (h *Handler) ListAnalyses(w http.ResponseWriter, r *http.Request) {
 // CheckAnalysisLiveness reports whether the executor is actively tracking a
 // given analysis. The frontend polls this to detect stale "running" states.
 // If the executor says the analysis is not running but the DB still shows
-// running/pending, we auto-correct the DB to "failed".
+// running, we auto-correct the DB to "failed".
 func (h *Handler) CheckAnalysisLiveness(w http.ResponseWriter, r *http.Request) {
 	analysisID := chi.URLParam(r, "analysisID")
 	alive := h.executor != nil && h.executor.IsRunning(analysisID)
 
 	if !alive {
-		// Auto-fix: if the DB still says running/pending but the executor
-		// no longer tracks it, mark the analysis as failed.
+		// Auto-fix only for analyses that were already running. Pending
+		// analyses may be queued behind the concurrency limiter and should
+		// not be marked failed just because no worker is active yet.
 		a, err := h.queries.GetAnalysis(r.Context(), analysisID)
-		if err == nil && (a.Status == "running" || a.Status == "pending") {
+		if err == nil && a.Status == "running" {
 			_ = h.queries.SetAnalysisCompleted(r.Context(), analysisID, "failed", "Worker process is no longer running")
 		}
 	}

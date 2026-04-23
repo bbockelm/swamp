@@ -12,6 +12,7 @@ export function ProjectGitHubTab({
   canManageInstallations: boolean;
 }) {
   const [linkingGitHub, setLinkingGitHub] = useState(false);
+  const [linkMessage, setLinkMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [selectedInstallationId, setSelectedInstallationId] = useState(0);
   const queryClient = useQueryClient();
 
@@ -108,24 +109,41 @@ export function ProjectGitHubTab({
 
   useEffect(() => {
     const handler = (e: MessageEvent) => {
-      if (e.origin === window.location.origin && e.data?.type === 'github-linked') {
-        setLinkingGitHub(false);
-        queryClient.invalidateQueries({ queryKey: ['github-link-status'] });
-        queryClient.invalidateQueries({ queryKey: ['github-installations'] });
-        queryClient.invalidateQueries({ queryKey: ['project-github-installations', projectId] });
-      }
+    if (e.origin !== window.location.origin) {
+    return;
+    }
+    const isLegacySuccess = e.data?.type === 'github-linked';
+    const isGenericResult = e.data?.type === 'identity-link-result' && e.data?.provider === 'github';
+    if (!isLegacySuccess && !isGenericResult) {
+    return;
+    }
+    setLinkingGitHub(false);
+    if (isGenericResult && e.data?.status === 'error') {
+    setLinkMessage({ type: 'error', text: e.data?.message || 'Failed to link GitHub account.' });
+    return;
+    }
+    setLinkMessage({ type: 'success', text: e.data?.message || 'GitHub account linked.' });
+    queryClient.invalidateQueries({ queryKey: ['github-link-status'] });
+    queryClient.invalidateQueries({ queryKey: ['github-installations'] });
+    queryClient.invalidateQueries({ queryKey: ['project-github-installations', projectId] });
     };
     window.addEventListener('message', handler);
     return () => window.removeEventListener('message', handler);
   }, [projectId, queryClient]);
 
   const handleLinkGitHub = async () => {
+  setLinkMessage(null);
     setLinkingGitHub(true);
     try {
       const resp = await api.github.startLink();
-      window.open(resp.authorize_url, 'github-link', 'width=600,height=700');
+    const popup = window.open(resp.authorize_url, 'github-link', 'width=600,height=700');
+    if (!popup) {
+    setLinkingGitHub(false);
+    setLinkMessage({ type: 'error', text: 'Popup blocked. Allow popups and try again.' });
+    }
     } catch {
       setLinkingGitHub(false);
+    setLinkMessage({ type: 'error', text: 'Failed to start GitHub linking.' });
     }
   };
 
@@ -133,6 +151,12 @@ export function ProjectGitHubTab({
 
   return (
     <div className="space-y-6">
+      {linkMessage && (
+        <div className={`border rounded-lg px-4 py-3 text-sm ${linkMessage.type === 'success' ? 'bg-green-50 border-green-200 text-green-800' : 'bg-red-50 border-red-200 text-red-800'}`}>
+          {linkMessage.text}
+        </div>
+      )}
+
       {linkStatus && !linkStatus.linked && linkStatus.oauth_configured && (
         <div className="bg-amber-50 border border-amber-200 p-4 rounded-lg flex items-center justify-between">
           <div>

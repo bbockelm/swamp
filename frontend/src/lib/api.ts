@@ -288,6 +288,14 @@ export interface OIDCConfig {
   callback_url: string;
 }
 
+export interface NRPConfig {
+  nrp_oidc_issuer: string;
+  nrp_oidc_client_id: string;
+  nrp_llm_exchange_url: string;
+  secret_set: boolean;
+  callback_url: string;
+}
+
 export interface Finding {
   id: string;
   project_id: string;
@@ -417,6 +425,12 @@ export interface GitHubLinkStatus {
   oauth_configured: boolean;
 }
 
+export interface NRPLinkStatus {
+  linked: boolean;
+  nrp_login?: string;
+  oauth_configured: boolean;
+}
+
 export interface GitHubStartLinkResponse {
   authorize_url: string;
 }
@@ -461,6 +475,18 @@ export interface ProjectGitHubConfig {
   webhook_provider_id?: string;
   created_at?: string;
   updated_at?: string;
+}
+
+export interface ProjectNRPConfig {
+  project_id: string;
+  access_enabled: boolean;
+  access_enabled_by?: string;
+  access_enabled_by_name?: string;
+  access_enabled_at?: string;
+  execution_enabled: boolean;
+  execution_enabled_by?: string;
+  execution_enabled_by_name?: string;
+  execution_enabled_at?: string;
 }
 
 export interface GitHubWebhookDelivery {
@@ -941,6 +967,18 @@ export const api = {
         method: "PUT",
         body: JSON.stringify(data),
       }),
+    getNRPConfig: (): Promise<NRPConfig> =>
+      fetchJSON(`${BASE}/admin/nrp-config`),
+    updateNRPConfig: (data: {
+      nrp_oidc_issuer?: string;
+      nrp_oidc_client_id?: string;
+      nrp_oidc_client_secret?: string;
+      nrp_llm_exchange_url?: string;
+    }): Promise<void> =>
+      fetchJSON(`${BASE}/admin/nrp-config`, {
+        method: "PUT",
+        body: JSON.stringify(data),
+      }),
     listBackups: (): Promise<Backup[]> => fetchJSON(`${BASE}/admin/backups`),
     triggerBackup: (): Promise<Backup> =>
       fetchJSON(`${BASE}/admin/backups/trigger`, { method: "POST" }),
@@ -1062,6 +1100,29 @@ export const api = {
     removeProjectInstallation: (projectId: string, installationId: number): Promise<{ ok: boolean }> =>
       fetchJSON(`${BASE}/projects/${projectId}/github/installations/${installationId}`, {
         method: 'DELETE',
+      }),
+  },
+
+  nrp: {
+    getLinkStatus: (): Promise<NRPLinkStatus> =>
+      fetchJSON(`${BASE}/nrp/link`),
+    startLink: (): Promise<GitHubStartLinkResponse> =>
+      fetchJSON(`${BASE}/nrp/link`, { method: 'POST' }),
+    deleteLink: (): Promise<void> =>
+      fetchJSON(`${BASE}/nrp/link`, { method: 'DELETE' }),
+    getProjectConfig: (projectId: string): Promise<ProjectNRPConfig> =>
+      fetchJSON(`${BASE}/projects/${projectId}/nrp`),
+    updateProjectConfig: (
+      projectId: string,
+      data: Partial<Pick<ProjectNRPConfig, 'access_enabled' | 'execution_enabled'>>,
+    ): Promise<ProjectNRPConfig> =>
+      fetchJSON(`${BASE}/projects/${projectId}/nrp`, {
+        method: 'PUT',
+        body: JSON.stringify(data),
+      }),
+    installLLMKey: (projectId: string): Promise<void> =>
+      fetchJSON(`${BASE}/projects/${projectId}/nrp/install-llm-key`, {
+        method: 'POST',
       }),
   },
 };

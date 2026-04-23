@@ -142,8 +142,8 @@ func (e *Executor) syncLoop(ctx context.Context) {
 	}
 }
 
-// syncOnce checks for analyses that are running/pending in the DB but not
-// tracked by this executor and marks them failed.
+// syncOnce checks for analyses that are running in the DB but not tracked by
+// this executor and marks them failed.
 func (e *Executor) syncOnce(ctx context.Context) {
 	if e.CanPersist() {
 		return
@@ -161,6 +161,9 @@ func (e *Executor) syncOnce(ctx context.Context) {
 	e.mu.Unlock()
 
 	for _, a := range analyses {
+		if a.Status != "running" {
+			continue
+		}
 		if !runningSet[a.ID] {
 			log.Warn().Str("analysis_id", a.ID).Str("status", a.Status).
 				Msg("Sync: marking orphaned analysis as failed")

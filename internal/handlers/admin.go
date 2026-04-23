@@ -468,9 +468,9 @@ func (h *Handler) UpdateExecutorConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	validModes := map[string]bool{"local": true, "process": true, "kubernetes": true}
+	validModes := map[string]bool{"local": true, "process": true, "kubernetes": true, "nrp": true}
 	if mode, ok := req["executor_mode"]; ok && !validModes[mode] {
-		respondError(w, http.StatusBadRequest, "Invalid executor_mode: must be local, process, or kubernetes")
+		respondError(w, http.StatusBadRequest, "Invalid executor_mode: must be local, process, kubernetes, or nrp")
 		return
 	}
 	validProviders := map[string]bool{"anthropic": true, "external": true}

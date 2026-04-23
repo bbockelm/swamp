@@ -522,9 +522,10 @@ func (e *ProcessExecutor) reconcileExisting(ctx context.Context) {
 				Msg("Worker lock file not held, cleaning up")
 			_ = os.Remove(path)
 
-			// If the analysis is still in a running/pending state, mark failed.
+			// Only fail analyses that were already running. Pending analyses may
+			// still be queued behind concurrency limits and should remain pending.
 			a, getErr := e.queries.GetAnalysis(ctx, state.Analysis)
-			if getErr == nil && (a.Status == "running" || a.Status == "pending") {
+			if getErr == nil && a.Status == "running" {
 				_ = e.queries.SetAnalysisCompleted(ctx, state.Analysis, "failed", "Worker process exited unexpectedly")
 			}
 			continue

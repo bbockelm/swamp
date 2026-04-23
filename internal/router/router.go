@@ -112,7 +112,15 @@ func New(cfg *config.Config, pool *pgxpool.Pool, store *storage.Store) (*chi.Mux
 	var exec agent.AnalysisExecutor
 	var tokenStore *agent.WorkerTokenStore
 
-	if cfg.IsKubernetesExecutor() {
+	if cfg.IsNRPExecutor() {
+		tokenStore = agent.NewWorkerTokenStoreWithDB(queries)
+		nrpExec, err := agent.NewNRPExecutor(cfg, queries, store, hub, enc, tokenStore)
+		if err != nil {
+			log.Fatal().Err(err).Msg("Failed to initialize NRP executor")
+		}
+		exec = nrpExec
+		log.Info().Msg("Using NRP executor")
+	} else if cfg.IsKubernetesExecutor() {
 		tokenStore = agent.NewWorkerTokenStoreWithDB(queries)
 		k8sExec, err := agent.NewK8sExecutor(cfg, queries, store, hub, enc, tokenStore)
 		if err != nil {
@@ -147,6 +155,9 @@ func New(cfg *config.Config, pool *pgxpool.Pool, store *storage.Store) (*chi.Mux
 		}
 		if k8sExec, ok := exec.(*agent.K8sExecutor); ok {
 			k8sExec.SetGitHubIntegration(ghClient)
+		}
+		if nrpExec, ok := exec.(*agent.NRPExecutor); ok {
+			nrpExec.SetGitHubIntegration(ghClient)
 		}
 		if procExec, ok := exec.(*agent.ProcessExecutor); ok {
 			procExec.SetGitHubIntegration(ghClient)
@@ -310,6 +321,12 @@ func New(cfg *config.Config, pool *pgxpool.Pool, store *storage.Store) (*chi.Mux
 			r.Delete("/github/link", h.DeleteGitHubLink)
 			r.Get("/github/user-repo-access", h.UserRepoAccess)
 
+			// NRP identity linking
+			r.Get("/nrp/link", h.GetNRPLinkStatus)
+			r.Post("/nrp/link", h.StartNRPLink)
+			r.Get("/nrp/link/callback", h.NRPLinkCallback)
+			r.Delete("/nrp/link", h.DeleteNRPLink)
+
 			// Dashboard stats
 			r.Get("/dashboard/stats", h.DashboardStats)
 
@@ -425,6 +442,13 @@ func New(cfg *config.Config, pool *pgxpool.Pool, store *storage.Store) (*chi.Mux
 						})
 					})
 
+					// NRP integration (project-level)
+					r.Route("/nrp", func(r chi.Router) {
+						r.Get("/", h.GetProjectNRPConfig)
+						r.Put("/", h.UpdateProjectNRPConfig)
+						r.Post("/install-llm-key", h.InstallProjectNRPLLMKey)
+					})
+
 					// Available providers (readable by anyone with project access)
 					r.Get("/available-providers", h.ListAvailableProviders)
 					r.Get("/available-providers/{providerSource}/{providerID}/models", h.DiscoverAvailableProviderModels)
@@ -472,6 +496,8 @@ func New(cfg *config.Config, pool *pgxpool.Pool, store *storage.Store) (*chi.Mux
 				// OIDC configuration
 				r.Get("/oidc-config", h.GetOIDCConfig)
 				r.Put("/oidc-config", h.UpdateOIDCConfig)
+				r.Get("/nrp-config", h.GetNRPConfig)
+				r.Put("/nrp-config", h.UpdateNRPConfig)
 
 				// AUP management
 				r.Get("/aup", h.GetAUPConfig)

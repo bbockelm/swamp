@@ -252,16 +252,16 @@ func (q *Queries) DeleteIdentity(ctx context.Context, id string) error {
 // GitHubIdentityIssuer is the issuer value used for GitHub user identities.
 const GitHubIdentityIssuer = "https://github.com"
 
-// FindGitHubIdentity returns the GitHub identity for a user, or nil if not linked.
-// Queries linked_identities (N:M authorization table), not user_identities (login).
-func (q *Queries) FindGitHubIdentity(ctx context.Context, userID string) (*models.UserIdentity, error) {
+// FindLinkedIdentityByIssuer returns a linked (authorization) identity for a
+// user and issuer from linked_identities, or nil if not found.
+func (q *Queries) FindLinkedIdentityByIssuer(ctx context.Context, userID, issuer string) (*models.UserIdentity, error) {
 	var i models.UserIdentity
 	err := q.pool.QueryRow(ctx, `
 		SELECT id, user_id, issuer, subject,
 		       COALESCE(email,''), COALESCE(display_name,''), COALESCE(idp_name,''),
 		       access_token_enc, refresh_token_enc, token_expires_at,
 		       created_at, updated_at
-		FROM linked_identities WHERE user_id=$1 AND issuer=$2`, userID, GitHubIdentityIssuer).Scan(
+		FROM linked_identities WHERE user_id=$1 AND issuer=$2`, userID, issuer).Scan(
 		&i.ID, &i.UserID, &i.Issuer, &i.Subject, &i.Email, &i.DisplayName, &i.IDPName,
 		&i.AccessTokenEnc, &i.RefreshTokenEnc, &i.TokenExpiresAt,
 		&i.CreatedAt, &i.UpdatedAt)
@@ -269,6 +269,12 @@ func (q *Queries) FindGitHubIdentity(ctx context.Context, userID string) (*model
 		return nil, err
 	}
 	return &i, nil
+}
+
+// FindGitHubIdentity returns the GitHub identity for a user, or nil if not linked.
+// Queries linked_identities (N:M authorization table), not user_identities (login).
+func (q *Queries) FindGitHubIdentity(ctx context.Context, userID string) (*models.UserIdentity, error) {
+	return q.FindLinkedIdentityByIssuer(ctx, userID, GitHubIdentityIssuer)
 }
 
 // FindIdentityByIssuer returns a user's identity for a specific issuer, or nil if not found.
@@ -289,23 +295,34 @@ func (q *Queries) FindIdentityByIssuer(ctx context.Context, userID, issuer strin
 	return &i, nil
 }
 
-// UpsertGitHubIdentity creates or updates a GitHub identity link for a user.
-// Uses linked_identities (N:M), so multiple users may link the same GitHub account.
-func (q *Queries) UpsertGitHubIdentity(ctx context.Context, id *models.UserIdentity) error {
+// UpsertLinkedIdentity creates or updates a linked (authorization) identity.
+func (q *Queries) UpsertLinkedIdentity(ctx context.Context, id *models.UserIdentity) error {
 	_, err := q.pool.Exec(ctx, `
 		INSERT INTO linked_identities (user_id, issuer, subject, email, display_name, idp_name,
 		                               access_token_enc, refresh_token_enc, token_expires_at)
-		VALUES ($1, $2, $3, $4, $5, 'github', $6, $7, $8)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 		ON CONFLICT (user_id, issuer, subject)
 		DO UPDATE SET email = EXCLUDED.email,
 		             display_name = EXCLUDED.display_name,
+		             idp_name = EXCLUDED.idp_name,
 		             access_token_enc = EXCLUDED.access_token_enc,
 		             refresh_token_enc = EXCLUDED.refresh_token_enc,
 		             token_expires_at = EXCLUDED.token_expires_at,
 		             updated_at = now()`,
-		id.UserID, GitHubIdentityIssuer, id.Subject, id.Email, id.DisplayName,
+		id.UserID, id.Issuer, id.Subject, id.Email, id.DisplayName, id.IDPName,
 		id.AccessTokenEnc, id.RefreshTokenEnc, id.TokenExpiresAt)
 	return err
+}
+
+// UpsertGitHubIdentity creates or updates a GitHub identity link for a user.
+// Uses linked_identities (N:M), so multiple users may link the same GitHub account.
+func (q *Queries) UpsertGitHubIdentity(ctx context.Context, id *models.UserIdentity) error {
+	clone := *id
+	clone.Issuer = GitHubIdentityIssuer
+	if clone.IDPName == "" {
+		clone.IDPName = "github"
+	}
+	return q.UpsertLinkedIdentity(ctx, &clone)
 }
 
 // UpdateIdentityTokens updates the OAuth tokens for a linked identity (e.g. GitHub).
@@ -317,11 +334,16 @@ func (q *Queries) UpdateIdentityTokens(ctx context.Context, identityID string, a
 	return err
 }
 
+// DeleteLinkedIdentityByIssuer removes a linked identity for a user and issuer.
+func (q *Queries) DeleteLinkedIdentityByIssuer(ctx context.Context, userID, issuer string) error {
+	_, err := q.pool.Exec(ctx, `DELETE FROM linked_identities WHERE user_id=$1 AND issuer=$2`,
+		userID, issuer)
+	return err
+}
+
 // DeleteGitHubIdentity removes the GitHub identity link for a user.
 func (q *Queries) DeleteGitHubIdentity(ctx context.Context, userID string) error {
-	_, err := q.pool.Exec(ctx, `DELETE FROM linked_identities WHERE user_id=$1 AND issuer=$2`,
-		userID, GitHubIdentityIssuer)
-	return err
+	return q.DeleteLinkedIdentityByIssuer(ctx, userID, GitHubIdentityIssuer)
 }
 
 // ============================================================
@@ -692,9 +714,13 @@ func (q *Queries) ListGroupInvites(ctx context.Context, groupID string) ([]model
 
 func (q *Queries) CreateProject(ctx context.Context, p *models.Project) error {
 	return q.pool.QueryRow(ctx, `
-		INSERT INTO projects (name, description, owner_id, read_group_id, write_group_id, admin_group_id, uses_global_key, status)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id, created_at, updated_at`,
-		p.Name, p.Description, p.OwnerID, p.ReadGroupID, p.WriteGroupID, p.AdminGroupID, p.UsesGlobalKey, p.Status).Scan(&p.ID, &p.CreatedAt, &p.UpdatedAt)
+		INSERT INTO projects (name, description, owner_id, read_group_id, write_group_id, admin_group_id, uses_global_key, status,
+		                      nrp_access_enabled, nrp_access_enabled_by, nrp_access_enabled_at,
+		                      nrp_execution_enabled, nrp_execution_enabled_by, nrp_execution_enabled_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) RETURNING id, created_at, updated_at`,
+		p.Name, p.Description, p.OwnerID, p.ReadGroupID, p.WriteGroupID, p.AdminGroupID, p.UsesGlobalKey, p.Status,
+		p.NRPAccessEnabled, p.NRPAccessEnabledBy, p.NRPAccessEnabledAt,
+		p.NRPExecutionEnabled, p.NRPExecutionEnabledBy, p.NRPExecutionEnabledAt).Scan(&p.ID, &p.CreatedAt, &p.UpdatedAt)
 }
 
 func (q *Queries) GetProject(ctx context.Context, id string) (*models.Project, error) {
@@ -702,11 +728,15 @@ func (q *Queries) GetProject(ctx context.Context, id string) (*models.Project, e
 	err := q.pool.QueryRow(ctx, `
 		SELECT id, name, description, owner_id, read_group_id, write_group_id, admin_group_id,
 		       uses_global_key, status, created_at, updated_at,
-		       agent_provider, ext_llm_analysis_model, ext_llm_poc_model, ext_llm_fallback
+		       agent_provider, ext_llm_analysis_model, ext_llm_poc_model, ext_llm_fallback,
+		       nrp_access_enabled, nrp_access_enabled_by, nrp_access_enabled_at,
+		       nrp_execution_enabled, nrp_execution_enabled_by, nrp_execution_enabled_at
 		FROM projects WHERE id=$1`, id).Scan(
 		&p.ID, &p.Name, &p.Description, &p.OwnerID, &p.ReadGroupID, &p.WriteGroupID, &p.AdminGroupID,
 		&p.UsesGlobalKey, &p.Status, &p.CreatedAt, &p.UpdatedAt,
-		&p.AgentProvider, &p.ExternalLLMAnalysisModel, &p.ExternalLLMPoCModel, &p.ExternalLLMFallback)
+		&p.AgentProvider, &p.ExternalLLMAnalysisModel, &p.ExternalLLMPoCModel, &p.ExternalLLMFallback,
+		&p.NRPAccessEnabled, &p.NRPAccessEnabledBy, &p.NRPAccessEnabledAt,
+		&p.NRPExecutionEnabled, &p.NRPExecutionEnabledBy, &p.NRPExecutionEnabledAt)
 	if err != nil {
 		return nil, err
 	}
@@ -718,10 +748,14 @@ func (q *Queries) UpdateProject(ctx context.Context, p *models.Project) error {
 		UPDATE projects SET name=$2, description=$3, read_group_id=$4, write_group_id=$5,
 		       admin_group_id=$6, uses_global_key=$7, status=$8,
 		       agent_provider=$9, ext_llm_analysis_model=$10, ext_llm_poc_model=$11, ext_llm_fallback=$12,
+		       nrp_access_enabled=$13, nrp_access_enabled_by=$14, nrp_access_enabled_at=$15,
+		       nrp_execution_enabled=$16, nrp_execution_enabled_by=$17, nrp_execution_enabled_at=$18,
 		       updated_at=NOW()
 		WHERE id=$1`, p.ID, p.Name, p.Description, p.ReadGroupID, p.WriteGroupID, p.AdminGroupID,
 		p.UsesGlobalKey, p.Status,
-		p.AgentProvider, p.ExternalLLMAnalysisModel, p.ExternalLLMPoCModel, p.ExternalLLMFallback)
+		p.AgentProvider, p.ExternalLLMAnalysisModel, p.ExternalLLMPoCModel, p.ExternalLLMFallback,
+		p.NRPAccessEnabled, p.NRPAccessEnabledBy, p.NRPAccessEnabledAt,
+		p.NRPExecutionEnabled, p.NRPExecutionEnabledBy, p.NRPExecutionEnabledAt)
 	return err
 }
 
@@ -737,6 +771,8 @@ func (q *Queries) ListUserProjects(ctx context.Context, userID string) ([]models
 		       p.read_group_id, p.write_group_id, p.admin_group_id,
 		       p.uses_global_key, p.status, p.created_at, p.updated_at,
 		       p.agent_provider, p.ext_llm_analysis_model, p.ext_llm_poc_model, p.ext_llm_fallback,
+		       p.nrp_access_enabled, p.nrp_access_enabled_by, p.nrp_access_enabled_at,
+		       p.nrp_execution_enabled, p.nrp_execution_enabled_by, p.nrp_execution_enabled_at,
 		       CASE
 		         WHEN p.owner_id = $1 THEN 'admin'
 		         WHEN gm_a.user_id IS NOT NULL THEN 'admin'
@@ -763,6 +799,8 @@ func (q *Queries) ListUserProjects(ctx context.Context, userID string) ([]models
 			&p.ReadGroupID, &p.WriteGroupID, &p.AdminGroupID,
 			&p.UsesGlobalKey, &p.Status, &p.CreatedAt, &p.UpdatedAt,
 			&p.AgentProvider, &p.ExternalLLMAnalysisModel, &p.ExternalLLMPoCModel, &p.ExternalLLMFallback,
+			&p.NRPAccessEnabled, &p.NRPAccessEnabledBy, &p.NRPAccessEnabledAt,
+			&p.NRPExecutionEnabled, &p.NRPExecutionEnabledBy, &p.NRPExecutionEnabledAt,
 			&p.MyRole); err != nil {
 			return nil, err
 		}
@@ -777,7 +815,9 @@ func (q *Queries) ListAllProjects(ctx context.Context) ([]models.Project, error)
 		SELECT DISTINCT p.id, p.name, p.description, p.owner_id,
 		       p.read_group_id, p.write_group_id, p.admin_group_id,
 		       p.uses_global_key, p.status, p.created_at, p.updated_at,
-		       p.agent_provider, p.ext_llm_analysis_model, p.ext_llm_poc_model, p.ext_llm_fallback
+		       p.agent_provider, p.ext_llm_analysis_model, p.ext_llm_poc_model, p.ext_llm_fallback,
+		       p.nrp_access_enabled, p.nrp_access_enabled_by, p.nrp_access_enabled_at,
+		       p.nrp_execution_enabled, p.nrp_execution_enabled_by, p.nrp_execution_enabled_at
 		FROM projects p
 		ORDER BY p.name`)
 	if err != nil {
@@ -790,7 +830,9 @@ func (q *Queries) ListAllProjects(ctx context.Context) ([]models.Project, error)
 		if err := rows.Scan(&p.ID, &p.Name, &p.Description, &p.OwnerID,
 			&p.ReadGroupID, &p.WriteGroupID, &p.AdminGroupID,
 			&p.UsesGlobalKey, &p.Status, &p.CreatedAt, &p.UpdatedAt,
-			&p.AgentProvider, &p.ExternalLLMAnalysisModel, &p.ExternalLLMPoCModel, &p.ExternalLLMFallback); err != nil {
+			&p.AgentProvider, &p.ExternalLLMAnalysisModel, &p.ExternalLLMPoCModel, &p.ExternalLLMFallback,
+			&p.NRPAccessEnabled, &p.NRPAccessEnabledBy, &p.NRPAccessEnabledAt,
+			&p.NRPExecutionEnabled, &p.NRPExecutionEnabledBy, &p.NRPExecutionEnabledAt); err != nil {
 			return nil, err
 		}
 		p.MyRole = "admin" // site admins have admin role on all projects

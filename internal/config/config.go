@@ -80,7 +80,8 @@ type Config struct {
 	// Current AUP version users must agree to.
 	AUPVersion string `envconfig:"AUP_VERSION" default:"1.0"`
 
-	// Executor mode: "local" (in-process fork/exec), "process" (detached daemon, default), or "kubernetes".
+	// Executor mode: "local" (in-process fork/exec), "process" (detached daemon, default),
+	// "kubernetes", or "nrp" (Kubernetes executor with NRP-specific policy checks).
 	ExecutorMode string `envconfig:"EXECUTOR_MODE" default:"process"`
 
 	// Process executor settings (used when EXECUTOR_MODE=process).
@@ -118,6 +119,12 @@ type Config struct {
 	GitHubAppClientSecret string `envconfig:"GITHUB_APP_CLIENT_SECRET" default:""`    // OAuth client secret for user authorization
 	GitHubWebhookSecret   string `envconfig:"GITHUB_WEBHOOK_SECRET" default:""`       // HMAC-SHA256 secret for webhook validation
 	GitHubAPIURL          string `envconfig:"GITHUB_API_URL" default:"https://api.github.com"` // for GitHub Enterprise
+
+	// NRP OAuth2 / OIDC integration.
+	NRPOIDCIssuer       string `envconfig:"NRP_OIDC_ISSUER" default:""`
+	NRPOIDCClientID     string `envconfig:"NRP_OIDC_CLIENT_ID" default:""`
+	NRPOIDCClientSecret string `envconfig:"NRP_OIDC_CLIENT_SECRET" default:""`
+	NRPLLMExchangeURL   string `envconfig:"NRP_LLM_EXCHANGE_URL" default:"https://gitlab.nrp-nautilus.io/api/token/llm/exchange"`
 
 	// Worker mode settings (used inside worker pods / detached processes).
 	WorkerMode     bool   `envconfig:"SWAMP_WORKER_MODE" default:"false"`
@@ -274,6 +281,11 @@ func (c *Config) IsDevelopment() bool {
 // IsKubernetesExecutor returns true if the executor mode is kubernetes.
 func (c *Config) IsKubernetesExecutor() bool {
 	return c.ExecutorMode == "kubernetes"
+}
+
+// IsNRPExecutor returns true if the executor mode is the NRP wrapper.
+func (c *Config) IsNRPExecutor() bool {
+	return c.ExecutorMode == "nrp"
 }
 
 // IsProcessExecutor returns true if the executor mode is process.
