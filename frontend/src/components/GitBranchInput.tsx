@@ -75,7 +75,7 @@ export const GitBranchInput = forwardRef<GitBranchInputHandle, Props>(function G
   }, []);
 
   // Try to fetch branches from the backend (supports private repos via installation tokens).
-  const fetchBranchesFromBackend = useCallback(async (owner?: string, repo?: string) => {
+  const fetchBranchesFromBackend = useCallback(async () => {
     // If we have a specific package, use the package-level endpoint.
     if (projectId && packageId) {
       try {
@@ -93,23 +93,11 @@ export const GitBranchInput = forwardRef<GitBranchInputHandle, Props>(function G
         // Fall through to owner/repo endpoint or public API.
       }
     }
-    // Try the owner/repo endpoint (finds installation automatically).
-    if (owner && repo) {
-      try {
-        const names = await api.github.listBranches(owner, repo);
-        if (names && names.length > 0) {
-          setBranches(names);
-          setDefaultBranch(names[0]);
-          if (!value || value === 'main' || value === 'master') {
-            onChange(names[0]);
-          }
-          onDetectionResultRef.current?.({ ok: true });
-          return true;
-        }
-      } catch {
-        // Fall through to public API.
-      }
-    }
+    // Do NOT fall back to the global listBranches endpoint here.
+    // That endpoint is admin-only because it uses SWAMP's installation tokens
+    // to access private repos without user-level authorization, which would
+    // allow any SWAMP user to read branches from repos in other organizations.
+    // Non-admin users without a packageId will fall through to the public API.
     return false;
   }, [projectId, packageId, value, onChange]);
 
@@ -118,7 +106,7 @@ export const GitBranchInput = forwardRef<GitBranchInputHandle, Props>(function G
     setLoading(true);
     try {
       // Try backend API first for private repo support.
-      const fromBackend = await fetchBranchesFromBackend(owner, repo);
+      const fromBackend = await fetchBranchesFromBackend();
       if (fromBackend) return;
 
       // Fall back to public GitHub API.

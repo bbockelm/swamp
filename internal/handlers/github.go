@@ -366,11 +366,15 @@ func (h *Handler) ListPackageBranches(w http.ResponseWriter, r *http.Request) {
 }
 
 // ListRepoBranches lists branches for a GitHub repo by owner/repo.
-// It finds the appropriate installation automatically. Any installation
-// for the given owner is usable because GitHub App installations are
-// org-scoped — access is determined by the org admin, not the SWAMP user.
+// Restricted to admins because it uses SWAMP's installation tokens to access
+// repos without user-level authorization, which could expose private repos
+// belonging to other organizations.
 // GET /api/v1/github/branches?owner=X&repo=Y
 func (h *Handler) ListRepoBranches(w http.ResponseWriter, r *http.Request) {
+	if !UserHasRole(r.Context(), RoleAdmin) {
+		respondError(w, http.StatusForbidden, "Admin access required")
+		return
+	}
 	if h.ghClient == nil || !h.ghClient.Configured() {
 		respondError(w, http.StatusBadRequest, "GitHub App is not configured")
 		return
@@ -400,11 +404,15 @@ func (h *Handler) ListRepoBranches(w http.ResponseWriter, r *http.Request) {
 }
 
 // CheckRepoAccess verifies whether the GitHub App can access a specific
-// repository. This checks ALL installations (not filtered by user) because
-// installations are org-scoped. The response does not reveal who installed
-// the app or the installation ID.
+// repository. Restricted to admins because it uses SWAMP's installation tokens
+// to probe private repo access without user-level authorization.
+// Regular users should use UserRepoAccess instead.
 // GET /api/v1/github/check-repo-access?owner=X&repo=Y
 func (h *Handler) CheckRepoAccess(w http.ResponseWriter, r *http.Request) {
+	if !UserHasRole(r.Context(), RoleAdmin) {
+		respondError(w, http.StatusForbidden, "Admin access required")
+		return
+	}
 	type response struct {
 		HasInstallation bool   `json:"has_installation"`
 		Accessible      bool   `json:"accessible"`
@@ -713,28 +721,17 @@ func (h *Handler) UserRepoAccess(w http.ResponseWriter, r *http.Request) {
 	// 1. Check if the user has a linked GitHub identity with a valid token.
 	token := h.getValidGitHubToken(r.Context(), user.ID)
 	if token == "" {
-		// Not linked or token invalid — still check installation-based access
-		// so the SARIF toggle and branch detection work even without a personal
-		// GitHub link. NeedsLink is set as a suggestion only.
-		result := h.ghClient.CheckRepoAccess(r.Context(), owner, repo)
+		// No linked GitHub account — do NOT use SWAMP's installation tokens to
+		// probe private repo access on behalf of an unverified user. Any SWAMP
+		// user could otherwise access private repos belonging to other orgs that
+		// happen to have the GitHub App installed.
 		resp := response{
-			HasInstallation: result.HasInstallation,
-			Accessible:      result.Accessible,
-			DefaultBranch:   result.DefaultBranch,
-			Error:           result.Error,
-		}
-		if result.Accessible {
-			// Installation covers this repo — find its ID.
-			if inst, err := h.queries.GetInstallationByOwner(r.Context(), owner); err == nil && inst != nil {
-				resp.InstallationID = inst.InstallationID
-				resp.InstallationAccount = inst.AccountLogin
-			}
-		}
-		if !result.HasInstallation {
-			resp.InstallURL = h.ghClient.InstallURL(r.Context())
+			NeedsLink: h.ghClient.OAuthConfigured(),
 		}
 		if h.ghClient.OAuthConfigured() {
-			resp.NeedsLink = true
+			resp.InstallURL = h.ghClient.InstallURL(r.Context())
+		} else {
+			resp.Error = "A linked GitHub account is required to access private repositories. Contact your administrator."
 		}
 		respondJSON(w, http.StatusOK, resp)
 		return
