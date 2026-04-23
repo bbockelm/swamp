@@ -602,7 +602,7 @@ func (h *Handler) UpdateProjectNRPConfig(w http.ResponseWriter, r *http.Request)
 		isSystemAdmin := UserHasRole(r.Context(), RoleAdmin)
 		isProjectAdmin := h.userIsProjectAdmin(r.Context(), projectID)
 		hasLinkedNRPIdentity := h.getValidNRPToken(r.Context(), user.ID) != ""
-		if !isSystemAdmin && !(isProjectAdmin && hasLinkedNRPIdentity) {
+		if !isSystemAdmin && (!isProjectAdmin || !hasLinkedNRPIdentity) {
 			respondError(w, http.StatusForbidden, "Changing NRP access requires either global admin privileges or a project admin with a linked NRP identity")
 			return
 		}
@@ -616,7 +616,8 @@ func (h *Handler) UpdateProjectNRPConfig(w http.ResponseWriter, r *http.Request)
 		}
 	}
 	if req.ExecutionEnabled != nil {
-		if !h.userIsProjectAdmin(r.Context(), projectID) {
+		isSystemAdmin := UserHasRole(r.Context(), RoleAdmin)
+		if !isSystemAdmin && !h.userIsProjectAdmin(r.Context(), projectID) {
 			respondError(w, http.StatusForbidden, "Project admin access required to change NRP execution")
 			return
 		}
@@ -624,7 +625,7 @@ func (h *Handler) UpdateProjectNRPConfig(w http.ResponseWriter, r *http.Request)
 			respondError(w, http.StatusBadRequest, "NRP access must be enabled for this project first")
 			return
 		}
-		if *req.ExecutionEnabled && h.getValidNRPToken(r.Context(), user.ID) == "" {
+		if !isSystemAdmin && *req.ExecutionEnabled && h.getValidNRPToken(r.Context(), user.ID) == "" {
 			respondError(w, http.StatusBadRequest, "Link your NRP account before enabling NRP execution")
 			return
 		}
