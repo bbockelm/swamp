@@ -696,7 +696,7 @@ func (wh *WorkerHandler) trackSARIFUploadAttempt(ctx context.Context, analysis *
 			Str("package_id", pkg.ID).
 			Str("package", pkg.Name).
 			Msg("Attempting GitHub SARIF upload for package result")
-		url, err := wh.h.ghClient.UploadSARIFForPackage(ctx, pkg, sarifData)
+		url, err := wh.h.ghClient.UploadSARIFForPackage(ctx, pkg, sarifData, analysis.GitCommit)
 		if err != nil {
 			uploadErrMsg = err.Error()
 			log.Warn().Err(err).Str("analysis_id", analysis.ID).Str("result_id", result.ID).Str("package_id", pkg.ID).Msg("GitHub SARIF upload failed for package result")
@@ -712,7 +712,7 @@ func (wh *WorkerHandler) trackSARIFUploadAttempt(ctx context.Context, analysis *
 				Str("analysis_id", analysis.ID).
 				Str("result_id", result.ID).
 				Msg("Attempting GitHub SARIF upload via project-level config")
-			url, upErr := wh.h.ghClient.UploadSARIFForProject(ctx, analysis.ProjectID, sarifData)
+			url, upErr := wh.h.ghClient.UploadSARIFForProject(ctx, analysis.ProjectID, sarifData, analysis.GitCommit)
 			if upErr != nil {
 				uploadErrMsg = upErr.Error()
 				log.Warn().Err(upErr).Str("analysis_id", analysis.ID).Str("result_id", result.ID).Msg("GitHub SARIF upload failed for project result")

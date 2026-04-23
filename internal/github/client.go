@@ -650,10 +650,57 @@ func (c *Client) CloneCredentialForPackage(ctx context.Context, pkg *models.Soft
 	return cred, nil
 }
 
+// getHeadCommitSHA resolves the HEAD commit SHA for a branch using the GitHub
+// git/ref API. Returns an error if the SHA cannot be determined; the caller
+// should not attempt a SARIF upload without a valid 40-char hex SHA.
+func (c *Client) getHeadCommitSHA(ctx context.Context, installationID int64, owner, repo, branch string) (string, error) {
+	token, err := c.GetInstallationToken(ctx, installationID)
+	if err != nil {
+		return "", fmt.Errorf("getting installation token: %w", err)
+	}
+	if branch == "" {
+		branch = "HEAD"
+	}
+	// Use the git/ref endpoint — lightweight, returns only the ref object.
+	apiURL := fmt.Sprintf("%s/repos/%s/%s/git/ref/heads/%s", c.apiURL, owner, repo, branch)
+	req, err := http.NewRequestWithContext(ctx, "GET", apiURL, nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("fetching git ref: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != 200 {
+		return "", fmt.Errorf("git ref returned %d: %s", resp.StatusCode, string(body))
+	}
+
+	var result struct {
+		Object struct {
+			SHA string `json:"sha"`
+		} `json:"object"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return "", fmt.Errorf("parsing git ref response: %w", err)
+	}
+	if result.Object.SHA == "" {
+		return "", fmt.Errorf("empty SHA in git ref response")
+	}
+	return result.Object.SHA, nil
+}
+
 // UploadSARIFForProject implements agent.GitHubIntegration.
 // It checks the project's GitHub config and uploads SARIF if enabled.
+// commitSHA should be the known 40-char SHA from the analysis record; pass ""
+// to fall back to SARIF extraction and then a GitHub API lookup.
 // Returns the Code Scanning URL if the upload succeeded, or "" if skipped.
-func (c *Client) UploadSARIFForProject(ctx context.Context, projectID string, sarifData []byte) (string, error) {
+func (c *Client) UploadSARIFForProject(ctx context.Context, projectID string, sarifData []byte, commitSHA string) (string, error) {
 	if c == nil || !c.Configured() {
 		return "", nil
 	}
@@ -662,11 +709,17 @@ func (c *Client) UploadSARIFForProject(ctx context.Context, projectID string, sa
 		return "", nil
 	}
 
-	// Try to extract the commit SHA from the SARIF file.
-	commitSHA := extractCommitSHA(sarifData)
 	if commitSHA == "" {
-		// Use "HEAD" as fallback — GitHub will resolve it.
-		commitSHA = "HEAD"
+		commitSHA = extractCommitSHA(sarifData)
+	}
+	if commitSHA == "" {
+		// Neither the analysis record nor the SARIF contained a SHA —
+		// resolve it from the branch HEAD. GitHub requires a real 40-char hex SHA.
+		sha, err := c.getHeadCommitSHA(ctx, ghCfg.InstallationID, ghCfg.GitHubOwner, ghCfg.GitHubRepo, ghCfg.DefaultBranch)
+		if err != nil {
+			return "", fmt.Errorf("resolving HEAD SHA for SARIF upload: %w", err)
+		}
+		commitSHA = sha
 	}
 
 	return c.UploadSARIF(ctx, ghCfg.InstallationID, ghCfg.GitHubOwner, ghCfg.GitHubRepo,
@@ -675,7 +728,9 @@ func (c *Client) UploadSARIFForProject(ctx context.Context, projectID string, sa
 
 // UploadSARIFForPackage uploads SARIF to GitHub Code Scanning using a
 // package's repo plus project-linked installation. Falls back to project-level config.
-func (c *Client) UploadSARIFForPackage(ctx context.Context, pkg *models.SoftwarePackage, sarifData []byte) (string, error) {
+// commitSHA should be the known 40-char SHA from the analysis record; pass ""
+// to fall back to SARIF extraction and then a GitHub API lookup.
+func (c *Client) UploadSARIFForPackage(ctx context.Context, pkg *models.SoftwarePackage, sarifData []byte, commitSHA string) (string, error) {
 	if c == nil || !c.Configured() {
 		return "", nil
 	}
@@ -689,18 +744,26 @@ func (c *Client) UploadSARIFForPackage(ctx context.Context, pkg *models.Software
 	}
 	installationID, _ := c.resolveProjectInstallationForPackage(ctx, pkg, owner)
 	if owner != "" && repo != "" && installationID != 0 {
-		commitSHA := extractCommitSHA(sarifData)
-		if commitSHA == "" {
-			commitSHA = "HEAD"
+		sha := commitSHA
+		if sha == "" {
+			sha = extractCommitSHA(sarifData)
 		}
-		return c.UploadSARIF(ctx, installationID, owner, repo,
-			commitSHA, pkg.GitBranch, sarifData)
+		if sha == "" {
+			// Neither the analysis record nor the SARIF contained a SHA —
+			// resolve it from the branch HEAD.
+			var err error
+			sha, err = c.getHeadCommitSHA(ctx, installationID, owner, repo, pkg.GitBranch)
+			if err != nil {
+				return "", fmt.Errorf("resolving HEAD SHA for package SARIF upload: %w", err)
+			}
+		}
+		return c.UploadSARIF(ctx, installationID, owner, repo, sha, pkg.GitBranch, sarifData)
 	}
 	if owner != "" && repo != "" {
 		return "", fmt.Errorf("no project-linked GitHub App installation found for owner %q", owner)
 	}
 	// Fall back to project-level only when package repo fields are unavailable.
-	return c.UploadSARIFForProject(ctx, pkg.ProjectID, sarifData)
+	return c.UploadSARIFForProject(ctx, pkg.ProjectID, sarifData, commitSHA)
 }
 
 // RepoAccessResult describes whether the GitHub App can access a specific repo.

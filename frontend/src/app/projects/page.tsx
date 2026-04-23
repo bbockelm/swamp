@@ -521,7 +521,7 @@ function ProjectCard({
           <div className="p-4">
             {tab === "packages" && <PackagesTab projectId={project.id} />}
             {tab === "analyses" && <AnalysesTab projectId={project.id} />}
-            {tab === "findings" && <FindingsTabInline projectId={project.id} canEdit={canEdit} />}
+            {tab === "findings" && <FindingsTabInline projectId={project.id} projectName={project.name} canEdit={canEdit} />}
             {tab === "github" && canEdit && <ProjectGitHubTab projectId={project.id} canManageInstallations={isProjectAdmin} />}
             {tab === "api-keys" && isProjectAdmin && <ProviderKeysTab projectId={project.id} />}
             {tab === "settings" && canEdit && (
@@ -2361,10 +2361,12 @@ function SettingsTab({
 
 function FindingsTabInline({
   projectId,
+  projectName,
   packages,
   canEdit,
 }: {
   projectId: string;
+  projectName: string;
   packages?: SoftwarePackage[];
   canEdit: boolean;
 }) {
@@ -2376,6 +2378,7 @@ function FindingsTabInline({
       <h3 className="text-md font-semibold mb-3">Security Findings</h3>
       <FindingsTable
         projectId={projectId}
+        projectName={projectName}
         gitUrl={gitUrl}
         canEdit={canEdit}
       />

@@ -77,6 +77,7 @@ function SortIcon({ field, sortField, sortDir }: { field: SortField; sortField: 
 
 export function FindingsTable({
   projectId,
+  projectName,
   gitUrl,
   initialLevel,
   initialAnalysisId,
@@ -84,6 +85,7 @@ export function FindingsTable({
   canEdit = true,
 }: {
   projectId: string;
+  projectName?: string;
   gitUrl?: string;
   initialLevel?: string;
   initialAnalysisId?: string;
@@ -310,6 +312,7 @@ export function FindingsTable({
                   key={f.id}
                   finding={f}
                   projectId={projectId}
+                  projectName={projectName}
                   gitUrl={gitUrl}
                   expanded={expandedId === f.id}
                   onToggle={() => setExpandedId(expandedId === f.id ? null : f.id)}
@@ -335,6 +338,7 @@ export function FindingsTable({
 function FindingRow({
   finding,
   projectId,
+  projectName,
   gitUrl,
   expanded,
   onToggle,
@@ -342,6 +346,7 @@ function FindingRow({
 }: {
   finding: Finding;
   projectId: string;
+  projectName?: string;
   gitUrl?: string;
   expanded: boolean;
   onToggle: () => void;
@@ -393,7 +398,7 @@ function FindingRow({
       {expanded && (
         <tr>
           <td colSpan={6} className="bg-gray-50 px-4 py-4">
-            <FindingDetail finding={finding} projectId={projectId} canEdit={canEdit} />
+            <FindingDetail finding={finding} projectId={projectId} projectName={projectName} canEdit={canEdit} />
           </td>
         </tr>
       )}
@@ -401,7 +406,7 @@ function FindingRow({
   );
 }
 
-function FindingDetail({ finding, projectId, canEdit }: { finding: Finding; projectId: string; canEdit: boolean }) {
+function FindingDetail({ finding, projectId, projectName, canEdit }: { finding: Finding; projectId: string; projectName?: string; canEdit: boolean }) {
   const queryClient = useQueryClient();
   const [status, setStatus] = useState(finding.latest_status || 'open');
   const [note, setNote] = useState(finding.latest_note || '');
@@ -424,6 +429,12 @@ function FindingDetail({ finding, projectId, canEdit }: { finding: Finding; proj
     <div className="space-y-4">
       {/* Details */}
       <div className="grid grid-cols-2 gap-4 text-sm">
+        {projectName && (
+          <div className="col-span-2">
+            <span className="text-gray-500">Project:</span>{' '}
+            <span className="font-medium">{projectName}</span>
+          </div>
+        )}
         <div>
           <span className="text-gray-500">Rule:</span>{' '}
           <span className="font-mono">{finding.rule_id || '-'}</span>

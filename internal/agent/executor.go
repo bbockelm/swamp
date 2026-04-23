@@ -703,7 +703,7 @@ func (e *Executor) uploadOutputDir(ctx context.Context, outputDir, analysisID st
 							Str("package_id", pkg.ID).
 							Str("package", pkg.Name).
 							Msg("Attempting GitHub SARIF upload for package result")
-						url, upErr := e.ghInteg.UploadSARIFForPackage(ctx, &pkg, plaintext)
+						url, upErr := e.ghInteg.UploadSARIFForPackage(ctx, &pkg, plaintext, analysis.GitCommit)
 						if upErr != nil {
 							uploadErrMsg = upErr.Error()
 							log.Warn().Err(upErr).
@@ -724,7 +724,7 @@ func (e *Executor) uploadOutputDir(ctx context.Context, outputDir, analysisID st
 							Str("analysis_id", analysisID).
 							Str("result_id", results.Results[i].ID).
 							Msg("Attempting GitHub SARIF upload via project-level config")
-						url, upErr := e.ghInteg.UploadSARIFForProject(ctx, analysis.ProjectID, plaintext)
+						url, upErr := e.ghInteg.UploadSARIFForProject(ctx, analysis.ProjectID, plaintext, analysis.GitCommit)
 						if upErr != nil {
 							uploadErrMsg = upErr.Error()
 							log.Warn().Err(upErr).

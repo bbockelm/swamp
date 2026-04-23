@@ -120,7 +120,7 @@ export default function ProjectDetailClient() {
 
       {/* Findings tab */}
       {tab === 'findings' && (
-        <FindingsTab projectId={id} packages={packages} canEdit={canEdit} />
+        <FindingsTab projectId={id} projectName={project.name} packages={packages} canEdit={canEdit} />
       )}
 
       {/* API Keys tab */}
@@ -1196,10 +1196,12 @@ function AnalysesTab({
 
 function FindingsTab({
   projectId,
+  projectName,
   packages,
   canEdit,
 }: {
   projectId: string;
+  projectName: string;
   packages?: SoftwarePackage[];
   canEdit: boolean;
 }) {
@@ -1214,6 +1216,7 @@ function FindingsTab({
       <h2 className="text-lg font-semibold mb-4">Security Findings</h2>
       <FindingsTable
         projectId={projectId}
+        projectName={projectName}
         gitUrl={gitUrl}
         initialAnalysisId={initialAnalysisId}
         initialFindingId={initialFindingId}

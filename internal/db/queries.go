@@ -212,9 +212,16 @@ func (q *Queries) ListUserIdentities(ctx context.Context, userID string) ([]mode
 	rows, err := q.pool.Query(ctx, `
 		SELECT id, user_id, issuer, subject,
 		       COALESCE(email,''), COALESCE(display_name,''), COALESCE(idp_name,''),
-		       access_token_enc, refresh_token_enc, token_expires_at,
+		       NULL::text, NULL::text, NULL::timestamptz,
 		       created_at, COALESCE(updated_at, created_at)
-		FROM user_identities WHERE user_id=$1 ORDER BY created_at`, userID)
+		FROM user_identities WHERE user_id=$1
+		UNION ALL
+		SELECT id, user_id, issuer, subject,
+		       COALESCE(email,''), COALESCE(display_name,''), COALESCE(idp_name,''),
+		       NULL::text, NULL::text, NULL::timestamptz,
+		       created_at, updated_at
+		FROM linked_identities WHERE user_id=$1
+		ORDER BY created_at`, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -233,7 +240,12 @@ func (q *Queries) ListUserIdentities(ctx context.Context, userID string) ([]mode
 }
 
 func (q *Queries) DeleteIdentity(ctx context.Context, id string) error {
-	_, err := q.pool.Exec(ctx, `DELETE FROM user_identities WHERE id=$1`, id)
+	// The ID may be in either user_identities (login) or linked_identities (authorization).
+	// Delete from both; the correct table will match exactly one row.
+	if _, err := q.pool.Exec(ctx, `DELETE FROM user_identities WHERE id=$1`, id); err != nil {
+		return err
+	}
+	_, err := q.pool.Exec(ctx, `DELETE FROM linked_identities WHERE id=$1`, id)
 	return err
 }
 
@@ -241,8 +253,22 @@ func (q *Queries) DeleteIdentity(ctx context.Context, id string) error {
 const GitHubIdentityIssuer = "https://github.com"
 
 // FindGitHubIdentity returns the GitHub identity for a user, or nil if not linked.
+// Queries linked_identities (N:M authorization table), not user_identities (login).
 func (q *Queries) FindGitHubIdentity(ctx context.Context, userID string) (*models.UserIdentity, error) {
-	return q.FindIdentityByIssuer(ctx, userID, GitHubIdentityIssuer)
+	var i models.UserIdentity
+	err := q.pool.QueryRow(ctx, `
+		SELECT id, user_id, issuer, subject,
+		       COALESCE(email,''), COALESCE(display_name,''), COALESCE(idp_name,''),
+		       access_token_enc, refresh_token_enc, token_expires_at,
+		       created_at, updated_at
+		FROM linked_identities WHERE user_id=$1 AND issuer=$2`, userID, GitHubIdentityIssuer).Scan(
+		&i.ID, &i.UserID, &i.Issuer, &i.Subject, &i.Email, &i.DisplayName, &i.IDPName,
+		&i.AccessTokenEnc, &i.RefreshTokenEnc, &i.TokenExpiresAt,
+		&i.CreatedAt, &i.UpdatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return &i, nil
 }
 
 // FindIdentityByIssuer returns a user's identity for a specific issuer, or nil if not found.
@@ -264,12 +290,13 @@ func (q *Queries) FindIdentityByIssuer(ctx context.Context, userID, issuer strin
 }
 
 // UpsertGitHubIdentity creates or updates a GitHub identity link for a user.
+// Uses linked_identities (N:M), so multiple users may link the same GitHub account.
 func (q *Queries) UpsertGitHubIdentity(ctx context.Context, id *models.UserIdentity) error {
 	_, err := q.pool.Exec(ctx, `
-		INSERT INTO user_identities (user_id, issuer, subject, email, display_name, idp_name,
-		                             access_token_enc, refresh_token_enc, token_expires_at)
+		INSERT INTO linked_identities (user_id, issuer, subject, email, display_name, idp_name,
+		                               access_token_enc, refresh_token_enc, token_expires_at)
 		VALUES ($1, $2, $3, $4, $5, 'github', $6, $7, $8)
-		ON CONFLICT (issuer, subject)
+		ON CONFLICT (user_id, issuer, subject)
 		DO UPDATE SET email = EXCLUDED.email,
 		             display_name = EXCLUDED.display_name,
 		             access_token_enc = EXCLUDED.access_token_enc,
@@ -281,10 +308,10 @@ func (q *Queries) UpsertGitHubIdentity(ctx context.Context, id *models.UserIdent
 	return err
 }
 
-// UpdateIdentityTokens updates the OAuth tokens for an identity.
+// UpdateIdentityTokens updates the OAuth tokens for a linked identity (e.g. GitHub).
 func (q *Queries) UpdateIdentityTokens(ctx context.Context, identityID string, accessTokenEnc, refreshTokenEnc *string, expiresAt *time.Time) error {
 	_, err := q.pool.Exec(ctx, `
-		UPDATE user_identities
+		UPDATE linked_identities
 		SET access_token_enc = $2, refresh_token_enc = $3, token_expires_at = $4, updated_at = now()
 		WHERE id = $1`, identityID, accessTokenEnc, refreshTokenEnc, expiresAt)
 	return err
@@ -292,7 +319,7 @@ func (q *Queries) UpdateIdentityTokens(ctx context.Context, identityID string, a
 
 // DeleteGitHubIdentity removes the GitHub identity link for a user.
 func (q *Queries) DeleteGitHubIdentity(ctx context.Context, userID string) error {
-	_, err := q.pool.Exec(ctx, `DELETE FROM user_identities WHERE user_id=$1 AND issuer=$2`,
+	_, err := q.pool.Exec(ctx, `DELETE FROM linked_identities WHERE user_id=$1 AND issuer=$2`,
 		userID, GitHubIdentityIssuer)
 	return err
 }

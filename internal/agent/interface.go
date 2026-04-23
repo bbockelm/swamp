@@ -49,9 +49,13 @@ type GitHubIntegration interface {
 	// UploadSARIFForProject uploads SARIF results to GitHub Code Scanning
 	// if the project has SARIF upload enabled. Returns the Code Scanning
 	// alerts URL if upload succeeded, or "" if skipped.
-	UploadSARIFForProject(ctx context.Context, projectID string, sarifData []byte) (string, error)
+	// commitSHA is the known 40-char git SHA for the analysis; pass "" to
+	// auto-detect from SARIF or from the GitHub API.
+	UploadSARIFForProject(ctx context.Context, projectID string, sarifData []byte, commitSHA string) (string, error)
 
 	// UploadSARIFForPackage uploads SARIF results using a package's own
 	// GitHub config, falling back to project-level config.
-	UploadSARIFForPackage(ctx context.Context, pkg *models.SoftwarePackage, sarifData []byte) (string, error)
+	// commitSHA is the known 40-char git SHA for the analysis; pass "" to
+	// auto-detect from SARIF or from the GitHub API.
+	UploadSARIFForPackage(ctx context.Context, pkg *models.SoftwarePackage, sarifData []byte, commitSHA string) (string, error)
 }

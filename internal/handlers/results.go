@@ -209,7 +209,7 @@ func (h *Handler) RetrySARIFUpload(w http.ResponseWriter, r *http.Request) {
 
 		var uploadURL, uploadErr string
 		if pkg != nil && pkg.SARIFUploadEnabled && pkg.GitHubOwner != "" && pkg.GitHubRepo != "" {
-			url, err := h.ghClient.UploadSARIFForPackage(r.Context(), pkg, plaintext)
+			url, err := h.ghClient.UploadSARIFForPackage(r.Context(), pkg, plaintext, analysis.GitCommit)
 			if err != nil {
 				uploadErr = err.Error()
 			} else {
@@ -218,7 +218,7 @@ func (h *Handler) RetrySARIFUpload(w http.ResponseWriter, r *http.Request) {
 		} else {
 			// Try project-level config.
 			if ghCfg, cfgErr := h.queries.GetProjectGitHubConfig(r.Context(), analysis.ProjectID); cfgErr == nil && ghCfg.SARIFUploadEnabled && ghCfg.InstallationID != 0 {
-				url, err := h.ghClient.UploadSARIFForProject(r.Context(), analysis.ProjectID, plaintext)
+				url, err := h.ghClient.UploadSARIFForProject(r.Context(), analysis.ProjectID, plaintext, analysis.GitCommit)
 				if err != nil {
 					uploadErr = err.Error()
 				} else {
