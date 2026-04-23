@@ -120,6 +120,9 @@ func (h *Handler) UpdatePackage(w http.ResponseWriter, r *http.Request) {
 		GitHubRepo         *string `json:"github_repo"`
 		InstallationID     *int64  `json:"installation_id"`
 		SARIFUploadEnabled *bool   `json:"sarif_upload_enabled"`
+		GitHubSyncEnabled  *bool   `json:"github_sync_enabled"`
+		WebhookPushEnabled *bool   `json:"webhook_push_enabled"`
+		WebhookPREnabled   *bool   `json:"webhook_pr_enabled"`
 	}
 	if err := decodeJSON(r, &updates); err != nil {
 		respondError(w, http.StatusBadRequest, "Invalid request body")
@@ -154,6 +157,15 @@ func (h *Handler) UpdatePackage(w http.ResponseWriter, r *http.Request) {
 	}
 	if updates.SARIFUploadEnabled != nil {
 		pkg.SARIFUploadEnabled = *updates.SARIFUploadEnabled
+	}
+	if updates.GitHubSyncEnabled != nil {
+		pkg.GitHubSyncEnabled = *updates.GitHubSyncEnabled
+	}
+	if updates.WebhookPushEnabled != nil {
+		pkg.WebhookPushEnabled = *updates.WebhookPushEnabled
+	}
+	if updates.WebhookPREnabled != nil {
+		pkg.WebhookPREnabled = *updates.WebhookPREnabled
 	}
 
 	projectID := chi.URLParam(r, "projectID")

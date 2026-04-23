@@ -351,21 +351,21 @@ func (h *Handler) GetNRPConfig(w http.ResponseWriter, r *http.Request) {
 		secretSet = true
 	}
 	respondJSON(w, http.StatusOK, map[string]any{
-		"nrp_oidc_issuer":    issuer,
-		"nrp_oidc_client_id": clientID,
+		"nrp_oidc_issuer":      issuer,
+		"nrp_oidc_client_id":   clientID,
 		"nrp_llm_exchange_url": exchangeURL,
-		"secret_set":         secretSet,
-		"callback_url":       h.nrpRedirectURL(),
+		"secret_set":           secretSet,
+		"callback_url":         h.nrpRedirectURL(),
 	})
 }
 
 // UpdateNRPConfig updates the DB-backed NRP OAuth config.
 func (h *Handler) UpdateNRPConfig(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Issuer      string `json:"nrp_oidc_issuer"`
-		ClientID    string `json:"nrp_oidc_client_id"`
+		Issuer       string `json:"nrp_oidc_issuer"`
+		ClientID     string `json:"nrp_oidc_client_id"`
 		ClientSecret string `json:"nrp_oidc_client_secret"`
-		ExchangeURL string `json:"nrp_llm_exchange_url"`
+		ExchangeURL  string `json:"nrp_llm_exchange_url"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		respondError(w, http.StatusBadRequest, "Invalid request")
@@ -599,8 +599,11 @@ func (h *Handler) UpdateProjectNRPConfig(w http.ResponseWriter, r *http.Request)
 	}
 	now := time.Now()
 	if req.AccessEnabled != nil {
-		if !UserHasRole(r.Context(), RoleAdmin) {
-			respondError(w, http.StatusForbidden, "Global admin access required to change NRP access")
+		isSystemAdmin := UserHasRole(r.Context(), RoleAdmin)
+		isProjectAdmin := h.userIsProjectAdmin(r.Context(), projectID)
+		hasLinkedNRPIdentity := h.getValidNRPToken(r.Context(), user.ID) != ""
+		if !isSystemAdmin && !(isProjectAdmin && hasLinkedNRPIdentity) {
+			respondError(w, http.StatusForbidden, "Changing NRP access requires either global admin privileges or a project admin with a linked NRP identity")
 			return
 		}
 		project.NRPAccessEnabled = *req.AccessEnabled

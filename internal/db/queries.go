@@ -895,10 +895,12 @@ func (q *Queries) UserCanAccessProject(ctx context.Context, userID, projectID, l
 func (q *Queries) CreatePackage(ctx context.Context, pkg *models.SoftwarePackage) error {
 	return q.pool.QueryRow(ctx, `
 		INSERT INTO software_packages (project_id, name, git_url, git_branch, git_commit, analysis_prompt,
-		       github_owner, github_repo, installation_id, sarif_upload_enabled)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id, created_at, updated_at`,
+		       github_owner, github_repo, installation_id, sarif_upload_enabled,
+		       github_sync_enabled, webhook_push_enabled, webhook_pr_enabled)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING id, created_at, updated_at`,
 		pkg.ProjectID, pkg.Name, pkg.GitURL, pkg.GitBranch, pkg.GitCommit, pkg.AnalysisPrompt,
-		pkg.GitHubOwner, pkg.GitHubRepo, pkg.InstallationID, pkg.SARIFUploadEnabled).Scan(&pkg.ID, &pkg.CreatedAt, &pkg.UpdatedAt)
+		pkg.GitHubOwner, pkg.GitHubRepo, pkg.InstallationID, pkg.SARIFUploadEnabled,
+		pkg.GitHubSyncEnabled, pkg.WebhookPushEnabled, pkg.WebhookPREnabled).Scan(&pkg.ID, &pkg.CreatedAt, &pkg.UpdatedAt)
 }
 
 func (q *Queries) GetPackage(ctx context.Context, id string) (*models.SoftwarePackage, error) {
@@ -906,11 +908,13 @@ func (q *Queries) GetPackage(ctx context.Context, id string) (*models.SoftwarePa
 	err := q.pool.QueryRow(ctx, `
 		SELECT id, project_id, name, git_url, git_branch, git_commit, analysis_prompt,
 		       github_owner, github_repo, installation_id, sarif_upload_enabled,
+		       github_sync_enabled, webhook_push_enabled, webhook_pr_enabled,
 		       created_at, updated_at
 		FROM software_packages WHERE id=$1`, id).Scan(
 		&pkg.ID, &pkg.ProjectID, &pkg.Name, &pkg.GitURL, &pkg.GitBranch, &pkg.GitCommit,
 		&pkg.AnalysisPrompt, &pkg.GitHubOwner, &pkg.GitHubRepo, &pkg.InstallationID,
-		&pkg.SARIFUploadEnabled, &pkg.CreatedAt, &pkg.UpdatedAt)
+		&pkg.SARIFUploadEnabled, &pkg.GitHubSyncEnabled, &pkg.WebhookPushEnabled,
+		&pkg.WebhookPREnabled, &pkg.CreatedAt, &pkg.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -921,9 +925,11 @@ func (q *Queries) UpdatePackage(ctx context.Context, pkg *models.SoftwarePackage
 	_, err := q.pool.Exec(ctx, `
 		UPDATE software_packages SET name=$2, git_url=$3, git_branch=$4, git_commit=$5,
 		       analysis_prompt=$6, github_owner=$7, github_repo=$8, installation_id=$9,
-		       sarif_upload_enabled=$10, updated_at=NOW()
+		       sarif_upload_enabled=$10, github_sync_enabled=$11, webhook_push_enabled=$12,
+		       webhook_pr_enabled=$13, updated_at=NOW()
 		WHERE id=$1`, pkg.ID, pkg.Name, pkg.GitURL, pkg.GitBranch, pkg.GitCommit, pkg.AnalysisPrompt,
-		pkg.GitHubOwner, pkg.GitHubRepo, pkg.InstallationID, pkg.SARIFUploadEnabled)
+		pkg.GitHubOwner, pkg.GitHubRepo, pkg.InstallationID, pkg.SARIFUploadEnabled,
+		pkg.GitHubSyncEnabled, pkg.WebhookPushEnabled, pkg.WebhookPREnabled)
 	return err
 }
 
@@ -938,6 +944,7 @@ func (q *Queries) FindPackagesByGitHubRepo(ctx context.Context, owner, repo stri
 	rows, err := q.pool.Query(ctx, `
 		SELECT id, project_id, name, git_url, git_branch, git_commit, analysis_prompt,
 		       github_owner, github_repo, installation_id, sarif_upload_enabled,
+		       github_sync_enabled, webhook_push_enabled, webhook_pr_enabled,
 		       created_at, updated_at
 		FROM software_packages
 		WHERE lower(github_owner) = lower($1) AND lower(github_repo) = lower($2)
@@ -951,7 +958,8 @@ func (q *Queries) FindPackagesByGitHubRepo(ctx context.Context, owner, repo stri
 		var pkg models.SoftwarePackage
 		if err := rows.Scan(&pkg.ID, &pkg.ProjectID, &pkg.Name, &pkg.GitURL, &pkg.GitBranch,
 			&pkg.GitCommit, &pkg.AnalysisPrompt, &pkg.GitHubOwner, &pkg.GitHubRepo,
-			&pkg.InstallationID, &pkg.SARIFUploadEnabled,
+			&pkg.InstallationID, &pkg.SARIFUploadEnabled, &pkg.GitHubSyncEnabled,
+			&pkg.WebhookPushEnabled, &pkg.WebhookPREnabled,
 			&pkg.CreatedAt, &pkg.UpdatedAt); err != nil {
 			return nil, err
 		}
@@ -964,6 +972,7 @@ func (q *Queries) ListProjectPackages(ctx context.Context, projectID string) ([]
 	rows, err := q.pool.Query(ctx, `
 		SELECT id, project_id, name, git_url, git_branch, git_commit, analysis_prompt,
 		       github_owner, github_repo, installation_id, sarif_upload_enabled,
+		       github_sync_enabled, webhook_push_enabled, webhook_pr_enabled,
 		       created_at, updated_at
 		FROM software_packages WHERE project_id=$1 ORDER BY name`, projectID)
 	if err != nil {
@@ -975,7 +984,39 @@ func (q *Queries) ListProjectPackages(ctx context.Context, projectID string) ([]
 		var pkg models.SoftwarePackage
 		if err := rows.Scan(&pkg.ID, &pkg.ProjectID, &pkg.Name, &pkg.GitURL, &pkg.GitBranch,
 			&pkg.GitCommit, &pkg.AnalysisPrompt, &pkg.GitHubOwner, &pkg.GitHubRepo,
-			&pkg.InstallationID, &pkg.SARIFUploadEnabled,
+			&pkg.InstallationID, &pkg.SARIFUploadEnabled, &pkg.GitHubSyncEnabled,
+			&pkg.WebhookPushEnabled, &pkg.WebhookPREnabled,
+			&pkg.CreatedAt, &pkg.UpdatedAt); err != nil {
+			return nil, err
+		}
+		pkgs = append(pkgs, pkg)
+	}
+	return pkgs, nil
+}
+
+// ListPackagesWithGitHubSync returns packages configured for GitHub alert synchronization.
+func (q *Queries) ListPackagesWithGitHubSync(ctx context.Context) ([]models.SoftwarePackage, error) {
+	rows, err := q.pool.Query(ctx, `
+		SELECT id, project_id, name, git_url, git_branch, git_commit, analysis_prompt,
+		       github_owner, github_repo, installation_id, sarif_upload_enabled,
+		       github_sync_enabled, webhook_push_enabled, webhook_pr_enabled,
+		       created_at, updated_at
+		FROM software_packages
+		WHERE github_sync_enabled = true
+		  AND github_owner <> ''
+		  AND github_repo <> ''
+		ORDER BY project_id, name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var pkgs []models.SoftwarePackage
+	for rows.Next() {
+		var pkg models.SoftwarePackage
+		if err := rows.Scan(&pkg.ID, &pkg.ProjectID, &pkg.Name, &pkg.GitURL, &pkg.GitBranch,
+			&pkg.GitCommit, &pkg.AnalysisPrompt, &pkg.GitHubOwner, &pkg.GitHubRepo,
+			&pkg.InstallationID, &pkg.SARIFUploadEnabled, &pkg.GitHubSyncEnabled,
+			&pkg.WebhookPushEnabled, &pkg.WebhookPREnabled,
 			&pkg.CreatedAt, &pkg.UpdatedAt); err != nil {
 			return nil, err
 		}
@@ -1360,11 +1401,19 @@ func (q *Queries) GetAnalysisResult(ctx context.Context, id string) (*models.Ana
 func (q *Queries) CreateFinding(ctx context.Context, f *models.Finding) error {
 	return q.pool.QueryRow(ctx, `
 		INSERT INTO findings (project_id, analysis_id, result_id, rule_id, level, message,
-		       file_path, start_line, end_line, snippet, fingerprint, raw_json, git_commit)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+		       file_path, start_line, end_line, snippet, fingerprint, raw_json, git_commit,
+		       github_alert_number, github_alert_url, github_alert_state,
+		       github_alert_dismissed_reason, github_alert_dismissed_comment,
+		       github_alert_fixed_at, github_alert_last_sync_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
+		        $11, $12, $13, $14, $15, $16, $17, $18,
+		        $19, $20)
 		RETURNING id, created_at`,
 		f.ProjectID, f.AnalysisID, f.ResultID, f.RuleID, f.Level, f.Message,
 		f.FilePath, f.StartLine, f.EndLine, f.Snippet, f.Fingerprint, f.RawJSON, f.GitCommit,
+		f.GitHubAlertNumber, f.GitHubAlertURL, f.GitHubAlertState,
+		f.GitHubAlertDismissedReason, f.GitHubAlertDismissedComment,
+		f.GitHubAlertFixedAt, f.GitHubAlertLastSyncAt,
 	).Scan(&f.ID, &f.CreatedAt)
 }
 
@@ -1383,7 +1432,10 @@ func (q *Queries) ListProjectFindings(ctx context.Context, projectID string, fil
 	query := `
 		SELECT f.id, f.project_id, f.analysis_id, f.result_id, f.rule_id, f.level,
 		       f.message, f.file_path, f.start_line, f.end_line, f.snippet, f.fingerprint,
-		       f.raw_json, f.git_commit, f.created_at,
+		       f.raw_json, f.git_commit, f.github_alert_number, f.github_alert_url,
+		       f.github_alert_state, f.github_alert_dismissed_reason,
+		       f.github_alert_dismissed_comment, f.github_alert_fixed_at,
+		       f.github_alert_last_sync_at, f.created_at,
 		       ar.sarif_upload_attempted, ar.sarif_upload_url, ar.sarif_upload_error,
 		       COALESCE(fa.status, 'open') AS latest_status,
 		       COALESCE(fa.note, '') AS latest_note,
@@ -1460,7 +1512,10 @@ func (q *Queries) ListProjectFindings(ctx context.Context, projectID string, fil
 		var f models.Finding
 		if err := rows.Scan(&f.ID, &f.ProjectID, &f.AnalysisID, &f.ResultID, &f.RuleID,
 			&f.Level, &f.Message, &f.FilePath, &f.StartLine, &f.EndLine, &f.Snippet,
-			&f.Fingerprint, &f.RawJSON, &f.GitCommit, &f.CreatedAt,
+			&f.Fingerprint, &f.RawJSON, &f.GitCommit, &f.GitHubAlertNumber,
+			&f.GitHubAlertURL, &f.GitHubAlertState, &f.GitHubAlertDismissedReason,
+			&f.GitHubAlertDismissedComment, &f.GitHubAlertFixedAt,
+			&f.GitHubAlertLastSyncAt, &f.CreatedAt,
 			&f.SARIFUploadAttempted, &f.SARIFUploadURL, &f.SARIFUploadError,
 			&f.LatestStatus, &f.LatestNote, &f.AnnotationBy); err != nil {
 			return nil, err
@@ -1540,7 +1595,10 @@ func (q *Queries) GetFinding(ctx context.Context, id string) (*models.Finding, e
 	err := q.pool.QueryRow(ctx, `
 		SELECT f.id, f.project_id, f.analysis_id, f.result_id, f.rule_id, f.level,
 		       f.message, f.file_path, f.start_line, f.end_line, f.snippet, f.fingerprint,
-		       f.raw_json, f.created_at,
+		       f.raw_json, f.git_commit, f.github_alert_number, f.github_alert_url,
+		       f.github_alert_state, f.github_alert_dismissed_reason,
+		       f.github_alert_dismissed_comment, f.github_alert_fixed_at,
+		       f.github_alert_last_sync_at, f.created_at,
 		       ar.sarif_upload_attempted, ar.sarif_upload_url, ar.sarif_upload_error,
 		       COALESCE(fa.status, 'open'), COALESCE(fa.note, ''), COALESCE(u.display_name, '')
 		FROM findings f
@@ -1555,7 +1613,10 @@ func (q *Queries) GetFinding(ctx context.Context, id string) (*models.Finding, e
 		WHERE f.id = $1`, id).Scan(
 		&f.ID, &f.ProjectID, &f.AnalysisID, &f.ResultID, &f.RuleID,
 		&f.Level, &f.Message, &f.FilePath, &f.StartLine, &f.EndLine, &f.Snippet,
-		&f.Fingerprint, &f.RawJSON, &f.CreatedAt,
+		&f.Fingerprint, &f.RawJSON, &f.GitCommit, &f.GitHubAlertNumber,
+		&f.GitHubAlertURL, &f.GitHubAlertState, &f.GitHubAlertDismissedReason,
+		&f.GitHubAlertDismissedComment, &f.GitHubAlertFixedAt,
+		&f.GitHubAlertLastSyncAt, &f.CreatedAt,
 		&f.SARIFUploadAttempted, &f.SARIFUploadURL, &f.SARIFUploadError,
 		&f.LatestStatus, &f.LatestNote, &f.AnnotationBy)
 	if err != nil {
@@ -1663,7 +1724,10 @@ func (q *Queries) ListAllFindings(ctx context.Context, userID string, isAdmin bo
 	// Fetch
 	selectQuery := `SELECT f.id, f.project_id, f.analysis_id, f.result_id, f.rule_id, f.level,
 		       f.message, f.file_path, f.start_line, f.end_line, f.snippet, f.fingerprint,
-		       f.raw_json, f.git_commit, f.created_at,
+		       f.raw_json, f.git_commit, f.github_alert_number, f.github_alert_url,
+		       f.github_alert_state, f.github_alert_dismissed_reason,
+		       f.github_alert_dismissed_comment, f.github_alert_fixed_at,
+		       f.github_alert_last_sync_at, f.created_at,
 		       COALESCE(fa.status, 'open'), COALESCE(fa.note, ''), COALESCE(u.display_name, ''),
 		       COALESCE((SELECT sp.git_url FROM analysis_packages ap JOIN software_packages sp ON sp.id = ap.package_id WHERE ap.analysis_id = f.analysis_id LIMIT 1), '') ` +
 		baseFrom + " " + whereClause +
@@ -1692,7 +1756,10 @@ func (q *Queries) ListAllFindings(ctx context.Context, userID string, isAdmin bo
 		var f models.Finding
 		if err := rows.Scan(&f.ID, &f.ProjectID, &f.AnalysisID, &f.ResultID, &f.RuleID,
 			&f.Level, &f.Message, &f.FilePath, &f.StartLine, &f.EndLine, &f.Snippet,
-			&f.Fingerprint, &f.RawJSON, &f.GitCommit, &f.CreatedAt,
+			&f.Fingerprint, &f.RawJSON, &f.GitCommit, &f.GitHubAlertNumber,
+			&f.GitHubAlertURL, &f.GitHubAlertState, &f.GitHubAlertDismissedReason,
+			&f.GitHubAlertDismissedComment, &f.GitHubAlertFixedAt,
+			&f.GitHubAlertLastSyncAt, &f.CreatedAt,
 			&f.LatestStatus, &f.LatestNote, &f.AnnotationBy, &f.GitURL); err != nil {
 			return nil, 0, err
 		}
@@ -1726,6 +1793,115 @@ func (q *Queries) ListProjectFindingAnnotations(ctx context.Context, projectID s
 		annotations = append(annotations, a)
 	}
 	return annotations, nil
+}
+
+func (q *Queries) UpdateFindingsGitHubAlertByNumber(ctx context.Context, projectID string, alertNumber int64, alertURL, alertState, dismissedReason, dismissedComment string, fixedAt *time.Time, syncedAt time.Time) (int64, error) {
+	tag, err := q.pool.Exec(ctx, `
+		UPDATE findings
+		SET github_alert_url = $3,
+		    github_alert_state = $4,
+		    github_alert_dismissed_reason = $5,
+		    github_alert_dismissed_comment = $6,
+		    github_alert_fixed_at = $7,
+		    github_alert_last_sync_at = $8
+		WHERE project_id = $1 AND github_alert_number = $2`,
+		projectID, alertNumber, alertURL, alertState, dismissedReason, dismissedComment, fixedAt, syncedAt)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
+}
+
+func (q *Queries) UpdateFindingsGitHubAlertByLocation(ctx context.Context, projectID, ruleID, filePath string, startLine, endLine int, gitCommit string, alertNumber int64, alertURL, alertState, dismissedReason, dismissedComment string, fixedAt *time.Time, syncedAt time.Time) (int64, error) {
+	baseQuery := `
+		UPDATE findings
+		SET github_alert_number = $1,
+		    github_alert_url = $2,
+		    github_alert_state = $3,
+		    github_alert_dismissed_reason = $4,
+		    github_alert_dismissed_comment = $5,
+		    github_alert_fixed_at = $6,
+		    github_alert_last_sync_at = $7
+		WHERE project_id = $8
+		  AND rule_id = $9
+		  AND file_path = $10
+		  AND start_line = $11
+		  AND end_line = $12`
+	args := []any{alertNumber, alertURL, alertState, dismissedReason, dismissedComment, fixedAt, syncedAt, projectID, ruleID, filePath, startLine, endLine}
+	if gitCommit != "" {
+		query := baseQuery + ` AND git_commit = $13`
+		tag, err := q.pool.Exec(ctx, query, append(args, gitCommit)...)
+		if err != nil {
+			return 0, err
+		}
+		return tag.RowsAffected(), nil
+	}
+	tag, err := q.pool.Exec(ctx, baseQuery, args...)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
+}
+
+func (q *Queries) UpdatePackageFindingsGitHubAlertByNumber(ctx context.Context, projectID string, packageIDs []string, alertNumber int64, alertURL, alertState, dismissedReason, dismissedComment string, fixedAt *time.Time, syncedAt time.Time) (int64, error) {
+	if len(packageIDs) == 0 {
+		return 0, nil
+	}
+	tag, err := q.pool.Exec(ctx, `
+		UPDATE findings f
+		SET github_alert_url = $4,
+		    github_alert_state = $5,
+		    github_alert_dismissed_reason = $6,
+		    github_alert_dismissed_comment = $7,
+		    github_alert_fixed_at = $8,
+		    github_alert_last_sync_at = $9
+		FROM analysis_results ar
+		WHERE f.result_id = ar.id
+		  AND f.project_id = $1
+		  AND ar.package_id = ANY($2::uuid[])
+		  AND f.github_alert_number = $3`,
+		projectID, packageIDs, alertNumber, alertURL, alertState, dismissedReason, dismissedComment, fixedAt, syncedAt)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
+}
+
+func (q *Queries) UpdatePackageFindingsGitHubAlertByLocation(ctx context.Context, projectID string, packageIDs []string, ruleID, filePath string, startLine, endLine int, gitCommit string, alertNumber int64, alertURL, alertState, dismissedReason, dismissedComment string, fixedAt *time.Time, syncedAt time.Time) (int64, error) {
+	if len(packageIDs) == 0 {
+		return 0, nil
+	}
+	baseQuery := `
+		UPDATE findings f
+		SET github_alert_number = $4,
+		    github_alert_url = $5,
+		    github_alert_state = $6,
+		    github_alert_dismissed_reason = $7,
+		    github_alert_dismissed_comment = $8,
+		    github_alert_fixed_at = $9,
+		    github_alert_last_sync_at = $10
+		FROM analysis_results ar
+		WHERE f.result_id = ar.id
+		  AND f.project_id = $1
+		  AND ar.package_id = ANY($2::uuid[])
+		  AND f.rule_id = $3
+		  AND f.file_path = $11
+		  AND f.start_line = $12
+		  AND f.end_line = $13`
+	args := []any{projectID, packageIDs, ruleID, alertNumber, alertURL, alertState, dismissedReason, dismissedComment, fixedAt, syncedAt, filePath, startLine, endLine}
+	if gitCommit != "" {
+		query := baseQuery + ` AND f.git_commit = $14`
+		tag, err := q.pool.Exec(ctx, query, append(args, gitCommit)...)
+		if err != nil {
+			return 0, err
+		}
+		return tag.RowsAffected(), nil
+	}
+	tag, err := q.pool.Exec(ctx, baseQuery, args...)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
 }
 
 // GetOpenFindingsSummary returns a compact summary of all open

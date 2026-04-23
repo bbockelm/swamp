@@ -133,12 +133,12 @@ type Project struct {
 	ExternalLLMPoCModel *string `json:"ext_llm_poc_model,omitempty"`
 	// ExternalLLMFallback overrides EXTERNAL_LLM_FALLBACK.
 	// "anthropic" = retry Phase with Anthropic on failure. "" = no fallback.
-	ExternalLLMFallback *string `json:"ext_llm_fallback,omitempty"`
-	NRPAccessEnabled bool      `json:"nrp_access_enabled"`
-	NRPAccessEnabledBy *string `json:"nrp_access_enabled_by,omitempty"`
-	NRPAccessEnabledAt *time.Time `json:"nrp_access_enabled_at,omitempty"`
-	NRPExecutionEnabled bool      `json:"nrp_execution_enabled"`
-	NRPExecutionEnabledBy *string `json:"nrp_execution_enabled_by,omitempty"`
+	ExternalLLMFallback   *string    `json:"ext_llm_fallback,omitempty"`
+	NRPAccessEnabled      bool       `json:"nrp_access_enabled"`
+	NRPAccessEnabledBy    *string    `json:"nrp_access_enabled_by,omitempty"`
+	NRPAccessEnabledAt    *time.Time `json:"nrp_access_enabled_at,omitempty"`
+	NRPExecutionEnabled   bool       `json:"nrp_execution_enabled"`
+	NRPExecutionEnabledBy *string    `json:"nrp_execution_enabled_by,omitempty"`
 	NRPExecutionEnabledAt *time.Time `json:"nrp_execution_enabled_at,omitempty"`
 
 	// MyRole is the caller's effective role for this project (set by handlers, not stored).
@@ -158,6 +158,9 @@ type SoftwarePackage struct {
 	GitHubRepo         string    `json:"github_repo"`
 	InstallationID     int64     `json:"installation_id"`
 	SARIFUploadEnabled bool      `json:"sarif_upload_enabled"`
+	GitHubSyncEnabled  bool      `json:"github_sync_enabled"`
+	WebhookPushEnabled bool      `json:"webhook_push_enabled"`
+	WebhookPREnabled   bool      `json:"webhook_pr_enabled"`
 	CreatedAt          time.Time `json:"created_at"`
 	UpdatedAt          time.Time `json:"updated_at"`
 }
@@ -198,21 +201,21 @@ type AnalysisPackage struct {
 
 // AnalysisResult is an output artifact from an analysis.
 type AnalysisResult struct {
-	ID             string          `json:"id"`
-	AnalysisID     string          `json:"analysis_id"`
-	PackageID      *string         `json:"package_id,omitempty"`
-	ResultType     string          `json:"result_type"`
-	S3Key          string          `json:"s3_key"`
-	Filename       string          `json:"filename"`
-	ContentType    string          `json:"content_type"`
-	FileSize       int64           `json:"file_size"`
-	Summary        string          `json:"summary"`
-	FindingCount   int             `json:"finding_count"`
-	SeverityCounts json.RawMessage `json:"severity_counts"`
-	SARIFUploadAttempted bool      `json:"sarif_upload_attempted"`
-	SARIFUploadURL string          `json:"sarif_upload_url,omitempty"`
-	SARIFUploadError string        `json:"sarif_upload_error,omitempty"`
-	CreatedAt      time.Time       `json:"created_at"`
+	ID                   string          `json:"id"`
+	AnalysisID           string          `json:"analysis_id"`
+	PackageID            *string         `json:"package_id,omitempty"`
+	ResultType           string          `json:"result_type"`
+	S3Key                string          `json:"s3_key"`
+	Filename             string          `json:"filename"`
+	ContentType          string          `json:"content_type"`
+	FileSize             int64           `json:"file_size"`
+	Summary              string          `json:"summary"`
+	FindingCount         int             `json:"finding_count"`
+	SeverityCounts       json.RawMessage `json:"severity_counts"`
+	SARIFUploadAttempted bool            `json:"sarif_upload_attempted"`
+	SARIFUploadURL       string          `json:"sarif_upload_url,omitempty"`
+	SARIFUploadError     string          `json:"sarif_upload_error,omitempty"`
+	CreatedAt            time.Time       `json:"created_at"`
 }
 
 // APIKey is a long-lived API authentication key.
@@ -276,24 +279,31 @@ type BackupSettings struct {
 
 // Finding is an individual SARIF finding extracted from an analysis result.
 type Finding struct {
-	ID          string          `json:"id"`
-	ProjectID   string          `json:"project_id"`
-	AnalysisID  string          `json:"analysis_id"`
-	ResultID    string          `json:"result_id"`
-	RuleID      string          `json:"rule_id"`
-	Level       string          `json:"level"`
-	Message     string          `json:"message"`
-	FilePath    string          `json:"file_path"`
-	StartLine   int             `json:"start_line"`
-	EndLine     int             `json:"end_line"`
-	Snippet     string          `json:"snippet"`
-	Fingerprint string          `json:"fingerprint"`
-	RawJSON     json.RawMessage `json:"raw_json"`
-	GitCommit   string          `json:"git_commit"`
-	CreatedAt   time.Time       `json:"created_at"`
-	SARIFUploadAttempted bool    `json:"sarif_upload_attempted,omitempty"`
-	SARIFUploadURL       string  `json:"sarif_upload_url,omitempty"`
-	SARIFUploadError     string  `json:"sarif_upload_error,omitempty"`
+	ID                          string          `json:"id"`
+	ProjectID                   string          `json:"project_id"`
+	AnalysisID                  string          `json:"analysis_id"`
+	ResultID                    string          `json:"result_id"`
+	RuleID                      string          `json:"rule_id"`
+	Level                       string          `json:"level"`
+	Message                     string          `json:"message"`
+	FilePath                    string          `json:"file_path"`
+	StartLine                   int             `json:"start_line"`
+	EndLine                     int             `json:"end_line"`
+	Snippet                     string          `json:"snippet"`
+	Fingerprint                 string          `json:"fingerprint"`
+	RawJSON                     json.RawMessage `json:"raw_json"`
+	GitCommit                   string          `json:"git_commit"`
+	GitHubAlertNumber           *int64          `json:"github_alert_number,omitempty"`
+	GitHubAlertURL              string          `json:"github_alert_url,omitempty"`
+	GitHubAlertState            string          `json:"github_alert_state,omitempty"`
+	GitHubAlertDismissedReason  string          `json:"github_alert_dismissed_reason,omitempty"`
+	GitHubAlertDismissedComment string          `json:"github_alert_dismissed_comment,omitempty"`
+	GitHubAlertFixedAt          *time.Time      `json:"github_alert_fixed_at,omitempty"`
+	GitHubAlertLastSyncAt       *time.Time      `json:"github_alert_last_sync_at,omitempty"`
+	CreatedAt                   time.Time       `json:"created_at"`
+	SARIFUploadAttempted        bool            `json:"sarif_upload_attempted,omitempty"`
+	SARIFUploadURL              string          `json:"sarif_upload_url,omitempty"`
+	SARIFUploadError            string          `json:"sarif_upload_error,omitempty"`
 	// Joined fields (not always populated)
 	LatestStatus string `json:"latest_status,omitempty"`
 	LatestNote   string `json:"latest_note,omitempty"`
@@ -436,19 +446,19 @@ type ProjectGitHubConfig struct {
 
 // GitHubWebhookDelivery is a log entry for a received webhook.
 type GitHubWebhookDelivery struct {
-	ID            string          `json:"id"`
-	DeliveryID    string          `json:"delivery_id"`
-	EventType     string          `json:"event_type"`
-	Action        string          `json:"action"`
-	RepoFullName  string          `json:"repo_full_name"`
-	Ref           string          `json:"ref"`
-	SenderLogin   string          `json:"sender_login"`
-	ProjectID     *string         `json:"project_id,omitempty"`
-	AnalysisID    *string         `json:"analysis_id,omitempty"`
-	Status        string          `json:"status"`
-	StatusDetail  string          `json:"status_detail"`
-	PayloadJSON   json.RawMessage `json:"payload_json,omitempty"`
-	CreatedAt     time.Time       `json:"created_at"`
+	ID           string          `json:"id"`
+	DeliveryID   string          `json:"delivery_id"`
+	EventType    string          `json:"event_type"`
+	Action       string          `json:"action"`
+	RepoFullName string          `json:"repo_full_name"`
+	Ref          string          `json:"ref"`
+	SenderLogin  string          `json:"sender_login"`
+	ProjectID    *string         `json:"project_id,omitempty"`
+	AnalysisID   *string         `json:"analysis_id,omitempty"`
+	Status       string          `json:"status"`
+	StatusDetail string          `json:"status_detail"`
+	PayloadJSON  json.RawMessage `json:"payload_json,omitempty"`
+	CreatedAt    time.Time       `json:"created_at"`
 }
 
 // ProjectInstallationLink records a GitHub App installation explicitly linked
@@ -464,35 +474,35 @@ type ProjectInstallationLink struct {
 
 // ProjectNRPConfig is the project-scoped NRP integration state.
 type ProjectNRPConfig struct {
-	ProjectID                string     `json:"project_id"`
-	AccessEnabled            bool       `json:"access_enabled"`
-	AccessEnabledBy          *string    `json:"access_enabled_by,omitempty"`
-	AccessEnabledByName      string     `json:"access_enabled_by_name,omitempty"`
-	AccessEnabledAt          *time.Time `json:"access_enabled_at,omitempty"`
-	ExecutionEnabled         bool       `json:"execution_enabled"`
-	ExecutionEnabledBy       *string    `json:"execution_enabled_by,omitempty"`
-	ExecutionEnabledByName   string     `json:"execution_enabled_by_name,omitempty"`
-	ExecutionEnabledAt       *time.Time `json:"execution_enabled_at,omitempty"`
+	ProjectID              string     `json:"project_id"`
+	AccessEnabled          bool       `json:"access_enabled"`
+	AccessEnabledBy        *string    `json:"access_enabled_by,omitempty"`
+	AccessEnabledByName    string     `json:"access_enabled_by_name,omitempty"`
+	AccessEnabledAt        *time.Time `json:"access_enabled_at,omitempty"`
+	ExecutionEnabled       bool       `json:"execution_enabled"`
+	ExecutionEnabledBy     *string    `json:"execution_enabled_by,omitempty"`
+	ExecutionEnabledByName string     `json:"execution_enabled_by_name,omitempty"`
+	ExecutionEnabledAt     *time.Time `json:"execution_enabled_at,omitempty"`
 }
 
 // GitHubStatus is the summary returned by the GitHub status endpoint.
 type GitHubStatus struct {
-	Configured    bool                     `json:"configured"`
-	AppID         int64                    `json:"app_id,omitempty"`
-	APIURL        string                   `json:"api_url,omitempty"`
-	WebhookURL    string                   `json:"webhook_url,omitempty"`
-	Installations []GitHubAppInstallation   `json:"installations,omitempty"`
+	Configured    bool                    `json:"configured"`
+	AppID         int64                   `json:"app_id,omitempty"`
+	APIURL        string                  `json:"api_url,omitempty"`
+	WebhookURL    string                  `json:"webhook_url,omitempty"`
+	Installations []GitHubAppInstallation `json:"installations,omitempty"`
 }
 
 // TokenUsage holds per-model token usage for an analysis.
 type TokenUsage struct {
-	ID              string  `json:"id"`
-	AnalysisID      string  `json:"analysis_id"`
-	Provider        string  `json:"provider"`
-	Model           string  `json:"model"`
-	InputTokens     int64   `json:"input_tokens"`
-	OutputTokens    int64   `json:"output_tokens"`
-	CacheReadTokens int64   `json:"cache_read_tokens"`
-	CacheWriteTokens int64  `json:"cache_write_tokens"`
-	CostUSD         float64 `json:"cost_usd"`
+	ID               string  `json:"id"`
+	AnalysisID       string  `json:"analysis_id"`
+	Provider         string  `json:"provider"`
+	Model            string  `json:"model"`
+	InputTokens      int64   `json:"input_tokens"`
+	OutputTokens     int64   `json:"output_tokens"`
+	CacheReadTokens  int64   `json:"cache_read_tokens"`
+	CacheWriteTokens int64   `json:"cache_write_tokens"`
+	CostUSD          float64 `json:"cost_usd"`
 }

@@ -1052,6 +1052,11 @@ func (h *Handler) HandleGitHubWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if eventType == "code_scanning_alert" {
+		h.handleCodeScanningAlertWebhook(w, r, body, deliveryID)
+		return
+	}
+
 	// Parse common payload fields.
 	var payload struct {
 		Action     string `json:"action"`
@@ -1098,7 +1103,7 @@ func (h *Handler) HandleGitHubWebhook(w http.ResponseWriter, r *http.Request) {
 		Str("action", payload.Action).
 		Msg("Received GitHub webhook")
 
-	// Find matching project by repo.
+	// Find matching packages by repo.
 	parts := strings.SplitN(payload.Repository.FullName, "/", 2)
 	if len(parts) != 2 {
 		respondError(w, http.StatusBadRequest, "Invalid repository name")
@@ -1106,10 +1111,20 @@ func (h *Handler) HandleGitHubWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 	owner, repo := parts[0], parts[1]
 
-	ghCfg, findErr := h.queries.FindProjectByGitHubRepo(r.Context(), owner, repo)
+	matchedPackages, findErr := h.queries.FindPackagesByGitHubRepo(r.Context(), owner, repo)
+	if findErr != nil {
+		respondError(w, http.StatusInternalServerError, "Failed to resolve packages for repository")
+		return
+	}
+
 	var projectIDPtr *string
-	if findErr == nil {
-		projectIDPtr = &ghCfg.ProjectID
+	if len(matchedPackages) == 1 {
+		projectIDPtr = &matchedPackages[0].ProjectID
+	}
+
+	packagesByProject := make(map[string][]models.SoftwarePackage)
+	for _, pkg := range matchedPackages {
+		packagesByProject[pkg.ProjectID] = append(packagesByProject[pkg.ProjectID], pkg)
 	}
 
 	// Record the delivery.
@@ -1132,44 +1147,21 @@ func (h *Handler) HandleGitHubWebhook(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// No matching project?
-	if ghCfg == nil {
-		updateStatus("ignored", "No matching project found", nil)
-		respondJSON(w, http.StatusOK, map[string]string{"status": "ignored", "reason": "no matching project"})
-		return
-	}
-
-	if !ghCfg.WebhookEnabled {
-		updateStatus("ignored", "Webhooks not enabled for project", nil)
-		respondJSON(w, http.StatusOK, map[string]string{"status": "ignored", "reason": "webhooks not enabled"})
-		return
-	}
-
-	// Check if this event type is in the allowed list.
-	eventAllowed := false
-	for _, e := range ghCfg.WebhookEvents {
-		if e == eventType {
-			eventAllowed = true
-			break
-		}
-	}
-	if !eventAllowed {
-		updateStatus("ignored", "Event type not enabled: "+eventType, nil)
-		respondJSON(w, http.StatusOK, map[string]string{"status": "ignored", "reason": "event type not configured"})
+	if len(matchedPackages) == 0 {
+		updateStatus("ignored", "No matching package found", nil)
+		respondJSON(w, http.StatusOK, map[string]string{"status": "ignored", "reason": "no matching package"})
 		return
 	}
 
 	// Trigger analysis based on event type.
 	switch eventType {
 	case "push":
-		expectedRef := "refs/heads/" + ghCfg.DefaultBranch
-		if payload.Ref != expectedRef {
-			updateStatus("ignored", "Push to non-default branch: "+payload.Ref, nil)
-			respondJSON(w, http.StatusOK, map[string]string{"status": "ignored", "reason": "non-default branch"})
+		branch := normalizeWebhookBranch(payload.Ref)
+		if branch == "" {
+			updateStatus("ignored", "Push missing branch ref", nil)
+			respondJSON(w, http.StatusOK, map[string]string{"status": "ignored", "reason": "missing branch ref"})
 			return
 		}
-		// Extract branch name from refs/heads/<branch>.
-		branch := strings.TrimPrefix(payload.Ref, "refs/heads/")
 		info := webhookTriggerInfo{
 			Event:  "push",
 			Branch: branch,
@@ -1179,15 +1171,53 @@ func (h *Handler) HandleGitHubWebhook(w http.ResponseWriter, r *http.Request) {
 				"push_sender": payload.Sender.Login,
 			},
 		}
-		analysisID, triggerErr := h.triggerWebhookAnalysis(r.Context(), ghCfg, payload.Sender.Login, info)
-		if triggerErr != nil {
-			log.Error().Err(triggerErr).Str("project_id", ghCfg.ProjectID).Msg("Failed to trigger webhook analysis")
-			updateStatus("error", triggerErr.Error(), nil)
-			respondError(w, http.StatusInternalServerError, "Failed to trigger analysis")
+
+		var analysisIDs []string
+		for projectID, pkgs := range packagesByProject {
+			ghCfg, err := h.queries.GetProjectGitHubConfig(r.Context(), projectID)
+			if err != nil || !ghCfg.WebhookEnabled || !containsString(ghCfg.WebhookEvents, "push") {
+				continue
+			}
+
+			hasExplicit := false
+			selected := make([]models.SoftwarePackage, 0, len(pkgs))
+			for _, pkg := range pkgs {
+				if pkg.WebhookPushEnabled {
+					hasExplicit = true
+				}
+			}
+			for _, pkg := range pkgs {
+				if !strings.EqualFold(pkg.GitBranch, branch) {
+					continue
+				}
+				if hasExplicit {
+					if pkg.WebhookPushEnabled {
+						selected = append(selected, pkg)
+					}
+				} else {
+					selected = append(selected, pkg)
+				}
+			}
+			if len(selected) == 0 {
+				continue
+			}
+
+			analysisID, triggerErr := h.triggerWebhookAnalysis(r.Context(), ghCfg, selected, payload.Sender.Login, info)
+			if triggerErr != nil {
+				log.Error().Err(triggerErr).Str("project_id", projectID).Msg("Failed to trigger webhook analysis")
+				continue
+			}
+			analysisIDs = append(analysisIDs, analysisID)
+		}
+
+		if len(analysisIDs) == 0 {
+			updateStatus("ignored", "No package matched push trigger settings", nil)
+			respondJSON(w, http.StatusOK, map[string]string{"status": "ignored", "reason": "no package matched"})
 			return
 		}
-		updateStatus("processed", "Triggered analysis: "+analysisID, &analysisID)
-		respondJSON(w, http.StatusOK, map[string]string{"status": "processed", "analysis_id": analysisID})
+
+		updateStatus("processed", fmt.Sprintf("Triggered %d analyses", len(analysisIDs)), nil)
+		respondJSON(w, http.StatusOK, map[string]interface{}{"status": "processed", "analysis_ids": analysisIDs})
 
 	case "pull_request":
 		if payload.PullRequest == nil {
@@ -1216,20 +1246,59 @@ func (h *Handler) HandleGitHubWebhook(w http.ResponseWriter, r *http.Request) {
 				"repo":      payload.Repository.FullName,
 			},
 		}
-		analysisID, triggerErr := h.triggerWebhookAnalysis(r.Context(), ghCfg, payload.Sender.Login, info)
-		if triggerErr != nil {
-			log.Error().Err(triggerErr).Str("project_id", ghCfg.ProjectID).Msg("Failed to trigger webhook analysis for PR")
-			updateStatus("error", triggerErr.Error(), nil)
-			respondError(w, http.StatusInternalServerError, "Failed to trigger analysis")
+
+		baseBranch := payload.PullRequest.Base.Ref
+		var analysisIDs []string
+		for projectID, pkgs := range packagesByProject {
+			ghCfg, err := h.queries.GetProjectGitHubConfig(r.Context(), projectID)
+			if err != nil || !ghCfg.WebhookEnabled || !containsString(ghCfg.WebhookEvents, "pull_request") {
+				continue
+			}
+
+			hasExplicit := false
+			selected := make([]models.SoftwarePackage, 0, len(pkgs))
+			for _, pkg := range pkgs {
+				if pkg.WebhookPREnabled {
+					hasExplicit = true
+				}
+			}
+			for _, pkg := range pkgs {
+				if !strings.EqualFold(pkg.GitBranch, baseBranch) {
+					continue
+				}
+				if hasExplicit {
+					if pkg.WebhookPREnabled {
+						selected = append(selected, pkg)
+					}
+				} else {
+					selected = append(selected, pkg)
+				}
+			}
+			if len(selected) == 0 {
+				continue
+			}
+
+			analysisID, triggerErr := h.triggerWebhookAnalysis(r.Context(), ghCfg, selected, payload.Sender.Login, info)
+			if triggerErr != nil {
+				log.Error().Err(triggerErr).Str("project_id", projectID).Msg("Failed to trigger webhook analysis for PR")
+				continue
+			}
+			analysisIDs = append(analysisIDs, analysisID)
+		}
+
+		if len(analysisIDs) == 0 {
+			updateStatus("ignored", "No package matched pull request trigger settings", nil)
+			respondJSON(w, http.StatusOK, map[string]string{"status": "ignored", "reason": "no package matched"})
 			return
 		}
+
 		log.Info().
 			Int("pr_number", payload.PullRequest.Number).
 			Str("branch", payload.PullRequest.Head.Ref).
-			Str("analysis_id", analysisID).
-			Msg("Triggered analysis for pull request")
-		updateStatus("processed", "Triggered analysis for PR #"+strconv.Itoa(payload.PullRequest.Number)+": "+analysisID, &analysisID)
-		respondJSON(w, http.StatusOK, map[string]string{"status": "processed", "analysis_id": analysisID})
+			Int("analyses", len(analysisIDs)).
+			Msg("Triggered analyses for pull request")
+		updateStatus("processed", fmt.Sprintf("Triggered %d analyses for PR #%d", len(analysisIDs), payload.PullRequest.Number), nil)
+		respondJSON(w, http.StatusOK, map[string]interface{}{"status": "processed", "analysis_ids": analysisIDs})
 
 	case "release":
 		if payload.Release == nil {
@@ -1260,24 +1329,217 @@ func (h *Handler) HandleGitHubWebhook(w http.ResponseWriter, r *http.Request) {
 				"repo":         payload.Repository.FullName,
 			},
 		}
-		analysisID, triggerErr := h.triggerWebhookAnalysis(r.Context(), ghCfg, payload.Sender.Login, info)
-		if triggerErr != nil {
-			log.Error().Err(triggerErr).Str("project_id", ghCfg.ProjectID).Msg("Failed to trigger webhook analysis for release")
-			updateStatus("error", triggerErr.Error(), nil)
-			respondError(w, http.StatusInternalServerError, "Failed to trigger analysis")
+		var analysisIDs []string
+		for projectID, pkgs := range packagesByProject {
+			ghCfg, err := h.queries.GetProjectGitHubConfig(r.Context(), projectID)
+			if err != nil || !ghCfg.WebhookEnabled || !containsString(ghCfg.WebhookEvents, "release") {
+				continue
+			}
+			analysisID, triggerErr := h.triggerWebhookAnalysis(r.Context(), ghCfg, pkgs, payload.Sender.Login, info)
+			if triggerErr != nil {
+				log.Error().Err(triggerErr).Str("project_id", projectID).Msg("Failed to trigger webhook analysis for release")
+				continue
+			}
+			analysisIDs = append(analysisIDs, analysisID)
+		}
+		if len(analysisIDs) == 0 {
+			updateStatus("ignored", "No project matched release webhook settings", nil)
+			respondJSON(w, http.StatusOK, map[string]string{"status": "ignored", "reason": "no project matched"})
 			return
 		}
 		log.Info().
 			Str("tag", payload.Release.TagName).
-			Str("analysis_id", analysisID).
-			Msg("Triggered analysis for release")
-		updateStatus("processed", "Triggered analysis for release "+payload.Release.TagName+": "+analysisID, &analysisID)
-		respondJSON(w, http.StatusOK, map[string]string{"status": "processed", "analysis_id": analysisID})
+			Int("analyses", len(analysisIDs)).
+			Msg("Triggered analyses for release")
+		updateStatus("processed", fmt.Sprintf("Triggered %d analyses for release %s", len(analysisIDs), payload.Release.TagName), nil)
+		respondJSON(w, http.StatusOK, map[string]interface{}{"status": "processed", "analysis_ids": analysisIDs})
 
 	default:
 		updateStatus("ignored", "Unhandled event type: "+eventType, nil)
 		respondJSON(w, http.StatusOK, map[string]string{"status": "ignored", "reason": "unhandled event type"})
 	}
+}
+
+type codeScanningAlertWebhookPayload struct {
+	Action     string `json:"action"`
+	CommitOID  string `json:"commit_oid"`
+	Ref        string `json:"ref"`
+	Repository struct {
+		FullName string `json:"full_name"`
+	} `json:"repository"`
+	Sender struct {
+		Login string `json:"login"`
+	} `json:"sender"`
+	Alert struct {
+		Number           int64      `json:"number"`
+		HTMLURL          string     `json:"html_url"`
+		State            string     `json:"state"`
+		DismissedReason  string     `json:"dismissed_reason"`
+		DismissedComment string     `json:"dismissed_comment"`
+		FixedAt          *time.Time `json:"fixed_at"`
+		Rule             struct {
+			ID string `json:"id"`
+		} `json:"rule"`
+		MostRecentInstance struct {
+			Ref       string `json:"ref"`
+			CommitSHA string `json:"commit_sha"`
+			Location  struct {
+				Path      string `json:"path"`
+				StartLine int    `json:"start_line"`
+				EndLine   int    `json:"end_line"`
+			} `json:"location"`
+		} `json:"most_recent_instance"`
+	} `json:"alert"`
+}
+
+func (h *Handler) handleCodeScanningAlertWebhook(w http.ResponseWriter, r *http.Request, body []byte, deliveryID string) {
+	var payload codeScanningAlertWebhookPayload
+	if err := json.Unmarshal(body, &payload); err != nil {
+		respondError(w, http.StatusBadRequest, "Invalid JSON payload")
+		return
+	}
+
+	log.Info().
+		Str("event", "code_scanning_alert").
+		Str("delivery_id", deliveryID).
+		Str("repo", payload.Repository.FullName).
+		Str("action", payload.Action).
+		Int64("alert_number", payload.Alert.Number).
+		Msg("Received GitHub code scanning alert webhook")
+
+	parts := strings.SplitN(payload.Repository.FullName, "/", 2)
+	if len(parts) != 2 {
+		respondError(w, http.StatusBadRequest, "Invalid repository name")
+		return
+	}
+	owner, repo := parts[0], parts[1]
+
+	matchedPackages, findErr := h.queries.FindPackagesByGitHubRepo(r.Context(), owner, repo)
+	if findErr != nil {
+		respondError(w, http.StatusInternalServerError, "Failed to resolve packages for repository")
+		return
+	}
+	var projectIDPtr *string
+	if len(matchedPackages) == 1 {
+		projectIDPtr = &matchedPackages[0].ProjectID
+	}
+
+	delivery := &models.GitHubWebhookDelivery{
+		DeliveryID:   deliveryID,
+		EventType:    "code_scanning_alert",
+		Action:       payload.Action,
+		RepoFullName: payload.Repository.FullName,
+		Ref:          payload.Ref,
+		SenderLogin:  payload.Sender.Login,
+		ProjectID:    projectIDPtr,
+		Status:       "received",
+		PayloadJSON:  json.RawMessage(body),
+	}
+	_ = h.queries.InsertWebhookDelivery(r.Context(), delivery)
+
+	updateStatus := func(status, detail string) {
+		if delivery.ID != "" {
+			_ = h.queries.UpdateWebhookDeliveryStatus(r.Context(), delivery.ID, status, detail, nil)
+		}
+	}
+
+	if len(matchedPackages) == 0 {
+		updateStatus("ignored", "No matching package found")
+		respondJSON(w, http.StatusOK, map[string]string{"status": "ignored", "reason": "no matching package"})
+		return
+	}
+
+	if payload.Alert.Number == 0 {
+		updateStatus("ignored", "Missing alert number")
+		respondJSON(w, http.StatusOK, map[string]string{"status": "ignored", "reason": "missing alert number"})
+		return
+	}
+
+	branch := normalizeWebhookBranch(payload.Ref)
+	if branch == "" {
+		branch = normalizeWebhookBranch(payload.Alert.MostRecentInstance.Ref)
+	}
+
+	packagesByProject := make(map[string][]string)
+	for _, pkg := range matchedPackages {
+		if !pkg.GitHubSyncEnabled {
+			continue
+		}
+		if branch != "" && !strings.EqualFold(pkg.GitBranch, branch) {
+			continue
+		}
+		packagesByProject[pkg.ProjectID] = append(packagesByProject[pkg.ProjectID], pkg.ID)
+	}
+	if len(packagesByProject) == 0 {
+		updateStatus("ignored", "No package has GitHub sync enabled for this repo/branch")
+		respondJSON(w, http.StatusOK, map[string]string{"status": "ignored", "reason": "no package sync enabled"})
+		return
+	}
+
+	syncedAt := time.Now().UTC()
+	rowsUpdatedTotal := int64(0)
+	commitSHA := payload.CommitOID
+	if commitSHA == "" {
+		commitSHA = payload.Alert.MostRecentInstance.CommitSHA
+	}
+	for projectID, packageIDs := range packagesByProject {
+		rowsUpdated, err := h.queries.UpdatePackageFindingsGitHubAlertByNumber(
+			r.Context(),
+			projectID,
+			packageIDs,
+			payload.Alert.Number,
+			payload.Alert.HTMLURL,
+			payload.Alert.State,
+			payload.Alert.DismissedReason,
+			payload.Alert.DismissedComment,
+			payload.Alert.FixedAt,
+			syncedAt,
+		)
+		if err != nil {
+			log.Error().Err(err).Str("project_id", projectID).Int64("alert_number", payload.Alert.Number).Msg("Failed to update finding by GitHub alert number")
+			updateStatus("error", err.Error())
+			respondError(w, http.StatusInternalServerError, "Failed to update finding state")
+			return
+		}
+
+		if rowsUpdated == 0 {
+			rowsUpdated, err = h.queries.UpdatePackageFindingsGitHubAlertByLocation(
+				r.Context(),
+				projectID,
+				packageIDs,
+				payload.Alert.Rule.ID,
+				payload.Alert.MostRecentInstance.Location.Path,
+				payload.Alert.MostRecentInstance.Location.StartLine,
+				payload.Alert.MostRecentInstance.Location.EndLine,
+				commitSHA,
+				payload.Alert.Number,
+				payload.Alert.HTMLURL,
+				payload.Alert.State,
+				payload.Alert.DismissedReason,
+				payload.Alert.DismissedComment,
+				payload.Alert.FixedAt,
+				syncedAt,
+			)
+			if err != nil {
+				log.Error().Err(err).Str("project_id", projectID).Int64("alert_number", payload.Alert.Number).Msg("Failed to update finding by GitHub alert location")
+				updateStatus("error", err.Error())
+				respondError(w, http.StatusInternalServerError, "Failed to update finding state")
+				return
+			}
+		}
+		rowsUpdatedTotal += rowsUpdated
+	}
+
+	if rowsUpdatedTotal == 0 {
+		detail := fmt.Sprintf("No matching findings found for GitHub alert %d", payload.Alert.Number)
+		updateStatus("ignored", detail)
+		respondJSON(w, http.StatusOK, map[string]string{"status": "ignored", "reason": "no matching findings"})
+		return
+	}
+
+	detail := fmt.Sprintf("Synchronized %d finding(s) for GitHub alert %d", rowsUpdatedTotal, payload.Alert.Number)
+	updateStatus("processed", detail)
+	respondJSON(w, http.StatusOK, map[string]interface{}{"status": "processed", "updated_findings": rowsUpdatedTotal, "alert_number": payload.Alert.Number})
 }
 
 // webhookTriggerInfo carries metadata about the triggering event.
@@ -1289,12 +1551,7 @@ type webhookTriggerInfo struct {
 }
 
 // triggerWebhookAnalysis creates and starts an analysis triggered by a webhook.
-func (h *Handler) triggerWebhookAnalysis(ctx context.Context, ghCfg *models.ProjectGitHubConfig, senderLogin string, info webhookTriggerInfo) (string, error) {
-	// Get packages for this project.
-	packages, err := h.queries.ListProjectPackages(ctx, ghCfg.ProjectID)
-	if err != nil {
-		return "", err
-	}
+func (h *Handler) triggerWebhookAnalysis(ctx context.Context, ghCfg *models.ProjectGitHubConfig, packages []models.SoftwarePackage, senderLogin string, info webhookTriggerInfo) (string, error) {
 	if len(packages) == 0 {
 		return "", nil
 	}
@@ -1372,6 +1629,22 @@ func (h *Handler) triggerWebhookAnalysis(ctx context.Context, ghCfg *models.Proj
 	}
 
 	return analysis.ID, nil
+}
+
+func containsString(values []string, target string) bool {
+	for _, v := range values {
+		if v == target {
+			return true
+		}
+	}
+	return false
+}
+
+func normalizeWebhookBranch(ref string) string {
+	if strings.HasPrefix(ref, "refs/heads/") {
+		return strings.TrimPrefix(ref, "refs/heads/")
+	}
+	return ref
 }
 
 // handleInstallationEvent processes GitHub App installation/uninstallation events.

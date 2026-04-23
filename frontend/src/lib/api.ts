@@ -134,6 +134,9 @@ export interface SoftwarePackage {
   github_repo: string;
   installation_id: number;
   sarif_upload_enabled: boolean;
+  github_sync_enabled: boolean;
+  webhook_push_enabled: boolean;
+  webhook_pr_enabled: boolean;
   created_at: string;
   updated_at: string;
 }

@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -93,6 +94,29 @@ type Client struct {
 type cachedToken struct {
 	token     string
 	expiresAt time.Time
+}
+
+// CodeScanningAlert is the subset of GitHub Code Scanning alert fields used
+// for SWAMP synchronization.
+type CodeScanningAlert struct {
+	Number           int64      `json:"number"`
+	HTMLURL          string     `json:"html_url"`
+	State            string     `json:"state"`
+	DismissedReason  string     `json:"dismissed_reason"`
+	DismissedComment string     `json:"dismissed_comment"`
+	FixedAt          *time.Time `json:"fixed_at"`
+	Rule             struct {
+		ID string `json:"id"`
+	} `json:"rule"`
+	MostRecentInstance struct {
+		Ref       string `json:"ref"`
+		CommitSHA string `json:"commit_sha"`
+		Location  struct {
+			Path      string `json:"path"`
+			StartLine int    `json:"start_line"`
+			EndLine   int    `json:"end_line"`
+		} `json:"location"`
+	} `json:"most_recent_instance"`
 }
 
 // NewClient creates a GitHub App client. Returns nil if GitHub App is not configured.
@@ -580,6 +604,74 @@ func (c *Client) ListBranches(ctx context.Context, installationID int64, owner, 
 		names[i] = b.Name
 	}
 	return names, nil
+}
+
+// ListCodeScanningAlerts lists SWAMP-relevant code scanning alerts for a
+// repository and optional ref/state filters.
+func (c *Client) ListCodeScanningAlerts(ctx context.Context, installationID int64, owner, repo, ref, state, toolName string) ([]CodeScanningAlert, error) {
+	token, err := c.GetInstallationToken(ctx, installationID)
+	if err != nil {
+		return nil, err
+	}
+
+	var all []CodeScanningAlert
+	for page := 1; page <= 10; page++ {
+		q := url.Values{}
+		q.Set("per_page", "100")
+		q.Set("page", fmt.Sprintf("%d", page))
+		if ref != "" {
+			q.Set("ref", ref)
+		}
+		if state != "" {
+			q.Set("state", state)
+		}
+		if toolName != "" {
+			q.Set("tool_name", toolName)
+		}
+
+		apiURL := fmt.Sprintf("%s/repos/%s/%s/code-scanning/alerts?%s", c.apiURL, owner, repo, q.Encode())
+		req, err := http.NewRequestWithContext(ctx, "GET", apiURL, nil)
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("Accept", "application/vnd.github+json")
+		req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			return nil, err
+		}
+		body, _ := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+
+		if resp.StatusCode != 200 {
+			return nil, fmt.Errorf("list code scanning alerts returned %d: %s", resp.StatusCode, string(body))
+		}
+
+		var pageAlerts []CodeScanningAlert
+		if err := json.Unmarshal(body, &pageAlerts); err != nil {
+			return nil, err
+		}
+		all = append(all, pageAlerts...)
+		if len(pageAlerts) < 100 {
+			break
+		}
+	}
+	return all, nil
+}
+
+// ListCodeScanningAlertsForPackage lists alerts for a package's repo/branch
+// using a project-linked installation.
+func (c *Client) ListCodeScanningAlertsForPackage(ctx context.Context, pkg *models.SoftwarePackage, state string) ([]CodeScanningAlert, error) {
+	if pkg == nil || pkg.GitHubOwner == "" || pkg.GitHubRepo == "" {
+		return nil, fmt.Errorf("package missing GitHub repository mapping")
+	}
+	installationID, _ := c.resolveProjectInstallationForPackage(ctx, pkg, pkg.GitHubOwner)
+	if installationID == 0 {
+		return nil, fmt.Errorf("no linked GitHub installation for package repo")
+	}
+	return c.ListCodeScanningAlerts(ctx, installationID, pkg.GitHubOwner, pkg.GitHubRepo, pkg.GitBranch, state, "SWAMP")
 }
 
 // Status returns the GitHub integration status for the admin dashboard.

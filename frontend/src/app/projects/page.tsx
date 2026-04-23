@@ -562,6 +562,9 @@ function PackagesTab({ projectId }: { projectId: string }) {
   const [gitBranch, setGitBranch] = useState("main");
   const [analysisPrompt, setAnalysisPrompt] = useState("");
   const [sarifUploadEnabled, setSarifUploadEnabled] = useState(false);
+  const [githubSyncEnabled, setGitHubSyncEnabled] = useState(false);
+  const [webhookPushEnabled, setWebhookPushEnabled] = useState(false);
+  const [webhookPREnabled, setWebhookPREnabled] = useState(false);
   const [branchError, setBranchError] = useState<string | null>(null);
   const [installationWarning, setInstallationWarning] = useState<string | null>(null);
   const [installationSuccess, setInstallationSuccess] = useState<string | null>(null);
@@ -789,6 +792,9 @@ function PackagesTab({ projectId }: { projectId: string }) {
         git_branch: gitBranch,
         analysis_prompt: analysisPrompt,
         sarif_upload_enabled: sarifUploadEnabled,
+        github_sync_enabled: githubSyncEnabled,
+        webhook_push_enabled: webhookPushEnabled,
+        webhook_pr_enabled: webhookPREnabled,
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["packages", projectId] });
@@ -798,6 +804,9 @@ function PackagesTab({ projectId }: { projectId: string }) {
       setGitBranch("main");
       setAnalysisPrompt("");
       setSarifUploadEnabled(false);
+      setGitHubSyncEnabled(false);
+      setWebhookPushEnabled(false);
+      setWebhookPREnabled(false);
       setBranchError(null);
       setInstallationWarning(null);
       setInstallationSuccess(null);
@@ -814,6 +823,9 @@ function PackagesTab({ projectId }: { projectId: string }) {
         git_branch: gitBranch,
         analysis_prompt: analysisPrompt,
         sarif_upload_enabled: sarifUploadEnabled,
+        github_sync_enabled: githubSyncEnabled,
+        webhook_push_enabled: webhookPushEnabled,
+        webhook_pr_enabled: webhookPREnabled,
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["packages", projectId] });
@@ -834,6 +846,9 @@ function PackagesTab({ projectId }: { projectId: string }) {
     setGitBranch(pkg.git_branch);
     setAnalysisPrompt(pkg.analysis_prompt || "");
     setSarifUploadEnabled(pkg.sarif_upload_enabled ?? false);
+    setGitHubSyncEnabled(pkg.github_sync_enabled ?? false);
+    setWebhookPushEnabled(pkg.webhook_push_enabled ?? false);
+    setWebhookPREnabled(pkg.webhook_pr_enabled ?? false);
     setAdding(false);
     setBranchError(null);
     setInstallationWarning(null);
@@ -868,6 +883,9 @@ function PackagesTab({ projectId }: { projectId: string }) {
     setGitBranch("main");
     setAnalysisPrompt("");
     setSarifUploadEnabled(false);
+    setGitHubSyncEnabled(false);
+    setWebhookPushEnabled(false);
+    setWebhookPREnabled(false);
     setBranchError(null);
     setInstallationWarning(null);
     setInstallationSuccess(null);
@@ -905,6 +923,9 @@ function PackagesTab({ projectId }: { projectId: string }) {
               setGitBranch("main");
               setAnalysisPrompt("");
               setSarifUploadEnabled(false);
+              setGitHubSyncEnabled(false);
+              setWebhookPushEnabled(false);
+              setWebhookPREnabled(false);
             }
           }}
           className={`px-3 py-1.5 text-sm rounded font-medium transition-colors ${
@@ -1025,6 +1046,33 @@ function PackagesTab({ projectId }: { projectId: string }) {
                 className="rounded"
               />
               <span>Upload results to GitHub Code Scanning</span>
+            </label>
+            <label className="flex items-center gap-2 text-sm mt-2">
+              <input
+                type="checkbox"
+                checked={githubSyncEnabled}
+                onChange={(e) => setGitHubSyncEnabled(e.target.checked)}
+                className="rounded"
+              />
+              <span>Sync GitHub alert status back into SWAMP</span>
+            </label>
+            <label className="flex items-center gap-2 text-sm mt-2">
+              <input
+                type="checkbox"
+                checked={webhookPushEnabled}
+                onChange={(e) => setWebhookPushEnabled(e.target.checked)}
+                className="rounded"
+              />
+              <span>Trigger analysis on pushes to this package branch</span>
+            </label>
+            <label className="flex items-center gap-2 text-sm mt-2">
+              <input
+                type="checkbox"
+                checked={webhookPREnabled}
+                onChange={(e) => setWebhookPREnabled(e.target.checked)}
+                className="rounded"
+              />
+              <span>Trigger analysis on pull request updates targeting this branch</span>
             </label>
             {installationWarning && (
               <p className="text-xs text-amber-600 mt-1">
@@ -1207,6 +1255,33 @@ function PackagesTab({ projectId }: { projectId: string }) {
                     />
                     <span>Upload results to GitHub Code Scanning</span>
                   </label>
+                  <label className="flex items-center gap-2 text-sm mt-2">
+                    <input
+                      type="checkbox"
+                      checked={githubSyncEnabled}
+                      onChange={(e) => setGitHubSyncEnabled(e.target.checked)}
+                      className="rounded"
+                    />
+                    <span>Sync GitHub alert status back into SWAMP</span>
+                  </label>
+                  <label className="flex items-center gap-2 text-sm mt-2">
+                    <input
+                      type="checkbox"
+                      checked={webhookPushEnabled}
+                      onChange={(e) => setWebhookPushEnabled(e.target.checked)}
+                      className="rounded"
+                    />
+                    <span>Trigger analysis on pushes to this package branch</span>
+                  </label>
+                  <label className="flex items-center gap-2 text-sm mt-2">
+                    <input
+                      type="checkbox"
+                      checked={webhookPREnabled}
+                      onChange={(e) => setWebhookPREnabled(e.target.checked)}
+                      className="rounded"
+                    />
+                    <span>Trigger analysis on pull request updates targeting this branch</span>
+                  </label>
                   {installationWarning && (
                     <p className="text-xs text-amber-600 mt-1">
                       {installationWarning}
@@ -1293,6 +1368,15 @@ function PackagesTab({ projectId }: { projectId: string }) {
                       GitHub: {pkg.github_owner}/{pkg.github_repo}
                       {pkg.sarif_upload_enabled && (
                         <span className="text-green-600"> · Code Scanning enabled</span>
+                      )}
+                      {pkg.github_sync_enabled && (
+                        <span className="text-green-600"> · Alert sync enabled</span>
+                      )}
+                      {pkg.webhook_push_enabled && (
+                        <span className="text-green-600"> · Push trigger enabled</span>
+                      )}
+                      {pkg.webhook_pr_enabled && (
+                        <span className="text-green-600"> · PR trigger enabled</span>
                       )}
                     </div>
                   )}

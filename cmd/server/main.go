@@ -143,6 +143,7 @@ func run() error {
 	h.SetBackupService(backupSvc)
 	h.SetExecutor(exec)
 	h.SetLogBuffer(logBuf)
+	h.StartGitHubAlertSyncLoop(ctx)
 
 	// Clean up any backups stuck in "running" state from previous server instances,
 	// then start periodic reconciliation loop.

@@ -39,6 +39,9 @@ export function ProjectNRPTab({
     },
   });
 
+  const canLinkedProjectAdminManageAccess = !!isProjectAdmin && !!linkStatus?.linked;
+  const canManageProjectAccess = isSystemAdmin || canLinkedProjectAdminManageAccess;
+
   useEffect(() => {
     const handler = (e: MessageEvent) => {
       if (e.origin !== window.location.origin) {
@@ -119,7 +122,7 @@ export function ProjectNRPTab({
         <div>
           <h2 className="text-lg font-semibold">NRP Project Access</h2>
           <p className="text-sm text-gray-500 mt-1">
-            A site administrator must first enable NRP access for this project before project administrators can turn on NRP execution.
+            NRP access can be enabled by either a site administrator, or a project administrator with a linked NRP identity.
           </p>
         </div>
 
@@ -132,7 +135,7 @@ export function ProjectNRPTab({
               </p>
             )}
           </div>
-          {isSystemAdmin && (
+          {canManageProjectAccess && (
             <button
               type="button"
               disabled={updateMutation.isPending}
@@ -144,8 +147,8 @@ export function ProjectNRPTab({
           )}
         </div>
 
-        {!isSystemAdmin && (
-          <p className="text-xs text-gray-400">Only global administrators can change project-level NRP access.</p>
+        {!canManageProjectAccess && (
+          <p className="text-xs text-gray-400">To change project-level NRP access, use a global admin account or link NRP as a project admin.</p>
         )}
       </div>
 
@@ -153,7 +156,7 @@ export function ProjectNRPTab({
         <div>
           <h2 className="text-lg font-semibold">NRP Execution</h2>
           <p className="text-sm text-gray-500 mt-1">
-            Once NRP access is enabled for the project and your identity is linked, project administrators can enable execution on NRP.
+            Once NRP access is enabled for the project, project administrators with a linked NRP identity can enable execution on NRP.
           </p>
         </div>
 
