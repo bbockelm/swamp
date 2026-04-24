@@ -308,7 +308,7 @@ function PackagesTab({
       setLinkToProjectInstallationID(null);
       setBranchError(result.error ?? 'Could not detect branches.');
     }
-  }, [formatInstallationRef, linkedProjectInstallationIDs, parsedGitHub]);
+  }, [formatInstallationRef, linkedProjectInstallationIDs, parsedGitHub, projectId]);
 
   const handleSarifToggle = useCallback(async (checked: boolean) => {
     setSarifUploadEnabled(checked);
@@ -346,7 +346,7 @@ function PackagesTab({
     } catch {
       // If the probe fails, don't block — the user can still enable it.
     }
-  }, [formatInstallationRef, linkedProjectInstallationIDs, parsedGitHub, setConnectedRepoMessage]);
+  }, [formatInstallationRef, linkedProjectInstallationIDs, parsedGitHub, projectId, setConnectedRepoMessage]);
 
   // Re-check repo access when the user returns from the GitHub App install page.
   const branchInputRef = useRef<GitBranchInputHandle>(null);

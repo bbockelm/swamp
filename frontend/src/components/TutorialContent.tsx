@@ -13,13 +13,17 @@ type TutorialContentProps = {
   tutorialPath: string;
 };
 
+type TutorialState = {
+  loadedPath: string | null;
+  payload: TutorialPayload | null;
+  error: string;
+};
+
 export function TutorialContent({ tutorialPath }: TutorialContentProps) {
-  const [payload, setPayload] = useState<TutorialPayload | null>(null);
-  const [error, setError] = useState("");
+  const [state, setState] = useState<TutorialState>({ loadedPath: null, payload: null, error: "" });
 
   useEffect(() => {
-    setPayload(null);
-    setError("");
+    let cancelled = false;
 
     fetch(`/api/v1/tutorials/${tutorialPath}`)
       .then((r) => {
@@ -29,17 +33,30 @@ export function TutorialContent({ tutorialPath }: TutorialContentProps) {
         return r.json();
       })
       .then((data: TutorialPayload) => {
-        setPayload(data);
+        if (!cancelled) {
+          setState({ loadedPath: tutorialPath, payload: data, error: "" });
+        }
       })
       .catch((err: Error) => {
-        setError(err.message || "Failed to load tutorial content");
+        if (!cancelled) {
+          setState({ loadedPath: tutorialPath, payload: null, error: err.message || "Failed to load tutorial content" });
+        }
       });
+
+    return () => {
+      cancelled = true;
+    };
   }, [tutorialPath]);
 
-  if (error) {
-    return <p className="text-sm text-red-600">{error}</p>;
+  if (state.loadedPath !== tutorialPath) {
+    return <p className="text-sm text-gray-500">Loading tutorial...</p>;
   }
 
+  if (state.error) {
+    return <p className="text-sm text-red-600">{state.error}</p>;
+  }
+
+  const payload = state.payload;
   if (!payload) {
     return <p className="text-sm text-gray-500">Loading tutorial...</p>;
   }
