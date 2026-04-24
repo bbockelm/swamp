@@ -12,6 +12,7 @@ const navItems = [
   { label: "Analyses", href: "/analyses" },
   { label: "Findings", href: "/findings" },
   { label: "Groups", href: "/groups" },
+  { label: "Docs", href: "/docs" },
   { label: "Info", href: "/settings" },
 ];
 
@@ -84,7 +85,7 @@ export function Sidebar({ roles = [], userName }: SidebarProps) {
               key={item.href}
               href={item.href}
               className={`block px-3 py-2 rounded text-sm ${
-                pathname === item.href
+                pathname === item.href || (item.href !== "/" && pathname.startsWith(item.href))
                   ? "bg-brand-600 text-white"
                   : "text-gray-300 hover:bg-navy-800"
               }`}

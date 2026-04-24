@@ -251,16 +251,27 @@ func (h *Handler) getValidNRPToken(ctx context.Context, userID string) string {
 	}
 	if identity.TokenExpiresAt != nil && identity.TokenExpiresAt.Before(time.Now().Add(5*time.Minute)) {
 		if identity.RefreshTokenEnc == nil {
+			// Some providers omit refresh tokens; continue using the current
+			// access token until it actually expires.
+			if identity.TokenExpiresAt.After(time.Now()) {
+				return accessToken
+			}
 			return ""
 		}
 		refreshToken, err := h.encryptor.DecryptConfigValue(*identity.RefreshTokenEnc)
 		if err != nil {
 			log.Warn().Err(err).Str("user_id", userID).Msg("Failed to decrypt NRP refresh token")
+			if identity.TokenExpiresAt.After(time.Now()) {
+				return accessToken
+			}
 			return ""
 		}
 		tokenResp, err := h.nrpRefreshToken(ctx, issuer, refreshToken)
 		if err != nil {
 			log.Warn().Err(err).Str("user_id", userID).Msg("Failed to refresh NRP token")
+			if identity.TokenExpiresAt.After(time.Now()) {
+				return accessToken
+			}
 			return ""
 		}
 		var newAccessEnc, newRefreshEnc *string
@@ -602,8 +613,12 @@ func (h *Handler) UpdateProjectNRPConfig(w http.ResponseWriter, r *http.Request)
 		isSystemAdmin := UserHasRole(r.Context(), RoleAdmin)
 		isProjectAdmin := h.userIsProjectAdmin(r.Context(), projectID)
 		hasLinkedNRPIdentity := h.getValidNRPToken(r.Context(), user.ID) != ""
-		if !isSystemAdmin && (!isProjectAdmin || !hasLinkedNRPIdentity) {
-			respondError(w, http.StatusForbidden, "Changing NRP access requires either global admin privileges or a project admin with a linked NRP identity")
+		if !isSystemAdmin && !isProjectAdmin {
+			respondError(w, http.StatusForbidden, "Project admin access required to change NRP access")
+			return
+		}
+		if !isSystemAdmin && !hasLinkedNRPIdentity {
+			respondError(w, http.StatusBadRequest, "Link your NRP account before changing NRP access")
 			return
 		}
 		project.NRPAccessEnabled = *req.AccessEnabled

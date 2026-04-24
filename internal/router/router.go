@@ -19,6 +19,7 @@ import (
 	"github.com/bbockelm/swamp/internal/config"
 	"github.com/bbockelm/swamp/internal/crypto"
 	"github.com/bbockelm/swamp/internal/db"
+	"github.com/bbockelm/swamp/internal/docs"
 	"github.com/bbockelm/swamp/internal/frontend"
 	ghclient "github.com/bbockelm/swamp/internal/github"
 	"github.com/bbockelm/swamp/internal/handlers"
@@ -261,6 +262,9 @@ func New(cfg *config.Config, pool *pgxpool.Pool, store *storage.Store) (*chi.Mux
 	// Public AUP pages (no authentication required).
 	r.Get("/aup", h.GetPublicAUP)
 	r.Get("/aup-v{version}", h.GetPublicAUPVersioned)
+
+	// Documentation (public — rendered from embedded Markdown via goldmark).
+	r.Mount("/docs", docs.Handler())
 
 	// OpenAPI spec
 	r.Get("/api/v1/openapi.yaml", openapi.Handler())

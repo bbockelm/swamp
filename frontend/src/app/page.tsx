@@ -159,6 +159,12 @@ function LandingPage() {
             Everything you need to get started with SWAMP and integrate it into your workflow.
           </p>
           <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
+            <TutorialCard
+              title="Getting Started Tutorial"
+              description="A step-by-step walkthrough: create an account, add a repository, run your first security analysis, and review findings — with screenshots at every step."
+              href="/login"
+              linkLabel="Sign in to begin →"
+            />
             <DocCard
               title="Quick Start"
               items={[
@@ -176,35 +182,6 @@ function LandingPage() {
                 "Phase 2 (optional): Exploit validation generates proof-of-concept tests",
                 "Results are encrypted and stored as SARIF, Markdown reports, and logs",
                 "Findings are extracted with severity, file location, and code snippets",
-              ]}
-            />
-            <DocCard
-              title="Key Concepts"
-              items={[
-                "Projects — a Git repository to analyze",
-                "Packages — versioned snapshots of a project (branch/commit)",
-                "Analyses — a security scan run against one or more packages",
-                "Findings — individual vulnerabilities discovered by an analysis",
-                "Groups — team workspaces with role-based access (admin/member)",
-              ]}
-            />
-            <DocCard
-              title="Finding Severities"
-              items={[
-                "Critical / Error — high-impact vulnerabilities requiring immediate attention",
-                "Warning / Medium — moderate issues that should be reviewed",
-                "Note / Low / Info — informational or low-risk observations",
-                "Findings can be triaged: confirmed, false positive, mitigated, or won't fix",
-              ]}
-            />
-            <DocCard
-              title="Access & Authentication"
-              items={[
-                "Authentication via CILogon (institutional credentials)",
-                "Users must agree to the Acceptable Use Policy before access",
-                "Projects are scoped to groups — members see only their group's work",
-                "Admin, project creator, and user roles control permissions",
-                "API keys available for programmatic access",
               ]}
             />
             <DocCard
@@ -255,6 +232,21 @@ function FeatureCard({ title, description }: { title: string; description: strin
     <div className="bg-gray-50 rounded-lg border p-5">
       <h3 className="font-semibold text-gray-900 mb-1">{title}</h3>
       <p className="text-sm text-gray-600 leading-relaxed">{description}</p>
+    </div>
+  );
+}
+
+function TutorialCard({ title, description, href, linkLabel }: { title: string; description: string; href: string; linkLabel: string }) {
+  return (
+    <div className="bg-brand-50 rounded-lg border border-brand-200 p-5 flex flex-col gap-3">
+      <div>
+        <span className="text-xs font-semibold text-brand-600 uppercase tracking-wide">Tutorial</span>
+        <h3 className="font-semibold text-gray-900 mt-1 mb-1">{title}</h3>
+        <p className="text-sm text-gray-600 leading-relaxed">{description}</p>
+      </div>
+      <Link href={href} className="mt-auto text-sm font-medium text-brand-700 hover:text-brand-900 hover:underline">
+        {linkLabel}
+      </Link>
     </div>
   );
 }
