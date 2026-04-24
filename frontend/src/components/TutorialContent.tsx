@@ -61,11 +61,29 @@ export function TutorialContent({ tutorialPath }: TutorialContentProps) {
     return <p className="text-sm text-gray-500">Loading tutorial...</p>;
   }
 
+  // The surrounding page already renders the tutorial title, so strip the
+  // leading H1 from the markdown to avoid showing it twice.
+  const markdown = stripLeadingH1(payload.markdown);
+
   return (
-    <article className="rounded-xl border border-gray-200 bg-white p-4 sm:p-6 lg:p-8 shadow-sm overflow-hidden">
-      <div className="prose prose-sm sm:prose-base max-w-none text-gray-700">
-        <RenderedMarkdown content={payload.markdown} imageBasePath={payload.image_base_path} />
+    <article className="rounded-xl border border-gray-200 bg-white p-5 sm:p-8 lg:p-10 shadow-sm overflow-hidden">
+      <div className="mx-auto max-w-3xl text-base text-gray-700">
+        <RenderedMarkdown content={markdown} imageBasePath={payload.image_base_path} />
       </div>
     </article>
   );
+}
+
+function stripLeadingH1(markdown: string): string {
+  const lines = markdown.split("\n");
+  let i = 0;
+  // Skip any leading blank lines.
+  while (i < lines.length && lines[i].trim() === "") i++;
+  if (i < lines.length && lines[i].startsWith("# ")) {
+    // Drop the H1 line and any blank line immediately after it.
+    i++;
+    while (i < lines.length && lines[i].trim() === "") i++;
+    return lines.slice(i).join("\n");
+  }
+  return markdown;
 }

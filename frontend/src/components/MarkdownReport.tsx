@@ -95,13 +95,46 @@ export function RenderedMarkdown({
           <img
             src={src}
             alt={alt}
-            className="w-full max-w-4xl mx-auto h-auto rounded-lg border border-gray-200 shadow-sm"
+            className="w-full h-auto rounded-lg border border-gray-200 shadow-sm"
             loading="lazy"
           />
           {alt && <figcaption className="mt-2 text-center text-xs text-gray-500">{alt}</figcaption>}
         </figure>
       );
       i++;
+      continue;
+    }
+
+    // --- blockquotes ---
+    if (line.trimStart().startsWith('>')) {
+      const quoteLines: string[] = [];
+      while (i < lines.length && lines[i].trimStart().startsWith('>')) {
+        quoteLines.push(lines[i].trimStart().replace(/^>\s?/, ''));
+        i++;
+      }
+      // Preserve internal paragraph breaks; render as stacked paragraphs.
+      const paragraphs: string[][] = [[]];
+      for (const ql of quoteLines) {
+        if (ql.trim() === '') {
+          paragraphs.push([]);
+        } else {
+          paragraphs[paragraphs.length - 1].push(ql);
+        }
+      }
+      elements.push(
+        <blockquote
+          key={`q-${i}`}
+          className="my-4 border-l-4 border-brand-200 bg-brand-50/40 pl-4 pr-3 py-2 text-gray-700"
+        >
+          {paragraphs
+            .filter((p) => p.length > 0)
+            .map((p, pi) => (
+              <p key={pi} className={pi === 0 ? 'text-[0.95rem]' : 'text-[0.95rem] mt-2'}>
+                {formatInline(p.join(' '))}
+              </p>
+            ))}
+        </blockquote>
+      );
       continue;
     }
 
@@ -213,7 +246,7 @@ export function RenderedMarkdown({
         i++;
       }
       elements.push(
-        <ul key={items[0].key} className="ml-4 list-disc text-sm my-1">
+        <ul key={items[0].key} className="ml-6 list-disc my-3 space-y-1">
           {items.map((item) => (
             <li key={item.key}>{formatInline(item.text)}</li>
           ))}
@@ -229,7 +262,7 @@ export function RenderedMarkdown({
         i++;
       }
       elements.push(
-        <ol key={items[0].key} start={startNum} className="ml-4 list-decimal text-sm my-1">
+        <ol key={items[0].key} start={startNum} className="ml-6 list-decimal my-3 space-y-1">
           {items.map((item) => (
             <li key={item.key}>{formatInline(item.text)}</li>
           ))}
@@ -237,13 +270,33 @@ export function RenderedMarkdown({
       );
       continue; // skip the i++ at the end
     } else if (line.trim() === '') {
-      elements.push(<br key={i} />);
+      // Blank lines act as paragraph separators; no explicit element needed.
     } else {
+      // Coalesce consecutive non-blank, non-structural lines into one paragraph.
+      const paraLines: string[] = [line];
+      const startIdx = i;
+      let j = i + 1;
+      while (j < lines.length) {
+        const next = lines[j];
+        if (next.trim() === '') break;
+        if (next.startsWith('```')) break;
+        if (next.startsWith('#')) break;
+        if (next.startsWith('- ') || next.startsWith('* ')) break;
+        if (next.match(/^\d+\. /)) break;
+        if (next.trimStart().startsWith('>')) break;
+        if (next.trim().startsWith('|')) break;
+        if (/^[-*_]{3,}\s*$/.test(next.trim())) break;
+        if (/^!\[([^\]]*)\]\(([^)]+)\)$/.test(next.trim())) break;
+        paraLines.push(next);
+        j++;
+      }
       elements.push(
-        <p key={i} className="text-sm mb-1">
-          {formatInline(line)}
+        <p key={startIdx} className="my-3 leading-relaxed">
+          {formatInline(paraLines.join(' '))}
         </p>
       );
+      i = j;
+      continue;
     }
 
     i++;
