@@ -7,7 +7,7 @@ import { Sidebar } from './Sidebar';
 import { RenderedMarkdown } from './MarkdownReport';
 import { api } from '@/lib/api';
 
-const publicPaths = ['/login', '/', '/github/setup', '/github/linked'];
+const publicPaths = ['/login', '/', '/github/setup', '/github/linked', '/tutorials/onboarding'];
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();

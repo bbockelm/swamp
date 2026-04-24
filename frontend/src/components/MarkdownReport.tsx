@@ -43,7 +43,13 @@ export function MarkdownReport({
   );
 }
 
-export function RenderedMarkdown({ content }: { content: string }) {
+export function RenderedMarkdown({
+  content,
+  imageBasePath = '',
+}: {
+  content: string;
+  imageBasePath?: string;
+}) {
   // Simple markdown rendering without extra dependencies.
   // Supports headers (h1–h5), bold, italic, code blocks, lists, links,
   // horizontal rules, and pipe-delimited tables.
@@ -75,6 +81,26 @@ export function RenderedMarkdown({ content }: { content: string }) {
 
     if (inCodeBlock) {
       codeLines.push(line);
+      i++;
+      continue;
+    }
+
+    // --- markdown images ---
+    const imageLine = line.trim().match(/^!\[([^\]]*)\]\(([^)]+)\)$/);
+    if (imageLine) {
+      const alt = imageLine[1];
+      const src = resolveImageSource(imageLine[2], imageBasePath);
+      elements.push(
+        <figure key={i} className="my-6">
+          <img
+            src={src}
+            alt={alt}
+            className="w-full max-w-4xl mx-auto h-auto rounded-lg border border-gray-200 shadow-sm"
+            loading="lazy"
+          />
+          {alt && <figcaption className="mt-2 text-center text-xs text-gray-500">{alt}</figcaption>}
+        </figure>
+      );
       i++;
       continue;
     }
@@ -224,6 +250,21 @@ export function RenderedMarkdown({ content }: { content: string }) {
   }
 
   return <>{elements}</>;
+}
+
+function resolveImageSource(rawSrc: string, imageBasePath: string): string {
+  if (!rawSrc) {
+    return rawSrc;
+  }
+  if (rawSrc.startsWith('http://') || rawSrc.startsWith('https://') || rawSrc.startsWith('/')) {
+    return rawSrc;
+  }
+  if (!imageBasePath) {
+    return rawSrc;
+  }
+  const cleanBase = imageBasePath.endsWith('/') ? imageBasePath : `${imageBasePath}/`;
+  const cleanSrc = rawSrc.replace(/^\.\//, '').replace(/^images\//, '');
+  return `${cleanBase}${cleanSrc}`;
 }
 
 function formatInline(text: string): React.ReactNode {

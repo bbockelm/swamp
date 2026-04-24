@@ -147,6 +147,10 @@ func Handler() http.Handler {
 		serveTutorial(w, r, fsys, "tutorials/onboarding.md", "Getting Started Tutorial")
 	})
 
+	mux.HandleFunc("/docs/tutorials/private-repo", func(w http.ResponseWriter, r *http.Request) {
+		serveTutorial(w, r, fsys, "tutorials/private-repo-tutorial.md", "Analyzing a Private GitHub Repository")
+	})
+
 	return mux
 }
 

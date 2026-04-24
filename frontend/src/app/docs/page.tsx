@@ -71,8 +71,12 @@ export default function DocsPage() {
             title="Getting Started"
             description="Step-by-step walkthrough: create an account, register a Git repository as a package, run your first AI security analysis, and review the resulting findings."
             href="/docs/tutorials/onboarding"
-            external
             badge="Start here"
+          />
+          <DocLinkCard
+            title="Analyzing a Private GitHub Repository"
+            description="Link your GitHub account, install the SWAMP GitHub App on your organization, and run a security analysis on a repository that requires authentication to clone."
+            href="/docs/tutorials/private-repo"
           />
         </Section>
 

@@ -162,8 +162,8 @@ function LandingPage() {
             <TutorialCard
               title="Getting Started Tutorial"
               description="A step-by-step walkthrough: create an account, add a repository, run your first security analysis, and review findings — with screenshots at every step."
-              href="/login"
-              linkLabel="Sign in to begin →"
+              href="/tutorials/onboarding"
+              linkLabel="Open tutorial →"
             />
             <DocCard
               title="Quick Start"
