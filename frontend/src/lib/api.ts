@@ -1073,8 +1073,11 @@ export const api = {
       fetchJSON(`${BASE}/github/link`, { method: 'POST' }),
     deleteLink: (): Promise<void> =>
       fetchJSON(`${BASE}/github/link`, { method: 'DELETE' }),
-    userRepoAccess: (owner: string, repo: string): Promise<GitHubUserRepoAccessResult> =>
-      fetchJSON(`${BASE}/github/user-repo-access?owner=${encodeURIComponent(owner)}&repo=${encodeURIComponent(repo)}`),
+    userRepoAccess: (owner: string, repo: string, projectId?: string): Promise<GitHubUserRepoAccessResult> => {
+      const qs = new URLSearchParams({ owner, repo });
+      if (projectId) qs.set('project_id', projectId);
+      return fetchJSON(`${BASE}/github/user-repo-access?${qs.toString()}`);
+    },
     getConfig: (projectId: string): Promise<ProjectGitHubConfig> =>
       fetchJSON(`${BASE}/projects/${projectId}/github`),
     updateConfig: (

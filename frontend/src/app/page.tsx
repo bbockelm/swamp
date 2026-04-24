@@ -165,6 +165,12 @@ function LandingPage() {
               href="/tutorials/onboarding"
               linkLabel="Open tutorial →"
             />
+            <TutorialCard
+              title="Private GitHub Repository Tutorial"
+              description="Link your GitHub account, install the SWAMP GitHub App, and analyze repositories that require authenticated cloning."
+              href="/tutorials/private-repo"
+              linkLabel="Open tutorial →"
+            />
             <DocCard
               title="Quick Start"
               items={[

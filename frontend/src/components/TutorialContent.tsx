@@ -9,12 +9,19 @@ type TutorialPayload = {
   image_base_path: string;
 };
 
-export function TutorialContent() {
+type TutorialContentProps = {
+  tutorialPath: string;
+};
+
+export function TutorialContent({ tutorialPath }: TutorialContentProps) {
   const [payload, setPayload] = useState<TutorialPayload | null>(null);
   const [error, setError] = useState("");
 
   useEffect(() => {
-    fetch("/api/v1/tutorials/onboarding")
+    setPayload(null);
+    setError("");
+
+    fetch(`/api/v1/tutorials/${tutorialPath}`)
       .then((r) => {
         if (!r.ok) {
           throw new Error("Failed to load tutorial content");
@@ -27,7 +34,7 @@ export function TutorialContent() {
       .catch((err: Error) => {
         setError(err.message || "Failed to load tutorial content");
       });
-  }, []);
+  }, [tutorialPath]);
 
   if (error) {
     return <p className="text-sm text-red-600">{error}</p>;

@@ -272,6 +272,7 @@ func New(cfg *config.Config, pool *pgxpool.Pool, store *storage.Store) (*chi.Mux
 	r.Route("/api/v1", func(r chi.Router) {
 		// Public tutorial content and images (single source from embedded docs content).
 		r.Get("/tutorials/onboarding", h.GetPublicOnboardingTutorial)
+		r.Get("/tutorials/private-repo", h.GetPublicPrivateRepoTutorial)
 		r.Get("/tutorials/images/{file}", h.GetPublicTutorialImage)
 
 		// --- GitHub webhook (public, signature-validated) ---

@@ -6,6 +6,7 @@ import (
 	"embed"
 	"fmt"
 	"html"
+  "io"
 	"io/fs"
 	"net/http"
 	"strings"
@@ -36,7 +37,7 @@ const pageHTML = `<!DOCTYPE html>
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>%s — SWAMP Docs</title>
+  <title>{{TITLE}} — SWAMP Docs</title>
   <style>
     *, *::before, *::after { box-sizing: border-box; }
     :root {
@@ -114,10 +115,10 @@ const pageHTML = `<!DOCTYPE html>
   <header>
     <a href="/docs">← Docs</a>
     <span class="sep">|</span>
-    <span class="title">%s</span>
+    <span class="title">{{TITLE}}</span>
   </header>
   <div class="layout">
-    <article>%s</article>
+    <article>{{BODY}}</article>
   </div>
 </body>
 </html>
@@ -171,9 +172,16 @@ func serveTutorial(w http.ResponseWriter, r *http.Request, fsys fs.FS, path, tit
 	// goldmark emits e.g. <img src="images/foo.jpg"> — prefix with the tutorial base.
 	body := strings.ReplaceAll(buf.String(),
 		`src="images/`, `src="/docs/tutorials/images/`)
+  escapedTitle := html.EscapeString(title)
+  page := strings.NewReplacer(
+    "{{TITLE}}", escapedTitle,
+    "{{BODY}}", body,
+  ).Replace(pageHTML)
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	fmt.Fprintf(w, pageHTML, html.EscapeString(title), html.EscapeString(title), body)
+  if _, err := io.WriteString(w, page); err != nil {
+    http.Error(w, "render error", http.StatusInternalServerError)
+  }
 }
 
 func mustSub(fsys fs.FS, dir string) fs.FS {

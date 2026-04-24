@@ -10,23 +10,32 @@ import (
 	"github.com/bbockelm/swamp/internal/docs"
 )
 
-// GetPublicOnboardingTutorial returns the canonical onboarding tutorial markdown.
-func (h *Handler) GetPublicOnboardingTutorial(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) servePublicTutorial(w http.ResponseWriter, tutorialPath, title string) {
 	fsys, err := docs.ContentFS()
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "Tutorial content is unavailable")
 		return
 	}
-	data, err := fs.ReadFile(fsys, "tutorials/onboarding.md")
+	data, err := fs.ReadFile(fsys, tutorialPath)
 	if err != nil {
 		respondError(w, http.StatusNotFound, "Tutorial not found")
 		return
 	}
 	respondJSON(w, http.StatusOK, map[string]string{
-		"title":           "SWAMP Onboarding Tutorial",
+		"title":           title,
 		"markdown":        string(data),
 		"image_base_path": "/api/v1/tutorials/images/",
 	})
+}
+
+// GetPublicOnboardingTutorial returns the canonical onboarding tutorial markdown.
+func (h *Handler) GetPublicOnboardingTutorial(w http.ResponseWriter, r *http.Request) {
+	h.servePublicTutorial(w, "tutorials/onboarding.md", "SWAMP Onboarding Tutorial")
+}
+
+// GetPublicPrivateRepoTutorial returns the canonical private-repository tutorial markdown.
+func (h *Handler) GetPublicPrivateRepoTutorial(w http.ResponseWriter, r *http.Request) {
+	h.servePublicTutorial(w, "tutorials/private-repo-tutorial.md", "Analyzing a Private GitHub Repository")
 }
 
 // GetPublicTutorialImage serves onboarding tutorial images from embedded docs content.

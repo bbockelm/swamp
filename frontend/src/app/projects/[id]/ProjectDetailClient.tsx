@@ -270,7 +270,7 @@ function PackagesTab({
     }
     // When branch detection fails, check repo access to give better advice.
     if (parsedGitHub) {
-      api.github.userRepoAccess(parsedGitHub.owner, parsedGitHub.repo).then((access) => {
+      api.github.userRepoAccess(parsedGitHub.owner, parsedGitHub.repo, projectId).then((access) => {
         if (access.accessible) {
           const installationID = access.installation_id ?? 0;
           if (installationID > 0 && !linkedProjectInstallationIDs.has(installationID)) {
@@ -319,7 +319,7 @@ function PackagesTab({
     setLinkToProjectError(null);
     if (!checked || !parsedGitHub) return;
     try {
-      const access = await api.github.userRepoAccess(parsedGitHub.owner, parsedGitHub.repo);
+      const access = await api.github.userRepoAccess(parsedGitHub.owner, parsedGitHub.repo, projectId);
       if (access.accessible) {
         const installationID = access.installation_id ?? 0;
         if (installationID > 0 && !linkedProjectInstallationIDs.has(installationID)) {
@@ -354,7 +354,7 @@ function PackagesTab({
     if (!parsedGitHub || (!branchError && !installationWarning)) return;
 
     const recheckAccess = () => {
-      api.github.userRepoAccess(parsedGitHub.owner, parsedGitHub.repo).then((access) => {
+      api.github.userRepoAccess(parsedGitHub.owner, parsedGitHub.repo, projectId).then((access) => {
         if (access.accessible) {
           setBranchError(null);
           const installationID = access.installation_id ?? 0;
@@ -475,7 +475,7 @@ function PackagesTab({
     if (pkg.sarif_upload_enabled) {
       const m = pkg.git_url.match(/github\.com\/([^/]+)\/([^/.]+)/);
       if (m) {
-        api.github.userRepoAccess(m[1], m[2]).then((access) => {
+        api.github.userRepoAccess(m[1], m[2], projectId).then((access) => {
           if (access.accessible && access.has_installation) {
             const installationID = access.installation_id ?? 0;
             if (installationID > 0 && !linkedProjectInstallationIDs.has(installationID)) {

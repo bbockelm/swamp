@@ -1212,17 +1212,19 @@ func (c *Client) ListUserInstallations(ctx context.Context, accessToken string) 
 	return all, nil
 }
 
-// UserCanAccessRepo checks if a user's access token can see a specific repo
-// through any of their installations.
-func (c *Client) UserCanAccessRepo(ctx context.Context, accessToken string, installationID int64, owner, repo string) (bool, string, error) {
-	// Use the installation token (not user token) to check repo access.
+// UserCanAccessRepo checks whether a GitHub App installation has access to a
+// repository using the installation token — which is exactly the credential
+// SWAMP uses when cloning. The accessToken parameter is unused (kept for
+// API compatibility) because the user's personal OAuth access is irrelevant;
+// what matters is whether the project's installation can clone the repo.
+func (c *Client) UserCanAccessRepo(ctx context.Context, _ string, installationID int64, owner, repo string) (bool, string, error) {
 	token, err := c.GetInstallationToken(ctx, installationID)
 	if err != nil {
 		return false, "", fmt.Errorf("getting installation token: %w", err)
 	}
 
-	url := fmt.Sprintf("%s/repos/%s/%s", c.apiURL, owner, repo)
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	apiURL := fmt.Sprintf("%s/repos/%s/%s", c.apiURL, owner, repo)
+	req, err := http.NewRequestWithContext(ctx, "GET", apiURL, nil)
 	if err != nil {
 		return false, "", err
 	}

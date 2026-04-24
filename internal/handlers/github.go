@@ -679,10 +679,20 @@ func (h *Handler) getValidGitHubToken(ctx context.Context, userID string) string
 	return accessToken
 }
 
-// UserRepoAccess checks whether the authenticated user can access a specific
-// GitHub repository through any of their installations. This is the user-aware
-// replacement for CheckRepoAccess.
-// GET /api/v1/github/user-repo-access?owner=X&repo=Y
+// UserRepoAccess reports whether a project's GitHub App installation can clone
+// a specific repository — which is the same question SWAMP asks at analysis
+// time. The user's personal GitHub access is irrelevant; what matters is the
+// installation token the project will use.
+//
+// Primary path (project_id provided): check the project-linked installation
+// for the repo owner directly.  This always works regardless of whether the
+// user's personal GitHub token is fresh.
+//
+// Discovery path (no project link yet): if the user has a linked GitHub token,
+// enumerate their visible installations via GET /user/installations to suggest
+// which installation to link.
+//
+// GET /api/v1/github/user-repo-access?owner=X&repo=Y[&project_id=P]
 func (h *Handler) UserRepoAccess(w http.ResponseWriter, r *http.Request) {
 	type matchedInstallation struct {
 		InstallationID int64  `json:"installation_id"`
@@ -714,59 +724,86 @@ func (h *Handler) UserRepoAccess(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusBadRequest, "owner and repo query parameters are required")
 		return
 	}
+	projectID := r.URL.Query().Get("project_id")
 
+	// Primary path: if the project already has a linked installation for this
+	// owner, check access using the installation token — no user OAuth token
+	// required, because this is exactly the credential used at clone time.
+	if projectID != "" {
+		if inst, err := h.queries.GetProjectInstallationByOwner(r.Context(), projectID, owner); err == nil && inst != nil {
+			accessible, defaultBranch, err := h.ghClient.UserCanAccessRepo(r.Context(), "", inst.InstallationID, owner, repo)
+			if err == nil && accessible {
+				respondJSON(w, http.StatusOK, response{
+					HasInstallation:     true,
+					Accessible:          true,
+					DefaultBranch:       defaultBranch,
+					InstallationID:      inst.InstallationID,
+					InstallationAccount: inst.AccountLogin,
+				})
+				return
+			}
+			// Installation exists but can't reach this specific repo.
+			respondJSON(w, http.StatusOK, response{
+				HasInstallation: true,
+				Error: fmt.Sprintf(
+					"The GitHub App is installed for %q but cannot access %s/%s. Check the installation's repository scope.",
+					owner, owner, repo),
+			})
+			return
+		}
+	}
+
+	// Discovery path: no project-linked installation yet.
+	// Use the user's GitHub token (if available) to enumerate installations
+	// visible to them and suggest which one to link.
 	user := GetUserFromContext(r.Context())
-
-	// 1. Check if the user has a linked GitHub identity with a valid token.
 	token := h.getValidGitHubToken(r.Context(), user.ID)
 	if token == "" {
-		// No linked GitHub account — do NOT use SWAMP's installation tokens to
-		// probe private repo access on behalf of an unverified user. Any SWAMP
-		// user could otherwise access private repos belonging to other orgs that
-		// happen to have the GitHub App installed.
+		// No user token and no project-linked installation — guide the user.
 		resp := response{
 			NeedsLink: h.ghClient.OAuthConfigured(),
 		}
 		if h.ghClient.OAuthConfigured() {
+			resp.Error = "Link your GitHub account so SWAMP can discover your App installations."
 			resp.InstallURL = h.ghClient.InstallURL(r.Context())
 		} else {
-			resp.Error = "A linked GitHub account is required to access private repositories. Contact your administrator."
+			resp.Error = "No GitHub App installation is linked to this project for this repository owner."
 		}
 		respondJSON(w, http.StatusOK, resp)
 		return
 	}
 
-	// 2. List installations visible to this GitHub user.
+	// Enumerate installations visible to this user and cross-reference with
+	// SWAMP's DB to find candidates the user could link to the project.
 	userInstalls, err := h.ghClient.ListUserInstallations(r.Context(), token)
 	if err != nil {
 		log.Warn().Err(err).Str("user_id", user.ID).Msg("Failed to list GitHub user installations")
+		// Stale token — can't discover, but we already confirmed there's no
+		// project-linked installation, so tell the user to re-link or install.
 		respondJSON(w, http.StatusOK, response{
 			Linked: true,
-			Error:  "Failed to list your GitHub installations. Your GitHub link may need to be refreshed.",
+			Error:  "Your GitHub link needs to be refreshed. Re-link your account to discover installations.",
 		})
 		return
 	}
 
-	// 3. Cross-reference with SWAMP-known installations.
 	var matched []matchedInstallation
 	ownerMatched := false
 	for _, ui := range userInstalls {
-		// Check if this installation is known to SWAMP.
 		swampInst, err := h.queries.GetInstallationByID(r.Context(), ui.ID)
 		if err != nil || swampInst == nil {
-			continue // Not registered in SWAMP
+			continue
 		}
 		mi := matchedInstallation{
 			InstallationID: swampInst.InstallationID,
 			AccountLogin:   swampInst.AccountLogin,
 		}
-
-		// Check if the owner matches (the repo might be under this installation's account).
 		if strings.EqualFold(swampInst.AccountLogin, owner) {
 			ownerMatched = true
-			// This installation covers the right owner — check repo access.
-			accessible, defaultBranch, err := h.ghClient.UserCanAccessRepo(r.Context(), token, swampInst.InstallationID, owner, repo)
+			accessible, defaultBranch, err := h.ghClient.UserCanAccessRepo(r.Context(), "", swampInst.InstallationID, owner, repo)
 			if err == nil && accessible {
+				// Found a SWAMP-known installation that can clone the repo —
+				// return it so the frontend can prompt the user to link it.
 				respondJSON(w, http.StatusOK, response{
 					Linked:              true,
 					HasInstallation:     true,
@@ -782,22 +819,17 @@ func (h *Handler) UserRepoAccess(w http.ResponseWriter, r *http.Request) {
 		matched = append(matched, mi)
 	}
 
-	// 4. No accessible installation found.
 	resp := response{
 		Linked:               true,
 		MatchedInstallations: matched,
 	}
-
 	if ownerMatched {
-		// User has an installation for this owner, but it doesn't cover this repo.
 		resp.HasInstallation = true
-		resp.Error = fmt.Sprintf("The GitHub App is installed but does not have access to %s/%s. Ask the organization admin to grant access to this repository.", owner, repo)
+		resp.Error = fmt.Sprintf("The GitHub App is installed for %q but cannot access %s/%s. Check the installation's repository scope.", owner, owner, repo)
 	} else {
-		// No installation for this owner — suggest installing the app.
 		resp.InstallURL = h.ghClient.InstallURL(r.Context())
 		resp.Error = fmt.Sprintf("No GitHub App installation found for %q. Install the app to enable access.", owner)
 	}
-
 	respondJSON(w, http.StatusOK, resp)
 }
 
