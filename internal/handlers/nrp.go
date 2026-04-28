@@ -232,68 +232,87 @@ func (h *Handler) nrpGetUserInfo(ctx context.Context, issuer, accessToken string
 	return &info, nil
 }
 
+// getValidNRPToken returns a usable NRP access token for the user, or
+// empty string if none is available. Use validateNRPToken when the caller
+// needs to know *why* the token is unavailable (for logging or to
+// surface a specific error to the user).
 func (h *Handler) getValidNRPToken(ctx context.Context, userID string) string {
+	tok, _ := h.validateNRPToken(ctx, userID)
+	return tok
+}
+
+// validateNRPToken is the explanatory variant of getValidNRPToken: it
+// returns the same access token on success, and a descriptive error on
+// failure so callers can log a meaningful reason. The bare returns of ""
+// in getValidNRPToken now flow through this single function.
+func (h *Handler) validateNRPToken(ctx context.Context, userID string) (string, error) {
 	issuer, _, _, _, err := h.getNRPOAuthConfig(ctx)
-	if err != nil || issuer == "" {
-		return ""
+	if err != nil {
+		return "", fmt.Errorf("NRP OAuth is not configured: %w", err)
+	}
+	if issuer == "" {
+		return "", fmt.Errorf("NRP OAuth issuer is not configured")
 	}
 	identity, err := h.queries.FindLinkedIdentityByIssuer(ctx, userID, issuer)
-	if err != nil || identity == nil || identity.AccessTokenEnc == nil {
-		return ""
+	if err != nil {
+		return "", fmt.Errorf("looking up NRP identity: %w", err)
+	}
+	if identity == nil {
+		return "", fmt.Errorf("no linked NRP identity for user")
+	}
+	if identity.AccessTokenEnc == nil {
+		return "", fmt.Errorf("linked NRP identity has no stored access token")
 	}
 	if h.encryptor == nil {
-		return ""
+		return "", fmt.Errorf("encryption is not configured on this server")
 	}
 	accessToken, err := h.encryptor.DecryptConfigValue(*identity.AccessTokenEnc)
 	if err != nil {
-		log.Warn().Err(err).Str("user_id", userID).Msg("Failed to decrypt NRP access token")
-		return ""
+		return "", fmt.Errorf("decrypting NRP access token: %w", err)
 	}
-	if identity.TokenExpiresAt != nil && identity.TokenExpiresAt.Before(time.Now().Add(5*time.Minute)) {
-		if identity.RefreshTokenEnc == nil {
-			// Some providers omit refresh tokens; continue using the current
-			// access token until it actually expires.
-			if identity.TokenExpiresAt.After(time.Now()) {
-				return accessToken
-			}
-			return ""
-		}
-		refreshToken, err := h.encryptor.DecryptConfigValue(*identity.RefreshTokenEnc)
-		if err != nil {
-			log.Warn().Err(err).Str("user_id", userID).Msg("Failed to decrypt NRP refresh token")
-			if identity.TokenExpiresAt.After(time.Now()) {
-				return accessToken
-			}
-			return ""
-		}
-		tokenResp, err := h.nrpRefreshToken(ctx, issuer, refreshToken)
-		if err != nil {
-			log.Warn().Err(err).Str("user_id", userID).Msg("Failed to refresh NRP token")
-			if identity.TokenExpiresAt.After(time.Now()) {
-				return accessToken
-			}
-			return ""
-		}
-		var newAccessEnc, newRefreshEnc *string
-		enc, err := h.encryptor.EncryptConfigValue(tokenResp.AccessToken)
-		if err == nil {
-			newAccessEnc = &enc
-		}
-		if tokenResp.RefreshToken != "" {
-			enc, err := h.encryptor.EncryptConfigValue(tokenResp.RefreshToken)
-			if err == nil {
-				newRefreshEnc = &enc
-			}
-		}
-		var newExpiry *time.Time
-		if tokenResp.ExpiresIn > 0 {
-			t := time.Now().Add(time.Duration(tokenResp.ExpiresIn) * time.Second)
-			newExpiry = &t
-		}
-		_ = h.queries.UpdateIdentityTokens(ctx, identity.ID, newAccessEnc, newRefreshEnc, newExpiry)
-		return tokenResp.AccessToken
+	if identity.TokenExpiresAt == nil || identity.TokenExpiresAt.After(time.Now().Add(5*time.Minute)) {
+		// Token is fresh — no refresh needed.
+		return accessToken, nil
 	}
-	return accessToken
+	// Token is expired or about to expire — try to refresh.
+	if identity.RefreshTokenEnc == nil {
+		// Some providers omit refresh tokens; continue using the current
+		// access token until it actually expires.
+		if identity.TokenExpiresAt.After(time.Now()) {
+			return accessToken, nil
+		}
+		return "", fmt.Errorf("NRP access token expired and no refresh token is available")
+	}
+	refreshToken, err := h.encryptor.DecryptConfigValue(*identity.RefreshTokenEnc)
+	if err != nil {
+		if identity.TokenExpiresAt.After(time.Now()) {
+			return accessToken, nil
+		}
+		return "", fmt.Errorf("decrypting NRP refresh token: %w", err)
+	}
+	tokenResp, err := h.nrpRefreshToken(ctx, issuer, refreshToken)
+	if err != nil {
+		if identity.TokenExpiresAt.After(time.Now()) {
+			return accessToken, nil
+		}
+		return "", fmt.Errorf("refreshing NRP access token: %w", err)
+	}
+	var newAccessEnc, newRefreshEnc *string
+	if enc, err := h.encryptor.EncryptConfigValue(tokenResp.AccessToken); err == nil {
+		newAccessEnc = &enc
+	}
+	if tokenResp.RefreshToken != "" {
+		if enc, err := h.encryptor.EncryptConfigValue(tokenResp.RefreshToken); err == nil {
+			newRefreshEnc = &enc
+		}
+	}
+	var newExpiry *time.Time
+	if tokenResp.ExpiresIn > 0 {
+		t := time.Now().Add(time.Duration(tokenResp.ExpiresIn) * time.Second)
+		newExpiry = &t
+	}
+	_ = h.queries.UpdateIdentityTokens(ctx, identity.ID, newAccessEnc, newRefreshEnc, newExpiry)
+	return tokenResp.AccessToken, nil
 }
 
 func (h *Handler) buildProjectNRPConfig(ctx context.Context, project *models.Project) *models.ProjectNRPConfig {
@@ -411,28 +430,40 @@ func (h *Handler) UpdateNRPConfig(w http.ResponseWriter, r *http.Request) {
 }
 
 // GetNRPLinkStatus returns the current user's NRP link status.
+//
+// TokenHealthy reports whether a valid (or refreshable) access token is
+// available for downstream NRP API calls. It is only meaningful when
+// Linked is true; the frontend uses it to prompt re-linking when the
+// stored refresh token has expired.
 func (h *Handler) GetNRPLinkStatus(w http.ResponseWriter, r *http.Request) {
 	type response struct {
 		Linked          bool   `json:"linked"`
 		NRPLogin        string `json:"nrp_login,omitempty"`
 		OAuthConfigured bool   `json:"oauth_configured"`
+		TokenHealthy    bool   `json:"token_healthy"`
 	}
-	user := GetUserFromContext(r.Context())
-	issuer, _, _, _, err := h.getNRPOAuthConfig(r.Context())
+	ctx := r.Context()
+	user := GetUserFromContext(ctx)
+	issuer, _, _, _, err := h.getNRPOAuthConfig(ctx)
 	oauthConfigured := err == nil
 	if user == nil || !oauthConfigured {
 		respondJSON(w, http.StatusOK, response{OAuthConfigured: oauthConfigured})
 		return
 	}
-	identity, err := h.queries.FindLinkedIdentityByIssuer(r.Context(), user.ID, issuer)
+	identity, err := h.queries.FindLinkedIdentityByIssuer(ctx, user.ID, issuer)
 	if err != nil || identity == nil {
 		respondJSON(w, http.StatusOK, response{OAuthConfigured: oauthConfigured})
 		return
 	}
+	// Probe the stored token (silent refresh if needed). If we can produce
+	// a usable access token, the link is healthy. Failures here are not
+	// fatal — the link still exists, the user just needs to re-link.
+	tokenHealthy := h.getValidNRPToken(ctx, user.ID) != ""
 	respondJSON(w, http.StatusOK, response{
 		Linked:          true,
 		NRPLogin:        identity.DisplayName,
 		OAuthConfigured: oauthConfigured,
+		TokenHealthy:    tokenHealthy,
 	})
 }
 

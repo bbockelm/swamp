@@ -1,10 +1,12 @@
 const BASE = "/api/v1";
 
-class ApiError extends Error {
+export class ApiError extends Error {
   status: number;
-  constructor(status: number, message: string) {
+  code?: string;
+  constructor(status: number, message: string, code?: string) {
     super(message);
     this.status = status;
+    this.code = code;
   }
 }
 
@@ -26,7 +28,7 @@ async function fetchJSON<T>(url: string, opts?: RequestInit): Promise<T> {
   }
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
-    throw new ApiError(res.status, body.error || res.statusText);
+    throw new ApiError(res.status, body.error || res.statusText, body.code);
   }
   if (res.status === 204) return undefined as T;
   return res.json();
@@ -432,6 +434,7 @@ export interface NRPLinkStatus {
   linked: boolean;
   nrp_login?: string;
   oauth_configured: boolean;
+  token_healthy?: boolean;
 }
 
 export interface GitHubStartLinkResponse {

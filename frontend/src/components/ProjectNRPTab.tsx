@@ -2,7 +2,9 @@
 
 import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { api, NRPInstallLLMKeyResponse } from '@/lib/api';
+import { api, ApiError, NRPInstallLLMKeyResponse, NRPLinkStatus } from '@/lib/api';
+
+const NRP_REAUTH_CODE = 'nrp_reauth_required';
 
 export function ProjectNRPTab({
   projectId,
@@ -109,12 +111,31 @@ export function ProjectNRPTab({
         </div>
       )}
 
-      {linkStatus?.linked && (
+      {linkStatus?.linked && linkStatus.token_healthy !== false && (
         <div className="text-xs text-gray-500 flex items-center gap-1.5">
           <svg className="w-3.5 h-3.5 text-green-500" fill="currentColor" viewBox="0 0 16 16">
             <path d="M6.173 14.727L.466 9.02l1.414-1.414 4.293 4.293L14.12-.049l1.414 1.414z" />
           </svg>
           Linked as <span className="font-medium">{linkStatus.nrp_login}</span>
+        </div>
+      )}
+
+      {linkStatus?.linked && linkStatus.token_healthy === false && (
+        <div className="bg-amber-50 border border-amber-200 p-4 rounded-lg flex items-center justify-between gap-4">
+          <div>
+            <p className="text-sm font-medium text-amber-800">NRP session expired</p>
+            <p className="text-xs text-amber-600 mt-0.5">
+              Your NRP session has expired and could not be refreshed automatically.
+              Re-authenticate to continue using NRP-backed features.
+            </p>
+          </div>
+          <button
+            onClick={handleLinkNRP}
+            disabled={linkingNRP}
+            className="bg-brand-600 text-white px-3 py-1.5 text-sm rounded hover:bg-brand-700 disabled:opacity-50 whitespace-nowrap"
+          >
+            {linkingNRP ? 'Re-authenticating…' : 'Re-authenticate'}
+          </button>
         </div>
       )}
 
@@ -193,7 +214,12 @@ export function ProjectNRPTab({
               </button>
             </div>
 
-            <NRPLLMKeyInstaller projectId={projectId} />
+            <NRPLLMKeyInstaller
+              projectId={projectId}
+              linkStatus={linkStatus}
+              linkingNRP={linkingNRP}
+              onRelinkRequest={handleLinkNRP}
+            />
           </div>
         )}
       </div>
@@ -201,16 +227,30 @@ export function ProjectNRPTab({
   );
 }
 
-function NRPLLMKeyInstaller({ projectId }: { projectId: string }) {
+function NRPLLMKeyInstaller({
+  projectId,
+  linkStatus,
+  linkingNRP,
+  onRelinkRequest,
+}: {
+  projectId: string;
+  linkStatus: NRPLinkStatus | undefined;
+  linkingNRP: boolean;
+  onRelinkRequest: () => void;
+}) {
   const queryClient = useQueryClient();
   const [selectedGroup, setSelectedGroup] = useState<string>('');
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [pendingGroup, setPendingGroup] = useState<string | null>(null);
+
+  const tokenHealthy = linkStatus?.token_healthy !== false;
 
   const { data: groupsResp, isLoading: groupsLoading, error: groupsError, refetch: refetchGroups } = useQuery({
     queryKey: ['nrp-llm-groups', projectId],
     queryFn: () => api.nrp.listLLMGroups(projectId),
     staleTime: 60_000,
     retry: false,
+    enabled: tokenHealthy,
   });
 
   const { data: providerKeys } = useQuery({
@@ -235,10 +275,44 @@ function NRPLLMKeyInstaller({ projectId }: { projectId: string }) {
       queryClient.invalidateQueries({ queryKey: ['provider-keys', projectId] });
       queryClient.invalidateQueries({ queryKey: ['available-providers', projectId] });
     },
-    onError: (err: Error) => {
+    onError: (err: Error, groupName: string) => {
+      // If the session died between status fetch and install, kick off
+      // re-authentication and stash the group so we can retry on success.
+      if (err instanceof ApiError && err.code === NRP_REAUTH_CODE) {
+        setPendingGroup(groupName);
+        setMessage({
+          type: 'error',
+          text: 'NRP session expired — re-authenticate to continue.',
+        });
+        // Refresh status so the re-auth banner renders.
+        queryClient.invalidateQueries({ queryKey: ['nrp-link-status'] });
+        onRelinkRequest();
+        return;
+      }
       setMessage({ type: 'error', text: err.message || 'Failed to install NRP LLM key.' });
     },
   });
+
+  // When re-authentication succeeds while we have a pending install,
+  // retry it. We listen on the popup's postMessage so we react to the
+  // actual completion event rather than polling state.
+  useEffect(() => {
+    if (!pendingGroup) return;
+    const handler = (e: MessageEvent) => {
+      if (e.origin !== window.location.origin) return;
+      if (e.data?.type !== 'identity-link-result' || e.data?.provider !== 'nrp') return;
+      if (e.data?.status === 'success') {
+        const g = pendingGroup;
+        setPendingGroup(null);
+        setMessage(null);
+        installMut.mutate(g);
+      } else {
+        setPendingGroup(null);
+      }
+    };
+    window.addEventListener('message', handler);
+    return () => window.removeEventListener('message', handler);
+  }, [pendingGroup, installMut]);
 
   const handleInstall = () => {
     setMessage(null);
@@ -247,9 +321,9 @@ function NRPLLMKeyInstaller({ projectId }: { projectId: string }) {
 
   const installDisabled =
     installMut.isPending ||
-    groupsLoading ||
-    !!groupsError ||
-    groups.length === 0 ||
+    linkingNRP ||
+    !!pendingGroup ||
+    (tokenHealthy && (groupsLoading || !!groupsError || groups.length === 0)) ||
     !effectiveGroup;
 
   return (
@@ -269,11 +343,20 @@ function NRPLLMKeyInstaller({ projectId }: { projectId: string }) {
         </div>
       )}
 
-      {groupsLoading ? (
+      {!tokenHealthy ? (
+        <div className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+          Your NRP session has expired — re-authenticate using the prompt above, then
+          install an LLM key.
+        </div>
+      ) : groupsLoading ? (
         <p className="text-xs text-gray-500">Looking up your NRP LLM groups…</p>
       ) : groupsError ? (
         <div className="rounded border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
-          {groupsError instanceof Error ? groupsError.message : 'Failed to list NRP LLM groups.'}{' '}
+          {groupsError instanceof ApiError && groupsError.code === NRP_REAUTH_CODE
+            ? 'NRP session expired — re-authenticate to continue.'
+            : groupsError instanceof Error
+            ? groupsError.message
+            : 'Failed to list NRP LLM groups.'}{' '}
           <button type="button" onClick={() => refetchGroups()} className="underline">
             Retry
           </button>
@@ -326,6 +409,10 @@ function NRPLLMKeyInstaller({ projectId }: { projectId: string }) {
         >
           {installMut.isPending
             ? 'Installing…'
+            : pendingGroup
+            ? 'Waiting for re-authentication…'
+            : !tokenHealthy
+            ? 'Re-authenticate & Install'
             : activeNRPKey
             ? 'Replace NRP LLM Key'
             : 'Install NRP LLM Key'}

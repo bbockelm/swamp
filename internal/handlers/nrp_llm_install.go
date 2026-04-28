@@ -18,9 +18,27 @@ import (
 	"github.com/bbockelm/swamp/internal/models"
 )
 
-// errNRPTokenUnavailable is returned when the calling user does not have a
-// usable NRP OAuth token (not linked, expired with no refresh, etc).
-var errNRPTokenUnavailable = errors.New("no valid NRP access token; re-link your NRP identity")
+// errNRPSessionExpired is returned when the calling user's NRP OAuth
+// session has expired (token expired with no working refresh, etc) and
+// the user must re-authenticate to obtain a fresh access token.
+var errNRPSessionExpired = errors.New("NRP session expired; re-authenticate to continue")
+
+// nrpReauthRequiredCode is the machine-readable error code surfaced when
+// the calling user's NRP session has expired and they must re-run the
+// OAuth flow. The frontend keys off this to render a re-auth prompt.
+const nrpReauthRequiredCode = "nrp_reauth_required"
+
+// respondNRPReauthRequired writes a structured error response that the
+// frontend can detect to trigger an interactive re-authentication.
+func respondNRPReauthRequired(w http.ResponseWriter, message string) {
+	if message == "" {
+		message = errNRPSessionExpired.Error()
+	}
+	respondJSON(w, http.StatusBadRequest, map[string]string{
+		"error": message,
+		"code":  nrpReauthRequiredCode,
+	})
+}
 
 // nrpListLLMGroupsResponse is the body of GET /projects/:id/nrp/llm-groups.
 // Groups are returned to the frontend as flat names — the upstream already
@@ -70,15 +88,6 @@ func (h *Handler) nrpLLMAPIBaseURL(ctx context.Context) string {
 	return strings.TrimSpace(h.cfg.NRPLLMAPIBaseURL)
 }
 
-// getValidNRPTokenOrError is a variant of getValidNRPToken that returns a
-// concrete error so handlers can produce clearer messages.
-func (h *Handler) getValidNRPTokenOrError(ctx context.Context, userID string) (string, error) {
-	tok := h.getValidNRPToken(ctx, userID)
-	if tok == "" {
-		return "", errNRPTokenUnavailable
-	}
-	return tok, nil
-}
 
 // nrpListUserLLMGroups calls the upstream /api/token/llm/groups endpoint
 // with the user's NRP access token and returns the LLM-eligible group
@@ -187,9 +196,10 @@ func (h *Handler) ListProjectNRPLLMGroups(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	accessToken, err := h.getValidNRPTokenOrError(ctx, user.ID)
+	accessToken, err := h.validateNRPToken(ctx, user.ID)
 	if err != nil {
-		respondError(w, http.StatusBadRequest, err.Error())
+		log.Info().Err(err).Str("user_id", user.ID).Str("project_id", projectID).Msg("NRP LLM groups: re-authentication required")
+		respondNRPReauthRequired(w, "")
 		return
 	}
 
@@ -229,9 +239,10 @@ func (h *Handler) InstallProjectNRPLLMKey(w http.ResponseWriter, r *http.Request
 	_ = decodeJSON(r, &req)
 	groupName := strings.TrimSpace(req.GroupName)
 
-	accessToken, err := h.getValidNRPTokenOrError(ctx, user.ID)
+	accessToken, err := h.validateNRPToken(ctx, user.ID)
 	if err != nil {
-		respondError(w, http.StatusBadRequest, err.Error())
+		log.Info().Err(err).Str("user_id", user.ID).Str("project_id", projectID).Msg("NRP LLM key install: re-authentication required")
+		respondNRPReauthRequired(w, "")
 		return
 	}
 
