@@ -492,6 +492,17 @@ export interface ProjectNRPConfig {
   execution_enabled_at?: string;
 }
 
+export interface NRPLLMGroupsResponse {
+  groups: string[];
+}
+
+export interface NRPInstallLLMKeyResponse {
+  key_id: string;
+  label: string;
+  key_hint: string;
+  group_name: string;
+}
+
 export interface GitHubWebhookDelivery {
   id: string;
   delivery_id: string;
@@ -1126,9 +1137,12 @@ export const api = {
         method: 'PUT',
         body: JSON.stringify(data),
       }),
-    installLLMKey: (projectId: string): Promise<void> =>
+    listLLMGroups: (projectId: string): Promise<NRPLLMGroupsResponse> =>
+      fetchJSON(`${BASE}/projects/${projectId}/nrp/llm-groups`),
+    installLLMKey: (projectId: string, groupName?: string): Promise<NRPInstallLLMKeyResponse> =>
       fetchJSON(`${BASE}/projects/${projectId}/nrp/install-llm-key`, {
         method: 'POST',
+        body: JSON.stringify(groupName ? { group_name: groupName } : {}),
       }),
   },
 };

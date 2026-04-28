@@ -124,7 +124,15 @@ type Config struct {
 	NRPOIDCIssuer       string `envconfig:"NRP_OIDC_ISSUER" default:""`
 	NRPOIDCClientID     string `envconfig:"NRP_OIDC_CLIENT_ID" default:""`
 	NRPOIDCClientSecret string `envconfig:"NRP_OIDC_CLIENT_SECRET" default:""`
-	NRPLLMExchangeURL   string `envconfig:"NRP_LLM_EXCHANGE_URL" default:"https://gitlab.nrp-nautilus.io/api/token/llm/exchange"`
+	NRPLLMExchangeURL   string `envconfig:"NRP_LLM_EXCHANGE_URL" default:"https://portal.nrp.ai/api/token/llm/exchange"`
+	// NRPLLMGroupsURL is the upstream REST endpoint that returns the LLM-
+	// eligible groups for the calling user. If empty, it is derived from
+	// the exchange URL by replacing the trailing "/exchange" with "/groups".
+	NRPLLMGroupsURL string `envconfig:"NRP_LLM_GROUPS_URL" default:""`
+	// NRPLLMAPIBaseURL is the OpenAI-compatible API base URL where the token
+	// returned by the exchange endpoint can be used. The token is sent as a
+	// Bearer credential to {base}/chat/completions.
+	NRPLLMAPIBaseURL string `envconfig:"NRP_LLM_API_BASE_URL" default:"https://ellm.nrp-nautilus.io/v1"`
 
 	// Worker mode settings (used inside worker pods / detached processes).
 	WorkerMode     bool   `envconfig:"SWAMP_WORKER_MODE" default:"false"`

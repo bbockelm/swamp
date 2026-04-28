@@ -450,6 +450,7 @@ func New(cfg *config.Config, pool *pgxpool.Pool, store *storage.Store) (*chi.Mux
 					r.Route("/nrp", func(r chi.Router) {
 						r.Get("/", h.GetProjectNRPConfig)
 						r.Put("/", h.UpdateProjectNRPConfig)
+						r.Get("/llm-groups", h.ListProjectNRPLLMGroups)
 						r.Post("/install-llm-key", h.InstallProjectNRPLLMKey)
 					})
 

@@ -656,7 +656,3 @@ func (h *Handler) UpdateProjectNRPConfig(w http.ResponseWriter, r *http.Request)
 	respondJSON(w, http.StatusOK, h.buildProjectNRPConfig(r.Context(), project))
 }
 
-// InstallProjectNRPLLMKey is a placeholder for the future NRP token exchange flow.
-func (h *Handler) InstallProjectNRPLLMKey(w http.ResponseWriter, r *http.Request) {
-	respondError(w, http.StatusNotImplemented, "NRP LLM key installation is not enabled yet")
-}

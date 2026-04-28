@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { api } from '@/lib/api';
+import { api, NRPInstallLLMKeyResponse } from '@/lib/api';
 
 export function ProjectNRPTab({
   projectId,
@@ -193,25 +193,143 @@ export function ProjectNRPTab({
               </button>
             </div>
 
-            <div className="rounded border border-dashed px-4 py-3 bg-gray-50">
-              <div className="flex items-center justify-between gap-4">
-                <div>
-                  <p className="text-sm font-medium text-gray-900">Install NRP LLM Key</p>
-                  <p className="text-xs text-gray-500 mt-0.5">
-                    This will use your linked NRP access token to request a project-scoped NRP LLM key once the upstream API is deployed.
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  disabled
-                  className="px-3 py-1.5 text-sm rounded bg-gray-200 text-gray-500 cursor-not-allowed"
-                >
-                  Install NRP LLM Key
-                </button>
-              </div>
-            </div>
+            <NRPLLMKeyInstaller projectId={projectId} />
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+function NRPLLMKeyInstaller({ projectId }: { projectId: string }) {
+  const queryClient = useQueryClient();
+  const [selectedGroup, setSelectedGroup] = useState<string>('');
+  const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
+  const { data: groupsResp, isLoading: groupsLoading, error: groupsError, refetch: refetchGroups } = useQuery({
+    queryKey: ['nrp-llm-groups', projectId],
+    queryFn: () => api.nrp.listLLMGroups(projectId),
+    staleTime: 60_000,
+    retry: false,
+  });
+
+  const { data: providerKeys } = useQuery({
+    queryKey: ['provider-keys', projectId],
+    queryFn: () => api.providerKeys.list(projectId),
+    staleTime: 30_000,
+  });
+  const activeNRPKey = providerKeys?.find((k) => k.provider === 'nrp' && k.is_active);
+
+  const groups = groupsResp?.groups ?? [];
+  // If only one group, treat it as auto-selected without writing to state.
+  const effectiveGroup = selectedGroup || (groups.length === 1 ? groups[0] : '');
+
+  const installMut = useMutation({
+    mutationFn: (groupName: string): Promise<NRPInstallLLMKeyResponse> =>
+      api.nrp.installLLMKey(projectId, groupName || undefined),
+    onSuccess: (resp) => {
+      setMessage({
+        type: 'success',
+        text: `Installed NRP LLM key for group "${resp.group_name}" (${resp.key_hint}).`,
+      });
+      queryClient.invalidateQueries({ queryKey: ['provider-keys', projectId] });
+      queryClient.invalidateQueries({ queryKey: ['available-providers', projectId] });
+    },
+    onError: (err: Error) => {
+      setMessage({ type: 'error', text: err.message || 'Failed to install NRP LLM key.' });
+    },
+  });
+
+  const handleInstall = () => {
+    setMessage(null);
+    installMut.mutate(effectiveGroup);
+  };
+
+  const installDisabled =
+    installMut.isPending ||
+    groupsLoading ||
+    !!groupsError ||
+    groups.length === 0 ||
+    !effectiveGroup;
+
+  return (
+    <div className="rounded border px-4 py-3 bg-gray-50 space-y-3">
+      <div>
+        <p className="text-sm font-medium text-gray-900">NRP LLM Key</p>
+        <p className="text-xs text-gray-500 mt-0.5">
+          Exchange your linked NRP access token for a project-scoped LLM API key. The key
+          can then be used for analyses on this project.
+        </p>
+      </div>
+
+      {activeNRPKey && (
+        <div className="rounded border bg-white px-3 py-2 text-xs text-gray-700">
+          <span className="font-medium text-gray-900">Currently installed:</span> {activeNRPKey.label}{' '}
+          <span className="text-gray-400">({activeNRPKey.key_hint})</span>
+        </div>
+      )}
+
+      {groupsLoading ? (
+        <p className="text-xs text-gray-500">Looking up your NRP LLM groups…</p>
+      ) : groupsError ? (
+        <div className="rounded border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+          {groupsError instanceof Error ? groupsError.message : 'Failed to list NRP LLM groups.'}{' '}
+          <button type="button" onClick={() => refetchGroups()} className="underline">
+            Retry
+          </button>
+        </div>
+      ) : groups.length === 0 ? (
+        <div className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+          Your NRP account is not a member of any LLM-eligible groups. Ask an NRP administrator
+          to add you to a LiteLLM-enabled group.
+        </div>
+      ) : groups.length === 1 ? (
+        <p className="text-xs text-gray-700">
+          Group <span className="font-mono font-medium">{groups[0]}</span> will be used.
+        </p>
+      ) : (
+        <div>
+          <label className="block text-xs font-medium text-gray-700 mb-1">LLM group</label>
+          <select
+            value={effectiveGroup}
+            onChange={(e) => setSelectedGroup(e.target.value)}
+            className="w-full border rounded px-2 py-1.5 text-sm bg-white"
+          >
+            <option value="">Choose a group…</option>
+            {groups.map((g) => (
+              <option key={g} value={g}>
+                {g}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
+
+      {message && (
+        <div
+          className={`rounded border px-3 py-2 text-xs ${
+            message.type === 'success'
+              ? 'bg-green-50 border-green-200 text-green-800'
+              : 'bg-red-50 border-red-200 text-red-800'
+          }`}
+        >
+          {message.text}
+        </div>
+      )}
+
+      <div className="flex items-center justify-end">
+        <button
+          type="button"
+          disabled={installDisabled}
+          onClick={handleInstall}
+          className="px-3 py-1.5 text-sm rounded bg-brand-600 text-white hover:bg-brand-700 disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          {installMut.isPending
+            ? 'Installing…'
+            : activeNRPKey
+            ? 'Replace NRP LLM Key'
+            : 'Install NRP LLM Key'}
+        </button>
       </div>
     </div>
   );
