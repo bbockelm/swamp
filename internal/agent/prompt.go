@@ -197,7 +197,29 @@ func BuildPrompt(pkg *models.SoftwarePackage, phase string, analysisPrompt strin
 	}
 }
 
-// BuildMultiPackagePrompt builds a prompt for analyzing multiple packages at once.
+// BuildContinuationPrompt returns a prompt that instructs the security analyst
+// to continue a truncated analysis session from where it left off.
+//
+// It is used when an opencode run finishes with reason="length", indicating
+// the model's output was cut short before the analysis was complete.
+func BuildContinuationPrompt() string {
+	return `Continue the security analysis from where you left off.
+
+## Instructions
+
+- Do NOT restart the scan or re-clone any repositories.
+- Do NOT repeat findings that have already been written to output/results.sarif or output/report.md.
+- Focus on the remaining unreviewed files and attack surfaces that were not yet covered.
+- Update output/results.sarif and output/report.md IN PLACE, appending only newly discovered findings.
+- Update output/notes.md with any new observations.
+- If you have already completed all phases of the analysis, write a short completion summary to output/notes.md and stop.
+
+## Reminder
+
+Your previous run was cut short because the output reached the context length limit.
+Pick up exactly where you stopped. Do not re-introduce already-reported findings.
+Report only newly discovered vulnerabilities and any final completion details.`
+}
 func BuildMultiPackagePrompt(packages []models.SoftwarePackage, analysisPrompt string, analysisCtx *models.AnalysisContext, preClonedByPackage map[string]string) string {
 	var sb strings.Builder
 	sb.WriteString("You are a security analyst performing a comprehensive vulnerability assessment.\n\n")
