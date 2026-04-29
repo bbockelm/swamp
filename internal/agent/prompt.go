@@ -200,8 +200,17 @@ func BuildPrompt(pkg *models.SoftwarePackage, phase string, analysisPrompt strin
 // BuildContinuationPrompt returns a prompt that instructs the security analyst
 // to continue a truncated analysis session from where it left off.
 //
-// It is used when an opencode run finishes with reason="length", indicating
-// the model's output was cut short before the analysis was complete.
+// It is used by runOpenCodeProcess when an opencode invocation finishes with
+// step_finish reason="length", meaning the model's output was cut short by the
+// context-window limit before the analysis was complete. The continuation run
+// resumes the same opencode session (via --session <sessionID>) so the agent
+// can pick up where it stopped.
+//
+// The prompt assumes the following output files may already be partially
+// written by the preceding run and should be updated in place:
+//   - output/results.sarif
+//   - output/report.md
+//   - output/notes.md
 func BuildContinuationPrompt() string {
 	return `Continue the security analysis from where you left off.
 

@@ -217,7 +217,7 @@ func TestRunOpenCodeProcess_StopsOnEndTurn(t *testing.T) {
 	}
 
 	// No counter file → only one invocation happened.
-	if _, statErr := os.Stat(filepath.Join(workDir, ".call_count")); statErr == nil {
+	if _, callCountFileErr := os.Stat(filepath.Join(workDir, ".call_count")); callCountFileErr == nil {
 		// The stateful helper was not used, but let's also check the
 		// non-stateful binary was not re-invoked by checking for
 		// continuation broadcasts.

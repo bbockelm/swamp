@@ -253,9 +253,11 @@ func runOpenCodeProcess(ctx context.Context, binary, workDir, prompt, analysisID
 			return fmt.Errorf("opencode step finished with reason=length but no session ID was captured; cannot continue")
 		}
 
-		// For continuation runs, refuse to loop forever on runs with no output.
-		if attempt > 0 && !result.HasWork {
-			return fmt.Errorf("opencode continuation run (attempt %d) produced no useful output; aborting", attempt)
+		// If the run produced no useful work (no text or tool_use events)
+		// while the context window was also exhausted, there is nothing to
+		// build on — continuing would likely just repeat the same empty run.
+		if !result.HasWork {
+			return fmt.Errorf("opencode run (attempt %d) finished with reason=length but produced no useful output; aborting", attempt)
 		}
 
 		if attempt == maxContinuations {
