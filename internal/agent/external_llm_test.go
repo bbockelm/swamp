@@ -92,7 +92,9 @@ func callCount(t *testing.T, dir string) int {
 		t.Fatalf("callCount: %v", err)
 	}
 	var n int
-	fmt.Sscanf(strings.TrimSpace(string(data)), "%d", &n)
+	if _, err := fmt.Sscanf(strings.TrimSpace(string(data)), "%d", &n); err != nil {
+		t.Fatalf("callCount: %v", err)
+	}
 	return n
 }
 
