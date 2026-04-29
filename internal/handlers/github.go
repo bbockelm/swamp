@@ -1588,7 +1588,25 @@ func (h *Handler) triggerWebhookAnalysis(ctx context.Context, ghCfg *models.Proj
 		return "", nil
 	}
 
-	metaBytes, _ := json.Marshal(info.Meta)
+	// analyses.triggered_by is a UUID FK to users.id, so we attribute the
+	// webhook-triggered analysis to the project owner. The actual GitHub
+	// actor is recorded in trigger_meta.sender for display.
+	project, err := h.queries.GetProject(ctx, ghCfg.ProjectID)
+	if err != nil {
+		return "", fmt.Errorf("looking up project for webhook trigger: %w", err)
+	}
+	if project.OwnerID == "" {
+		return "", fmt.Errorf("project %s has no owner; cannot attribute webhook analysis", ghCfg.ProjectID)
+	}
+
+	meta := info.Meta
+	if meta == nil {
+		meta = map[string]interface{}{}
+	}
+	if senderLogin != "" {
+		meta["sender"] = senderLogin
+	}
+	metaBytes, _ := json.Marshal(meta)
 
 	// Build agent_config with provider info if configured.
 	agentConfig := map[string]interface{}{}
@@ -1604,7 +1622,7 @@ func (h *Handler) triggerWebhookAnalysis(ctx context.Context, ghCfg *models.Proj
 	analysis := &models.Analysis{
 		ProjectID:    ghCfg.ProjectID,
 		Status:       "pending",
-		TriggeredBy:  "webhook:" + senderLogin,
+		TriggeredBy:  project.OwnerID,
 		AgentModel:   ghCfg.WebhookAgentModel,
 		AgentConfig:  json.RawMessage(configBytes),
 		GitBranch:    info.Branch,

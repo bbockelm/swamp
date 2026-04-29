@@ -304,7 +304,9 @@ function AnalysisCard({ analysis: a, expanded, onToggle }: { analysis: Analysis;
                          a.trigger_event === 'release' ? 'release' :
                          a.trigger_event}
                       </span>
-                      {a.triggered_by_name || a.triggered_by.replace('webhook:', '')}
+                      {(a.trigger_meta?.sender as string) ||
+                        a.triggered_by_name ||
+                        a.triggered_by.replace('webhook:', '').slice(0, 8)}
                     </span>
                   ) : (
                     a.triggered_by_name || a.triggered_by.slice(0, 8)

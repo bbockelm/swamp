@@ -1,10 +1,13 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import { api, type Group } from "@/lib/api";
 import { GroupManager } from "@/components/GroupManager";
+import { Pagination, paginate } from "@/components/Pagination";
+
+const GROUPS_PAGE_SIZE = 15;
 
 export default function GroupsPage() {
   const queryClient = useQueryClient();
@@ -17,6 +20,23 @@ export default function GroupsPage() {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [expandedId, setExpandedId] = useState<string | null>(null);
+
+  const [query, setQuery] = useState("");
+  const [page, setPage] = useState(1);
+  const handleQueryChange = (q: string) => {
+    setQuery(q);
+    setPage(1);
+  };
+  const filteredGroups = useMemo(() => {
+    if (!groups) return [];
+    const q = query.trim().toLowerCase();
+    if (!q) return groups;
+    return groups.filter((g) =>
+      `${g.name} ${g.description ?? ""}`.toLowerCase().includes(q),
+    );
+  }, [groups, query]);
+  const totalGroupPages = Math.max(1, Math.ceil(filteredGroups.length / GROUPS_PAGE_SIZE));
+  const visibleGroups = paginate(filteredGroups, page, GROUPS_PAGE_SIZE);
 
   const createGroup = useMutation({
     mutationFn: () => api.groups.create({ name, description }),
@@ -106,16 +126,40 @@ export default function GroupsPage() {
       {!groups?.length ? (
         <p className="text-gray-500">No groups yet.</p>
       ) : (
-        <div className="space-y-2">
-          {groups.map((g) => (
-            <GroupCard
-              key={g.id}
-              group={g}
-              expanded={expandedId === g.id}
-              onToggle={() => setExpandedId(expandedId === g.id ? null : g.id)}
+        <>
+          <div className="mb-4 flex items-center gap-3">
+            <input
+              type="search"
+              value={query}
+              onChange={(e) => handleQueryChange(e.target.value)}
+              placeholder="Search by name or description…"
+              className="flex-1 border rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
             />
-          ))}
-        </div>
+            <span className="text-xs text-gray-500 whitespace-nowrap">
+              {filteredGroups.length === groups.length
+                ? `${groups.length} group${groups.length === 1 ? '' : 's'}`
+                : `${filteredGroups.length} of ${groups.length}`}
+            </span>
+          </div>
+
+          {filteredGroups.length === 0 ? (
+            <p className="text-gray-500 text-sm">No groups match &ldquo;{query}&rdquo;.</p>
+          ) : (
+            <>
+              <div className="space-y-2">
+                {visibleGroups.map((g) => (
+                  <GroupCard
+                    key={g.id}
+                    group={g}
+                    expanded={expandedId === g.id}
+                    onToggle={() => setExpandedId(expandedId === g.id ? null : g.id)}
+                  />
+                ))}
+              </div>
+              <Pagination currentPage={page} totalPages={totalGroupPages} onPageChange={setPage} />
+            </>
+          )}
+        </>
       )}
     </div>
   );

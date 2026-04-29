@@ -337,7 +337,9 @@ export default function AnalysisDetailClient() {
                      analysis.trigger_event === 'release' ? '🏷 release' :
                      analysis.trigger_event}
                   </span>
-                  {analysis.triggered_by_name || analysis.triggered_by.replace('webhook:', '')}
+                  {(analysis.trigger_meta?.sender as string) ||
+                    analysis.triggered_by_name ||
+                    analysis.triggered_by.replace('webhook:', '').slice(0, 8)}
                 </span>
               ) : (
                 analysis.triggered_by_name || analysis.triggered_by.slice(0, 8)

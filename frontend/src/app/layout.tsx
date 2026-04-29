@@ -3,6 +3,7 @@ import { Suspense } from 'react';
 import './globals.css';
 import { Providers } from './providers';
 import { AppShell } from '@/components/AppShell';
+import { SiteFooter } from '@/components/SiteFooter';
 
 export const metadata: Metadata = {
   title: 'SWAMP — Software Assurance Marketplace',
@@ -16,11 +17,14 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
-      <body>
+      <body className="min-h-screen flex flex-col">
         <Providers>
-          <Suspense fallback={<div className="min-h-screen flex items-center justify-center text-gray-400">Loading...</div>}>
-            <AppShell>{children}</AppShell>
-          </Suspense>
+          <div className="flex-1 flex flex-col">
+            <Suspense fallback={<div className="min-h-screen flex items-center justify-center text-gray-400">Loading...</div>}>
+              <AppShell>{children}</AppShell>
+            </Suspense>
+          </div>
+          <SiteFooter />
         </Providers>
       </body>
     </html>

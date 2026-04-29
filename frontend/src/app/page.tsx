@@ -203,20 +203,6 @@ function LandingPage() {
         </div>
       </section>
 
-      {/* Footer */}
-      <footer className="bg-navy-950 border-t border-navy-800">
-        <div className="max-w-5xl mx-auto px-6 py-8 flex flex-col sm:flex-row items-center justify-between gap-4">
-          <p className="text-sm text-gray-400">
-            SWAMP — Software Assurance Marketplace
-          </p>
-          <Link
-            href="/login"
-            className="text-sm text-brand-400 hover:text-brand-300 hover:underline"
-          >
-            Sign In
-          </Link>
-        </div>
-      </footer>
     </div>
   );
 }

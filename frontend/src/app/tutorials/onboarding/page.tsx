@@ -36,15 +36,6 @@ export default function PublicOnboardingTutorialPage() {
 
         <TutorialContent tutorialPath="onboarding" />
       </section>
-
-      <footer className="bg-navy-950 border-t border-navy-800 mt-12">
-        <div className="max-w-6xl mx-auto px-6 py-6 flex items-center justify-between">
-          <p className="text-sm text-gray-400">SWAMP — Software Assurance Marketplace</p>
-          <Link href="/login" className="text-sm text-brand-400 hover:text-brand-300 hover:underline">
-            Sign In
-          </Link>
-        </div>
-      </footer>
     </div>
   );
 }

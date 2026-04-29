@@ -176,6 +176,30 @@ export default function ProjectsPage() {
 
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
+  // Search + pagination over the project list.
+  const [query, setQuery] = useState("");
+  const [page, setPage] = useState(1);
+  const handleQueryChange = (q: string) => {
+    setQuery(q);
+    setPage(1);
+  };
+  const PROJECTS_PAGE_SIZE = 15;
+  const filteredProjects = useMemo(() => {
+    if (!projects) return [];
+    const q = query.trim().toLowerCase();
+    if (!q) return projects;
+    const ownerLabel = (ownerID: string) => {
+      const u = users?.find((u) => u.id === ownerID);
+      return ((u?.display_name || "") + " " + (u?.email || "")).toLowerCase();
+    };
+    return projects.filter((p) => {
+      const haystack = `${p.name} ${p.description ?? ""} ${ownerLabel(p.owner_id)}`.toLowerCase();
+      return haystack.includes(q);
+    });
+  }, [projects, query, users]);
+  const totalProjectPages = Math.max(1, Math.ceil(filteredProjects.length / PROJECTS_PAGE_SIZE));
+  const visibleProjects = paginate(filteredProjects, page, PROJECTS_PAGE_SIZE);
+
   const createProject = useMutation({
     mutationFn: async () => {
       let rg = readGroupId || null;
@@ -365,20 +389,44 @@ export default function ProjectsPage() {
       {!projects?.length ? (
         <p className="text-gray-500">No projects yet.</p>
       ) : (
-        <div className="space-y-2">
-          {projects.map((p) => (
-            <ProjectCard
-              key={p.id}
-              project={p}
-              groups={groups}
-              users={users}
-              session={session}
-              nrpConfigured={nrpLinkStatus?.oauth_configured ?? false}
-              expanded={expandedId === p.id}
-              onToggle={() => setExpandedId(expandedId === p.id ? null : p.id)}
+        <>
+          <div className="mb-4 flex items-center gap-3">
+            <input
+              type="search"
+              value={query}
+              onChange={(e) => handleQueryChange(e.target.value)}
+              placeholder="Search by name, description, or owner…"
+              className="flex-1 border rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
             />
-          ))}
-        </div>
+            <span className="text-xs text-gray-500 whitespace-nowrap">
+              {filteredProjects.length === projects.length
+                ? `${projects.length} project${projects.length === 1 ? '' : 's'}`
+                : `${filteredProjects.length} of ${projects.length}`}
+            </span>
+          </div>
+
+          {filteredProjects.length === 0 ? (
+            <p className="text-gray-500 text-sm">No projects match &ldquo;{query}&rdquo;.</p>
+          ) : (
+            <>
+              <div className="space-y-2">
+                {visibleProjects.map((p) => (
+                  <ProjectCard
+                    key={p.id}
+                    project={p}
+                    groups={groups}
+                    users={users}
+                    session={session}
+                    nrpConfigured={nrpLinkStatus?.oauth_configured ?? false}
+                    expanded={expandedId === p.id}
+                    onToggle={() => setExpandedId(expandedId === p.id ? null : p.id)}
+                  />
+                ))}
+              </div>
+              <Pagination currentPage={page} totalPages={totalProjectPages} onPageChange={setPage} />
+            </>
+          )}
+        </>
       )}
     </div>
   );
@@ -1858,7 +1906,13 @@ function AnalysisCard({
             {analysis.triggered_by && (
               <div>
                 <span className="text-xs text-gray-500 uppercase">Triggered By</span>
-                <p>{analysis.triggered_by_name || analysis.triggered_by.slice(0, 8)}</p>
+                <p>
+                  {analysis.trigger_event && analysis.trigger_event !== 'manual'
+                    ? (analysis.trigger_meta?.sender as string) ||
+                      analysis.triggered_by_name ||
+                      analysis.triggered_by.slice(0, 8)
+                    : analysis.triggered_by_name || analysis.triggered_by.slice(0, 8)}
+                </p>
               </div>
             )}
             {analysis.git_commit && (
