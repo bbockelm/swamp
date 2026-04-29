@@ -1,10 +1,8 @@
 'use client';
 
-import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { api, ApiError, NRPInstallLLMKeyResponse, NRPLinkStatus } from '@/lib/api';
-
-const NRP_REAUTH_CODE = 'nrp_reauth_required';
+import { api } from '@/lib/api';
+import { NRPLLMKeyInstaller, useNRPLinkSession } from '@/components/NRPLLMKeyInstaller';
 
 export function ProjectNRPTab({
   projectId,
@@ -16,70 +14,54 @@ export function ProjectNRPTab({
   isProjectAdmin: boolean;
 }) {
   const queryClient = useQueryClient();
-  const [linkingNRP, setLinkingNRP] = useState(false);
-  const [linkMessage, setLinkMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
-
-  const { data: linkStatus } = useQuery({
-    queryKey: ['nrp-link-status'],
-    queryFn: () => api.nrp.getLinkStatus(),
-    staleTime: 30_000,
-  });
+  const { linkStatus, linkingNRP, linkMessage, startLink } = useNRPLinkSession();
 
   const { data: config, isLoading } = useQuery({
     queryKey: ['project-nrp-config', projectId],
     queryFn: () => api.nrp.getProjectConfig(projectId),
   });
 
-  const updateMutation = useMutation({
-    mutationFn: (data: { access_enabled?: boolean; execution_enabled?: boolean }) =>
-      api.nrp.updateProjectConfig(projectId, data),
+  const linked = !!linkStatus?.linked;
+  const tokenHealthy = linkStatus?.token_healthy !== false;
+
+  // Single toggle that flips both access_enabled and execution_enabled
+  // atomically. Site admins can flip the project on without a linked NRP
+  // identity (they're pre-approving). Project admins must have linked
+  // and have a healthy NRP session.
+  const toggleMutation = useMutation({
+    mutationFn: (enabled: boolean) =>
+      api.nrp.updateProjectConfig(projectId, {
+        access_enabled: enabled,
+        execution_enabled: enabled,
+      }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['project-nrp-config', projectId] });
     },
-    onError: (error: Error) => {
-      setLinkMessage({ type: 'error', text: error.message || 'Failed to update NRP settings.' });
-    },
   });
 
-  const canLinkedProjectAdminManageAccess = !!isProjectAdmin && !!linkStatus?.linked;
-  const canManageProjectAccess = isSystemAdmin || canLinkedProjectAdminManageAccess;
+  const isEnabled = !!config?.execution_enabled;
+  const lastChangedAt = config?.execution_enabled_at ?? config?.access_enabled_at;
+  const lastChangedBy = config?.execution_enabled_by_name ?? config?.access_enabled_by_name;
 
-  useEffect(() => {
-    const handler = (e: MessageEvent) => {
-      if (e.origin !== window.location.origin) {
-        return;
-      }
-      if (e.data?.type !== 'identity-link-result' || e.data?.provider !== 'nrp') {
-        return;
-      }
-      setLinkingNRP(false);
-      if (e.data?.status === 'error') {
-        setLinkMessage({ type: 'error', text: e.data?.message || 'Failed to link NRP account.' });
-        return;
-      }
-      setLinkMessage({ type: 'success', text: e.data?.message || 'NRP account linked.' });
-      queryClient.invalidateQueries({ queryKey: ['nrp-link-status'] });
-      queryClient.invalidateQueries({ queryKey: ['project-nrp-config', projectId] });
-    };
-    window.addEventListener('message', handler);
-    return () => window.removeEventListener('message', handler);
-  }, [projectId, queryClient]);
+  // Permissions for the toggle. Site admins always allowed. Project
+  // admins must have a linked, healthy NRP identity.
+  const projectAdminCanToggle = isProjectAdmin && linked && tokenHealthy;
+  const canToggle = isSystemAdmin || projectAdminCanToggle;
 
-  const handleLinkNRP = async () => {
-    setLinkMessage(null);
-    setLinkingNRP(true);
-    try {
-      const resp = await api.nrp.startLink();
-      const popup = window.open(resp.authorize_url, 'nrp-link', 'width=600,height=700');
-      if (!popup) {
-        setLinkingNRP(false);
-        setLinkMessage({ type: 'error', text: 'Popup blocked. Allow popups and try again.' });
-      }
-    } catch (error) {
-      setLinkingNRP(false);
-      setLinkMessage({ type: 'error', text: error instanceof Error ? error.message : 'Failed to start NRP linking.' });
+  // Reason text for why a project admin can't currently toggle. We only
+  // show this for project admins (site admins always can).
+  let toggleHint: string | null = null;
+  if (!canToggle && isProjectAdmin) {
+    if (!linkStatus?.oauth_configured) {
+      toggleHint = 'NRP integration is not configured on this server.';
+    } else if (!linked) {
+      toggleHint = 'Link your NRP account to enable NRP for this project.';
+    } else if (!tokenHealthy) {
+      toggleHint = 'Your NRP session has expired — re-authenticate to manage NRP access.';
     }
-  };
+  } else if (!canToggle && !isProjectAdmin) {
+    toggleHint = 'A site administrator or a project administrator with a linked NRP identity can enable NRP for this project.';
+  }
 
   if (isLoading) {
     return <p className="text-sm text-gray-500">Loading…</p>;
@@ -88,336 +70,117 @@ export function ProjectNRPTab({
   return (
     <div className="space-y-6">
       {linkMessage && (
-        <div className={`border rounded-lg px-4 py-3 text-sm ${linkMessage.type === 'success' ? 'bg-green-50 border-green-200 text-green-800' : 'bg-red-50 border-red-200 text-red-800'}`}>
+        <div
+          className={`border rounded-lg px-4 py-3 text-sm ${
+            linkMessage.type === 'success'
+              ? 'bg-green-50 border-green-200 text-green-800'
+              : 'bg-red-50 border-red-200 text-red-800'
+          }`}
+        >
           {linkMessage.text}
         </div>
       )}
 
-      {linkStatus && !linkStatus.linked && linkStatus.oauth_configured && (
-        <div className="bg-amber-50 border border-amber-200 p-4 rounded-lg flex items-center justify-between gap-4">
-          <div>
-            <p className="text-sm font-medium text-amber-800">NRP identity not linked</p>
-            <p className="text-xs text-amber-600 mt-0.5">
-              Link your NRP account to use NRP-backed project features. This uses the same account-linking flow as GitHub.
-            </p>
-          </div>
-          <button
-            onClick={handleLinkNRP}
-            disabled={linkingNRP}
-            className="bg-brand-600 text-white px-3 py-1.5 text-sm rounded hover:bg-brand-700 disabled:opacity-50 whitespace-nowrap"
-          >
-            {linkingNRP ? 'Linking…' : 'Link NRP Account'}
-          </button>
-        </div>
-      )}
-
-      {linkStatus?.linked && linkStatus.token_healthy !== false && (
-        <div className="text-xs text-gray-500 flex items-center gap-1.5">
-          <svg className="w-3.5 h-3.5 text-green-500" fill="currentColor" viewBox="0 0 16 16">
-            <path d="M6.173 14.727L.466 9.02l1.414-1.414 4.293 4.293L14.12-.049l1.414 1.414z" />
-          </svg>
-          Linked as <span className="font-medium">{linkStatus.nrp_login}</span>
-        </div>
-      )}
-
-      {linkStatus?.linked && linkStatus.token_healthy === false && (
-        <div className="bg-amber-50 border border-amber-200 p-4 rounded-lg flex items-center justify-between gap-4">
-          <div>
-            <p className="text-sm font-medium text-amber-800">NRP session expired</p>
-            <p className="text-xs text-amber-600 mt-0.5">
-              Your NRP session has expired and could not be refreshed automatically.
-              Re-authenticate to continue using NRP-backed features.
-            </p>
-          </div>
-          <button
-            onClick={handleLinkNRP}
-            disabled={linkingNRP}
-            className="bg-brand-600 text-white px-3 py-1.5 text-sm rounded hover:bg-brand-700 disabled:opacity-50 whitespace-nowrap"
-          >
-            {linkingNRP ? 'Re-authenticating…' : 'Re-authenticate'}
-          </button>
-        </div>
-      )}
-
-      <div className="bg-white p-6 rounded-lg border space-y-3">
+      {/* Primary toggle card. Linked-identity status, permissions
+          explainer, and any link / re-auth actions all live here so the
+          user has one place to look for "why can / can't I do this?". */}
+      <div className="bg-white p-6 rounded-lg border space-y-4">
         <div>
-          <h2 className="text-lg font-semibold">NRP Project Access</h2>
+          <h2 className="text-lg font-semibold">NRP for this project</h2>
           <p className="text-sm text-gray-500 mt-1">
-            NRP access can be enabled by either a site administrator, or a project administrator with a linked NRP identity.
+            Allow this project to run analyses and request LLM keys against the National
+            Research Platform. A site administrator or a project administrator with a linked
+            NRP identity can enable this.
           </p>
         </div>
 
         <div className="flex items-center justify-between gap-4 rounded border px-4 py-3">
           <div>
-            <p className="text-sm font-medium text-gray-900">Status: {config?.access_enabled ? 'Enabled' : 'Disabled'}</p>
-            {config?.access_enabled_at && (
+            <p className="text-sm font-medium text-gray-900">
+              Status: {isEnabled ? 'Enabled' : 'Disabled'}
+            </p>
+            {lastChangedAt && (
               <p className="text-xs text-gray-500 mt-0.5">
-                {config.access_enabled ? 'Enabled' : 'Updated'} by {config.access_enabled_by_name || 'unknown'} on {new Date(config.access_enabled_at).toLocaleString()}
+                {isEnabled ? 'Enabled' : 'Updated'} by {lastChangedBy || 'unknown'} on{' '}
+                {new Date(lastChangedAt).toLocaleString()}
               </p>
             )}
           </div>
-          {canManageProjectAccess && (
+          {canToggle && (
             <button
               type="button"
-              disabled={updateMutation.isPending}
-              onClick={() => updateMutation.mutate({ access_enabled: !config?.access_enabled })}
-              className={`px-3 py-1.5 text-sm rounded ${config?.access_enabled ? 'bg-gray-200 text-gray-700 hover:bg-gray-300' : 'bg-brand-600 text-white hover:bg-brand-700'} disabled:opacity-50`}
+              disabled={toggleMutation.isPending}
+              onClick={() => toggleMutation.mutate(!isEnabled)}
+              className={`px-3 py-1.5 text-sm rounded ${
+                isEnabled
+                  ? 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                  : 'bg-brand-600 text-white hover:bg-brand-700'
+              } disabled:opacity-50`}
             >
-              {config?.access_enabled ? 'Disable NRP Access' : 'Enable NRP Access'}
+              {toggleMutation.isPending
+                ? 'Saving…'
+                : isEnabled
+                ? 'Disable NRP'
+                : 'Enable NRP'}
             </button>
           )}
         </div>
 
-        {!canManageProjectAccess && (
-          <p className="text-xs text-gray-400">To change project-level NRP access, use a global admin account or link NRP as a project admin.</p>
-        )}
-      </div>
-
-      <div className="bg-white p-6 rounded-lg border space-y-3">
-        <div>
-          <h2 className="text-lg font-semibold">NRP Execution</h2>
-          <p className="text-sm text-gray-500 mt-1">
-            Once NRP access is enabled for the project, project administrators with a linked NRP identity can enable execution on NRP.
-          </p>
-        </div>
-
-        {!config?.access_enabled ? (
-          <div className="rounded border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-            NRP access is not enabled for this project yet.
-          </div>
-        ) : !isProjectAdmin ? (
-          <div className="rounded border px-4 py-3 text-sm text-gray-600">
-            You can view the current NRP execution state, but only project administrators can change it.
-          </div>
-        ) : !linkStatus?.linked ? (
-          <div className="rounded border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-            Link your NRP identity to manage NRP execution for this project.
-          </div>
-        ) : (
-          <div className="space-y-4">
-            <div className="flex items-center justify-between gap-4 rounded border px-4 py-3">
-              <div>
-                <p className="text-sm font-medium text-gray-900">Execution: {config?.execution_enabled ? 'Enabled' : 'Disabled'}</p>
-                {config?.execution_enabled_at && (
-                  <p className="text-xs text-gray-500 mt-0.5">
-                    {config.execution_enabled ? 'Enabled' : 'Updated'} by {config.execution_enabled_by_name || 'unknown'} on {new Date(config.execution_enabled_at).toLocaleString()}
-                  </p>
-                )}
-              </div>
+        {/* Linked-identity status + can-enable explainer. */}
+        <div className="rounded border bg-gray-50 px-4 py-3 text-xs text-gray-700 space-y-2">
+          {!linkStatus?.oauth_configured ? (
+            <p>NRP integration is not configured on this server.</p>
+          ) : !linked ? (
+            <div className="flex items-center justify-between gap-3">
+              <span>You have not linked an NRP account.</span>
               <button
                 type="button"
-                disabled={updateMutation.isPending}
-                onClick={() => updateMutation.mutate({ execution_enabled: !config?.execution_enabled })}
-                className={`px-3 py-1.5 text-sm rounded ${config?.execution_enabled ? 'bg-gray-200 text-gray-700 hover:bg-gray-300' : 'bg-brand-600 text-white hover:bg-brand-700'} disabled:opacity-50`}
+                onClick={() => startLink()}
+                disabled={linkingNRP}
+                className="bg-brand-600 text-white px-3 py-1 text-xs rounded hover:bg-brand-700 disabled:opacity-50 whitespace-nowrap"
               >
-                {config?.execution_enabled ? 'Disable Execution on NRP' : 'Enable Execution on NRP'}
+                {linkingNRP ? 'Linking…' : 'Link NRP Account'}
               </button>
             </div>
+          ) : !tokenHealthy ? (
+            <div className="flex items-center justify-between gap-3">
+              <span>
+                Linked as <span className="font-medium">{linkStatus.nrp_login}</span> — session
+                expired.
+              </span>
+              <button
+                type="button"
+                onClick={() => startLink()}
+                disabled={linkingNRP}
+                className="bg-brand-600 text-white px-3 py-1 text-xs rounded hover:bg-brand-700 disabled:opacity-50 whitespace-nowrap"
+              >
+                {linkingNRP ? 'Re-authenticating…' : 'Re-authenticate'}
+              </button>
+            </div>
+          ) : (
+            <p className="flex items-center gap-1.5">
+              <svg className="w-3.5 h-3.5 text-green-600" fill="currentColor" viewBox="0 0 16 16">
+                <path d="M6.173 14.727L.466 9.02l1.414-1.414 4.293 4.293L14.12-.049l1.414 1.414z" />
+              </svg>
+              Linked as <span className="font-medium">{linkStatus.nrp_login}</span>
+            </p>
+          )}
+          {toggleHint && <p className="text-gray-500">{toggleHint}</p>}
+        </div>
 
-            <NRPLLMKeyInstaller
-              projectId={projectId}
-              linkStatus={linkStatus}
-              linkingNRP={linkingNRP}
-              onRelinkRequest={handleLinkNRP}
-            />
-          </div>
+        {toggleMutation.isError && (
+          <p className="text-xs text-red-600">
+            {toggleMutation.error instanceof Error
+              ? toggleMutation.error.message
+              : 'Failed to update NRP settings.'}
+          </p>
         )}
       </div>
-    </div>
-  );
-}
 
-function NRPLLMKeyInstaller({
-  projectId,
-  linkStatus,
-  linkingNRP,
-  onRelinkRequest,
-}: {
-  projectId: string;
-  linkStatus: NRPLinkStatus | undefined;
-  linkingNRP: boolean;
-  onRelinkRequest: () => void;
-}) {
-  const queryClient = useQueryClient();
-  const [selectedGroup, setSelectedGroup] = useState<string>('');
-  const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
-  const [pendingGroup, setPendingGroup] = useState<string | null>(null);
-
-  const tokenHealthy = linkStatus?.token_healthy !== false;
-
-  const { data: groupsResp, isLoading: groupsLoading, error: groupsError, refetch: refetchGroups } = useQuery({
-    queryKey: ['nrp-llm-groups', projectId],
-    queryFn: () => api.nrp.listLLMGroups(projectId),
-    staleTime: 60_000,
-    retry: false,
-    enabled: tokenHealthy,
-  });
-
-  const { data: providerKeys } = useQuery({
-    queryKey: ['provider-keys', projectId],
-    queryFn: () => api.providerKeys.list(projectId),
-    staleTime: 30_000,
-  });
-  const activeNRPKey = providerKeys?.find((k) => k.provider === 'nrp' && k.is_active);
-
-  const groups = groupsResp?.groups ?? [];
-  // If only one group, treat it as auto-selected without writing to state.
-  const effectiveGroup = selectedGroup || (groups.length === 1 ? groups[0] : '');
-
-  const installMut = useMutation({
-    mutationFn: (groupName: string): Promise<NRPInstallLLMKeyResponse> =>
-      api.nrp.installLLMKey(projectId, groupName || undefined),
-    onSuccess: (resp) => {
-      setMessage({
-        type: 'success',
-        text: `Installed NRP LLM key for group "${resp.group_name}" (${resp.key_hint}).`,
-      });
-      queryClient.invalidateQueries({ queryKey: ['provider-keys', projectId] });
-      queryClient.invalidateQueries({ queryKey: ['available-providers', projectId] });
-    },
-    onError: (err: Error, groupName: string) => {
-      // If the session died between status fetch and install, kick off
-      // re-authentication and stash the group so we can retry on success.
-      if (err instanceof ApiError && err.code === NRP_REAUTH_CODE) {
-        setPendingGroup(groupName);
-        setMessage({
-          type: 'error',
-          text: 'NRP session expired — re-authenticate to continue.',
-        });
-        // Refresh status so the re-auth banner renders.
-        queryClient.invalidateQueries({ queryKey: ['nrp-link-status'] });
-        onRelinkRequest();
-        return;
-      }
-      setMessage({ type: 'error', text: err.message || 'Failed to install NRP LLM key.' });
-    },
-  });
-
-  // When re-authentication succeeds while we have a pending install,
-  // retry it. We listen on the popup's postMessage so we react to the
-  // actual completion event rather than polling state.
-  useEffect(() => {
-    if (!pendingGroup) return;
-    const handler = (e: MessageEvent) => {
-      if (e.origin !== window.location.origin) return;
-      if (e.data?.type !== 'identity-link-result' || e.data?.provider !== 'nrp') return;
-      if (e.data?.status === 'success') {
-        const g = pendingGroup;
-        setPendingGroup(null);
-        setMessage(null);
-        installMut.mutate(g);
-      } else {
-        setPendingGroup(null);
-      }
-    };
-    window.addEventListener('message', handler);
-    return () => window.removeEventListener('message', handler);
-  }, [pendingGroup, installMut]);
-
-  const handleInstall = () => {
-    setMessage(null);
-    installMut.mutate(effectiveGroup);
-  };
-
-  const installDisabled =
-    installMut.isPending ||
-    linkingNRP ||
-    !!pendingGroup ||
-    (tokenHealthy && (groupsLoading || !!groupsError || groups.length === 0)) ||
-    !effectiveGroup;
-
-  return (
-    <div className="rounded border px-4 py-3 bg-gray-50 space-y-3">
-      <div>
-        <p className="text-sm font-medium text-gray-900">NRP LLM Key</p>
-        <p className="text-xs text-gray-500 mt-0.5">
-          Exchange your linked NRP access token for a project-scoped LLM API key. The key
-          can then be used for analyses on this project.
-        </p>
-      </div>
-
-      {activeNRPKey && (
-        <div className="rounded border bg-white px-3 py-2 text-xs text-gray-700">
-          <span className="font-medium text-gray-900">Currently installed:</span> {activeNRPKey.label}{' '}
-          <span className="text-gray-400">({activeNRPKey.key_hint})</span>
-        </div>
-      )}
-
-      {!tokenHealthy ? (
-        <div className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
-          Your NRP session has expired — re-authenticate using the prompt above, then
-          install an LLM key.
-        </div>
-      ) : groupsLoading ? (
-        <p className="text-xs text-gray-500">Looking up your NRP LLM groups…</p>
-      ) : groupsError ? (
-        <div className="rounded border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
-          {groupsError instanceof ApiError && groupsError.code === NRP_REAUTH_CODE
-            ? 'NRP session expired — re-authenticate to continue.'
-            : groupsError instanceof Error
-            ? groupsError.message
-            : 'Failed to list NRP LLM groups.'}{' '}
-          <button type="button" onClick={() => refetchGroups()} className="underline">
-            Retry
-          </button>
-        </div>
-      ) : groups.length === 0 ? (
-        <div className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
-          Your NRP account is not a member of any LLM-eligible groups. Ask an NRP administrator
-          to add you to a LiteLLM-enabled group.
-        </div>
-      ) : groups.length === 1 ? (
-        <p className="text-xs text-gray-700">
-          Group <span className="font-mono font-medium">{groups[0]}</span> will be used.
-        </p>
-      ) : (
-        <div>
-          <label className="block text-xs font-medium text-gray-700 mb-1">LLM group</label>
-          <select
-            value={effectiveGroup}
-            onChange={(e) => setSelectedGroup(e.target.value)}
-            className="w-full border rounded px-2 py-1.5 text-sm bg-white"
-          >
-            <option value="">Choose a group…</option>
-            {groups.map((g) => (
-              <option key={g} value={g}>
-                {g}
-              </option>
-            ))}
-          </select>
-        </div>
-      )}
-
-      {message && (
-        <div
-          className={`rounded border px-3 py-2 text-xs ${
-            message.type === 'success'
-              ? 'bg-green-50 border-green-200 text-green-800'
-              : 'bg-red-50 border-red-200 text-red-800'
-          }`}
-        >
-          {message.text}
-        </div>
-      )}
-
-      <div className="flex items-center justify-end">
-        <button
-          type="button"
-          disabled={installDisabled}
-          onClick={handleInstall}
-          className="px-3 py-1.5 text-sm rounded bg-brand-600 text-white hover:bg-brand-700 disabled:opacity-50 disabled:cursor-not-allowed"
-        >
-          {installMut.isPending
-            ? 'Installing…'
-            : pendingGroup
-            ? 'Waiting for re-authentication…'
-            : !tokenHealthy
-            ? 'Re-authenticate & Install'
-            : activeNRPKey
-            ? 'Replace NRP LLM Key'
-            : 'Install NRP LLM Key'}
-        </button>
-      </div>
+      {/* LLM Key card is a peer of the toggle card, only shown when NRP
+          is enabled for the project. The installer manages its own
+          link/re-auth UI internally. */}
+      {isEnabled && <NRPLLMKeyInstaller projectId={projectId} />}
     </div>
   );
 }

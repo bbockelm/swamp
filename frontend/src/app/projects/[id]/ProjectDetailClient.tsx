@@ -11,6 +11,7 @@ import { FindingsTable } from '@/components/FindingsTable';
 import { GitBranchInput, type GitBranchInputHandle } from '@/components/GitBranchInput';
 import { ProjectGitHubTab } from '@/components/ProjectGitHubTab';
 import { ProjectNRPTab } from '@/components/ProjectNRPTab';
+import { NRPLLMKeyInstaller, useNRPLinkSession } from '@/components/NRPLLMKeyInstaller';
 import { useResolvedParams } from '@/lib/useResolvedParams';
 
 const ANALYSES_PAGE_SIZE = 10;
@@ -1085,12 +1086,17 @@ function AnalysesTab({
   // Determine if the agent is ready (either via providers or legacy config)
   const agentReady = hasProviders || agentStatus?.ready;
 
+  // When there's exactly one package, skip the checkbox UI and use it
+  // implicitly. Otherwise the user picks from the checkbox list.
+  const singlePackage = packages && packages.length === 1 ? packages[0] : null;
+  const effectivePkgs = singlePackage ? [singlePackage.id] : selectedPkgs;
+
   const triggerMutation = useMutation({
     mutationFn: () => {
       // Resolve concrete model: user selection → provider default → first discovered model.
       const effectiveModel = agentModel || selectedProviderObj?.default_model || discoveredModels?.[0]?.id || undefined;
       const data: { package_ids: string[]; agent_model?: string; custom_prompt?: string; provider_id?: string; provider_source?: string } = {
-        package_ids: selectedPkgs,
+        package_ids: effectivePkgs,
         agent_model: effectiveModel,
         custom_prompt: customPrompt || undefined,
       };
@@ -1124,27 +1130,34 @@ function AnalysesTab({
               {triggerMutation.error?.message || 'Failed to start analysis'}
             </div>
           )}
-          <div className="space-y-1 mb-3">
-            {packages.map((pkg) => (
-              <label
-                key={pkg.id}
-                className="flex items-center gap-2 text-sm"
-              >
-                <input
-                  type="checkbox"
-                  checked={selectedPkgs.includes(pkg.id)}
-                  onChange={(e) => {
-                    setSelectedPkgs((prev) =>
-                      e.target.checked
-                        ? [...prev, pkg.id]
-                        : prev.filter((x) => x !== pkg.id)
-                    );
-                  }}
-                />
-                {pkg.name} ({pkg.git_branch})
-              </label>
-            ))}
-          </div>
+          {singlePackage ? (
+            <p className="text-sm text-gray-700 mb-3">
+              Package: <span className="font-medium">{singlePackage.name}</span>{' '}
+              <span className="text-gray-500">({singlePackage.git_branch})</span>
+            </p>
+          ) : (
+            <div className="space-y-1 mb-3">
+              {packages.map((pkg) => (
+                <label
+                  key={pkg.id}
+                  className="flex items-center gap-2 text-sm"
+                >
+                  <input
+                    type="checkbox"
+                    checked={selectedPkgs.includes(pkg.id)}
+                    onChange={(e) => {
+                      setSelectedPkgs((prev) =>
+                        e.target.checked
+                          ? [...prev, pkg.id]
+                          : prev.filter((x) => x !== pkg.id)
+                      );
+                    }}
+                  />
+                  {pkg.name} ({pkg.git_branch})
+                </label>
+              ))}
+            </div>
+          )}
 
           {/* Provider selection */}
           {hasProviders ? (
@@ -1228,7 +1241,7 @@ function AnalysesTab({
           </div>
           <button
             onClick={() => triggerMutation.mutate()}
-            disabled={!selectedPkgs.length || triggerMutation.isPending || !agentReady || (hasProviders && !selectedProviderObj)}
+            disabled={!effectivePkgs.length || triggerMutation.isPending || !agentReady || (hasProviders && !selectedProviderObj)}
             className="bg-green-600 text-white px-3 py-1.5 text-sm rounded hover:bg-green-700 disabled:opacity-50"
           >
             {triggerMutation.isPending ? 'Starting...' : 'Start Analysis'}
@@ -1577,6 +1590,12 @@ function ProviderKeysTab({ projectId }: { projectId: string }) {
   const [apiKey, setApiKey] = useState('');
   const [endpointUrl, setEndpointUrl] = useState('');
 
+  // NRP-issued LLM keys are also a project provider key, but obtained
+  // via the NRP token-exchange flow. Show the installer here when NRP
+  // is configured so users have one place to grab any key they need.
+  const { linkStatus: nrpLinkStatus } = useNRPLinkSession();
+  const showNRPInstaller = !!nrpLinkStatus?.oauth_configured;
+
   const { data: keys, isLoading } = useQuery({
     queryKey: ['provider-keys', projectId],
     queryFn: () => api.providerKeys.list(projectId),
@@ -1633,6 +1652,12 @@ function ProviderKeysTab({ projectId }: { projectId: string }) {
           </button>
         )}
       </div>
+
+      {showNRPInstaller && (
+        <div className="mb-4">
+          <NRPLLMKeyInstaller projectId={projectId} />
+        </div>
+      )}
 
       {adding && (
         <form

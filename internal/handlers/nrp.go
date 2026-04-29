@@ -667,7 +667,11 @@ func (h *Handler) UpdateProjectNRPConfig(w http.ResponseWriter, r *http.Request)
 			respondError(w, http.StatusForbidden, "Project admin access required to change NRP execution")
 			return
 		}
-		if !project.NRPAccessEnabled {
+		// Only require the access precondition when actually enabling
+		// execution. Disabling execution (whether on its own or alongside
+		// access being turned off in the same request) should always
+		// succeed.
+		if *req.ExecutionEnabled && !project.NRPAccessEnabled {
 			respondError(w, http.StatusBadRequest, "NRP access must be enabled for this project first")
 			return
 		}
