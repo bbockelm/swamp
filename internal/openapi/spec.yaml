@@ -787,7 +787,7 @@ paths:
         "400":
           description: Bad request (invalid SARIF, analysis not in importing status, etc.)
 
-
+  /api/v1/projects/{projectID}/analyses/{analysisID}/results/{resultID}:
     parameters:
       - $ref: "#/components/parameters/projectID"
       - $ref: "#/components/parameters/analysisID"

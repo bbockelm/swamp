@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/rs/zerolog/log"
@@ -572,7 +574,11 @@ func (h *Handler) UploadAnalysisResult(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s3Key := h.store.GenerateKey(analysisID, filename)
+	// Generate a per-upload UUID key so that concurrent uploads of the same
+	// filename to the same analysis do not race on S3 content. If the DB
+	// insert loses to a unique violation, the temp key is ours alone and we
+	// delete it before returning 409.
+	s3Key := fmt.Sprintf("analyses/%s/%s-%s", analysisID, uuid.New().String(), filename)
 	if err := h.store.Upload(r.Context(), s3Key, bytes.NewReader(ciphertext),
 		int64(len(ciphertext)), "application/octet-stream"); err != nil {
 		respondError(w, http.StatusInternalServerError, "Failed to upload to storage")
@@ -594,8 +600,9 @@ func (h *Handler) UploadAnalysisResult(w http.ResponseWriter, r *http.Request) {
 	if err := h.queries.CreateAnalysisResult(r.Context(), result); err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
-			// Lost a race with a concurrent identical upload. The S3 key is
-			// shared, so do NOT delete it — the winning row owns it.
+			// Lost a race with a concurrent upload. Our temp S3 key is not
+			// claimed by any DB row, so delete it before returning 409.
+			_ = h.store.Delete(r.Context(), s3Key)
 			respondError(w, http.StatusConflict,
 				"A result with filename '"+filename+"' already exists for this analysis")
 			return

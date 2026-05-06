@@ -2,6 +2,8 @@
 -- Remove duplicate (analysis_id, filename) rows before adding the UNIQUE constraint.
 -- For each duplicate pair, keep the most recently created row because each duplicate
 -- upload overwrote the same S3 key, so the newest DB row matches the current object.
+-- Note: findings and finding_annotations referencing deleted rows are cascade-deleted
+-- via their ON DELETE CASCADE foreign keys.
 DELETE FROM analysis_results
 WHERE id IN (
     SELECT id

@@ -3338,7 +3338,7 @@ func (q *Queries) CompleteExternalAnalysis(ctx context.Context, id, statusDetail
 	tag, err := q.pool.Exec(ctx, `
 		UPDATE analyses
 		SET status='completed', completed_at=NOW(),
-		    status_detail=NULLIF($2,''), updated_at=NOW()
+		    status_detail=COALESCE(NULLIF($2,''), status_detail), updated_at=NOW()
 		WHERE id=$1 AND status='importing'`, id, statusDetail)
 	if err != nil {
 		return err

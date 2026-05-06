@@ -1524,7 +1524,7 @@ function AnalysesTab({ projectId }: { projectId: string }) {
       const list = query.state.data;
       if (
         list?.some(
-          (a: Analysis) => a.status === "pending" || a.status === "running",
+          (a: Analysis) => a.status === "pending" || a.status === "running" || a.status === "importing",
         )
       ) {
         return 5000;
