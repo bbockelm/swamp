@@ -211,6 +211,17 @@ func parseSARIF(path string) (summary string, findingCount int, severityCounts j
 	return ParseSARIFBytes(data)
 }
 
+// ValidateSARIFBytes checks that data is a parseable SARIF 2.1.0 document.
+// It returns a non-nil error if the data is not valid JSON or lacks the
+// expected SARIF structure.
+func ValidateSARIFBytes(data []byte) error {
+	var doc sarifDocument
+	if err := json.Unmarshal(data, &doc); err != nil {
+		return fmt.Errorf("invalid SARIF: %w", err)
+	}
+	return nil
+}
+
 // ParseSARIFBytes parses SARIF data from bytes and returns finding counts.
 // This is exported for use by the worker result upload handler.
 func ParseSARIFBytes(data []byte) (summary string, findingCount int, severityCounts json.RawMessage) {

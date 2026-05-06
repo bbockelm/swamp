@@ -3285,3 +3285,74 @@ func (q *Queries) ListAnalysisIDsWithOpenCodeUsage(ctx context.Context) ([]strin
 	}
 	return ids, rows.Err()
 }
+
+// ============================================================
+// External Upload
+// ============================================================
+
+// CreateExternalAnalysis inserts an analysis record with status="importing"
+// and started_at=NOW(). It is used by the external-upload API endpoints.
+// Fields set by the caller: ProjectID, TriggeredBy, Environment, GitCommit,
+// StatusDetail, TriggerMeta, EncryptedDEK, DEKNonce.
+func (q *Queries) CreateExternalAnalysis(ctx context.Context, a *models.Analysis) error {
+	return q.pool.QueryRow(ctx, `
+		INSERT INTO analyses
+		       (project_id, triggered_by, status, environment, started_at,
+		        git_commit, status_detail, trigger_event, trigger_meta,
+		        encrypted_dek, dek_nonce)
+		VALUES ($1, $2, 'importing', $3, NOW(),
+		        NULLIF($4, ''), NULLIF($5, ''), 'manual',
+		        COALESCE($6::jsonb, '{"workflow":"external_upload"}'::jsonb),
+		        $7, $8)
+		RETURNING id, started_at, created_at, updated_at`,
+		a.ProjectID, a.TriggeredBy, a.Environment,
+		a.GitCommit, a.StatusDetail,
+		a.TriggerMeta, a.EncryptedDEK, a.DEKNonce,
+	).Scan(&a.ID, &a.StartedAt, &a.CreatedAt, &a.UpdatedAt)
+}
+
+// GetAnalysisResultByFilename retrieves the analysis_result row for a given
+// (analysis_id, filename) pair. Used for duplicate detection.
+func (q *Queries) GetAnalysisResultByFilename(ctx context.Context, analysisID, filename string) (*models.AnalysisResult, error) {
+	var r models.AnalysisResult
+	err := q.pool.QueryRow(ctx, `
+		SELECT id, analysis_id, package_id, result_type, s3_key, filename,
+		       content_type, file_size, summary, finding_count, severity_counts,
+		       sarif_upload_attempted, sarif_upload_url, sarif_upload_error, created_at
+		FROM analysis_results
+		WHERE analysis_id=$1 AND filename=$2`,
+		analysisID, filename).Scan(
+		&r.ID, &r.AnalysisID, &r.PackageID, &r.ResultType, &r.S3Key, &r.Filename,
+		&r.ContentType, &r.FileSize, &r.Summary, &r.FindingCount, &r.SeverityCounts,
+		&r.SARIFUploadAttempted, &r.SARIFUploadURL, &r.SARIFUploadError, &r.CreatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return &r, nil
+}
+
+// CompleteExternalAnalysis transitions an importing analysis to completed.
+// It sets completed_at=NOW() and optionally updates status_detail.
+// Returns pgx.ErrNoRows if the analysis was not in "importing" status.
+func (q *Queries) CompleteExternalAnalysis(ctx context.Context, id, statusDetail string) error {
+	tag, err := q.pool.Exec(ctx, `
+		UPDATE analyses
+		SET status='completed', completed_at=NOW(),
+		    status_detail=NULLIF($2,''), updated_at=NOW()
+		WHERE id=$1 AND status='importing'`, id, statusDetail)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return pgx.ErrNoRows
+	}
+	return nil
+}
+
+// CountAnalysisResults returns the number of result artifacts for an analysis.
+func (q *Queries) CountAnalysisResults(ctx context.Context, analysisID string) (int, error) {
+	var n int
+	err := q.pool.QueryRow(ctx, `
+		SELECT COUNT(*) FROM analysis_results WHERE analysis_id=$1`, analysisID).Scan(&n)
+	return n, err
+}

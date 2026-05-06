@@ -1,12 +1,16 @@
 package handlers
 
 import (
+	"bytes"
 	"encoding/json"
+	"io"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5"
 	"github.com/rs/zerolog/log"
 
+	"github.com/bbockelm/swamp/internal/agent"
 	"github.com/bbockelm/swamp/internal/crypto"
 	"github.com/bbockelm/swamp/internal/models"
 )
@@ -384,4 +388,316 @@ func (h *Handler) ResubmitAnalysis(w http.ResponseWriter, r *http.Request) {
 	}
 
 	respondJSON(w, http.StatusCreated, analysis)
+}
+
+// --- External Upload ---
+
+// CreateExternalAnalysis creates an analysis record in "importing" status so
+// that an external tool can upload its own results. It does not launch any
+// agent.
+//
+// POST /api/v1/projects/{projectID}/analyses/external
+// Requires write project access.
+func (h *Handler) CreateExternalAnalysis(w http.ResponseWriter, r *http.Request) {
+	projectID := chi.URLParam(r, "projectID")
+	user := GetUserFromContext(r.Context())
+
+	if h.encryptor == nil {
+		respondError(w, http.StatusServiceUnavailable, "Encryption not configured")
+		return
+	}
+
+	var req struct {
+		GitCommit    string          `json:"git_commit"`
+		Environment  string          `json:"environment"`
+		TriggerMeta  json.RawMessage `json:"trigger_meta"`
+		StatusDetail string          `json:"status_detail"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		respondError(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+
+	// trigger_meta must be a JSON object when provided.
+	meta := map[string]json.RawMessage{}
+	if len(req.TriggerMeta) > 0 && string(req.TriggerMeta) != "null" {
+		if err := json.Unmarshal(req.TriggerMeta, &meta); err != nil {
+			respondError(w, http.StatusBadRequest, "trigger_meta must be a JSON object")
+			return
+		}
+	}
+	// Always stamp the origin of the upload.
+	meta["workflow"] = json.RawMessage(`"external_upload"`)
+	mergedMeta, _ := json.Marshal(meta)
+
+	env := req.Environment
+	if env == "" {
+		env = "import"
+	}
+
+	dek, err := crypto.GenerateDEK()
+	if err != nil {
+		log.Error().Err(err).Msg("Failed to generate DEK for external analysis")
+		respondError(w, http.StatusInternalServerError, "Failed to create analysis")
+		return
+	}
+	encDEK, nonce, err := h.encryptor.WrapDEK(dek)
+	if err != nil {
+		log.Error().Err(err).Msg("Failed to wrap DEK for external analysis")
+		respondError(w, http.StatusInternalServerError, "Failed to create analysis")
+		return
+	}
+
+	analysis := &models.Analysis{
+		ProjectID:    projectID,
+		TriggeredBy:  user.ID,
+		Status:       "importing",
+		Environment:  env,
+		GitCommit:    req.GitCommit,
+		StatusDetail: req.StatusDetail,
+		TriggerEvent: "manual",
+		TriggerMeta:  json.RawMessage(mergedMeta),
+		EncryptedDEK: encDEK,
+		DEKNonce:     nonce,
+	}
+
+	if err := h.queries.CreateExternalAnalysis(r.Context(), analysis); err != nil {
+		log.Error().Err(err).Str("project_id", projectID).Msg("Failed to create external analysis")
+		respondError(w, http.StatusInternalServerError, "Failed to create analysis")
+		return
+	}
+
+	log.Info().
+		Str("analysis_id", analysis.ID).
+		Str("project_id", projectID).
+		Str("triggered_by", user.ID).
+		Msg("Created external analysis")
+
+	respondJSON(w, http.StatusCreated, analysis)
+}
+
+// UploadAnalysisResult uploads a single result file (SARIF or other) to an
+// analysis that is in "importing" status. Duplicate filenames are rejected
+// with HTTP 409.
+//
+// POST /api/v1/projects/{projectID}/analyses/{analysisID}/results
+// Requires read project access.
+func (h *Handler) UploadAnalysisResult(w http.ResponseWriter, r *http.Request) {
+	projectID := chi.URLParam(r, "projectID")
+	analysisID := chi.URLParam(r, "analysisID")
+
+	// Load and validate the analysis.
+	analysis, err := h.queries.GetAnalysis(r.Context(), analysisID)
+	if err != nil {
+		respondError(w, http.StatusNotFound, "Analysis not found")
+		return
+	}
+	if analysis.ProjectID != projectID {
+		respondError(w, http.StatusForbidden, "Analysis does not belong to this project")
+		return
+	}
+	if analysis.Status != "importing" {
+		respondError(w, http.StatusConflict,
+			"Analysis is not in importing status (current: "+analysis.Status+")")
+		return
+	}
+	if len(analysis.EncryptedDEK) == 0 || h.encryptor == nil {
+		respondError(w, http.StatusInternalServerError, "Encryption not available")
+		return
+	}
+
+	// Parse the multipart upload (limit 100 MB).
+	r.Body = http.MaxBytesReader(w, r.Body, 100<<20)
+	if err := r.ParseMultipartForm(32 << 20); err != nil {
+		respondError(w, http.StatusBadRequest, "Invalid multipart form: "+err.Error())
+		return
+	}
+
+	filename := r.FormValue("filename")
+	if filename == "" {
+		// Fall back to the filename from the multipart part header.
+		_, fh, ferr := r.FormFile("file")
+		if ferr == nil {
+			filename = fh.Filename
+		}
+	}
+	filename = sanitizeFilename(filename)
+	if filename == "" {
+		respondError(w, http.StatusBadRequest, "filename is required")
+		return
+	}
+
+	file, _, err := r.FormFile("file")
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "file is required")
+		return
+	}
+	defer func() { _ = file.Close() }()
+
+	var buf bytes.Buffer
+	if _, err := io.Copy(&buf, file); err != nil {
+		respondError(w, http.StatusInternalServerError, "Failed to read file")
+		return
+	}
+	plaintext := buf.Bytes()
+
+	// Classify before the duplicate check so we can validate SARIF early.
+	resultType := classifyResultType(filename)
+
+	if resultType == "sarif" {
+		if err := agent.ValidateSARIFBytes(plaintext); err != nil {
+			respondError(w, http.StatusBadRequest, "Invalid SARIF: "+err.Error())
+			return
+		}
+	}
+
+	// Reject duplicate filenames (idempotency check).
+	if existing, err := h.queries.GetAnalysisResultByFilename(r.Context(), analysisID, filename); err == nil {
+		respondError(w, http.StatusConflict,
+			"A result with filename '"+existing.Filename+"' already exists for this analysis")
+		return
+	}
+
+	// Encrypt and upload.
+	dek, err := h.encryptor.UnwrapDEK(analysis.EncryptedDEK, analysis.DEKNonce)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "Failed to unwrap DEK")
+		return
+	}
+	ciphertext, err := crypto.Encrypt(dek, plaintext)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "Failed to encrypt result")
+		return
+	}
+
+	s3Key := h.store.GenerateKey(analysisID, filename)
+	if err := h.store.Upload(r.Context(), s3Key, bytes.NewReader(ciphertext),
+		int64(len(ciphertext)), "application/octet-stream"); err != nil {
+		respondError(w, http.StatusInternalServerError, "Failed to upload to storage")
+		return
+	}
+
+	result := &models.AnalysisResult{
+		AnalysisID:  analysisID,
+		Filename:    filename,
+		S3Key:       s3Key,
+		FileSize:    int64(len(plaintext)),
+		ResultType:  resultType,
+		ContentType: "application/octet-stream",
+	}
+	if resultType == "sarif" {
+		result.ContentType = "application/json"
+	}
+
+	if err := h.queries.CreateAnalysisResult(r.Context(), result); err != nil {
+		// Attempt S3 cleanup on DB failure; ignore cleanup error.
+		_ = h.store.Delete(r.Context(), s3Key)
+		log.Error().Err(err).Str("filename", filename).Msg("Failed to insert analysis result")
+		respondError(w, http.StatusInternalServerError, "Failed to record result")
+		return
+	}
+
+	var findings []models.Finding
+	if resultType == "sarif" {
+		summary, findingCount, severityCounts := agent.ParseSARIFBytes(plaintext)
+		result.Summary = summary
+		result.FindingCount = findingCount
+		result.SeverityCounts = severityCounts
+		if err := h.queries.UpdateAnalysisResultMetadata(r.Context(), result.ID,
+			summary, findingCount, severityCounts); err != nil {
+			log.Error().Err(err).Str("result_id", result.ID).Msg("Failed to update SARIF metadata")
+		}
+
+		extracted := agent.ExtractFindingsFromBytes(plaintext, analysisID, analysis.ProjectID)
+		if len(extracted) > 0 {
+			for i := range extracted {
+				extracted[i].ResultID = result.ID
+				extracted[i].GitCommit = analysis.GitCommit
+			}
+			if err := h.queries.CreateFindingsBatch(r.Context(), extracted); err != nil {
+				log.Error().Err(err).Str("analysis_id", analysisID).Msg("Failed to save findings")
+			} else {
+				findings = extracted
+			}
+		}
+	}
+
+	log.Info().
+		Str("analysis_id", analysisID).
+		Str("filename", filename).
+		Str("result_type", resultType).
+		Int("size", len(plaintext)).
+		Msg("External upload: stored result file")
+
+	respondJSON(w, http.StatusCreated, map[string]any{
+		"result":   result,
+		"findings": findings,
+	})
+}
+
+// CompleteAnalysis transitions an "importing" analysis to "completed". It
+// requires at least one result to have been uploaded first.
+//
+// POST /api/v1/projects/{projectID}/analyses/{analysisID}/complete
+// Requires read project access.
+func (h *Handler) CompleteAnalysis(w http.ResponseWriter, r *http.Request) {
+	projectID := chi.URLParam(r, "projectID")
+	analysisID := chi.URLParam(r, "analysisID")
+
+	// Optional status_detail in the request body.
+	var req struct {
+		StatusDetail string `json:"status_detail"`
+	}
+	// Ignore decode errors — body is optional.
+	_ = decodeJSON(r, &req)
+
+	analysis, err := h.queries.GetAnalysis(r.Context(), analysisID)
+	if err != nil {
+		respondError(w, http.StatusNotFound, "Analysis not found")
+		return
+	}
+	if analysis.ProjectID != projectID {
+		respondError(w, http.StatusForbidden, "Analysis does not belong to this project")
+		return
+	}
+	if analysis.Status != "importing" {
+		respondError(w, http.StatusConflict,
+			"Analysis is not in importing status (current: "+analysis.Status+")")
+		return
+	}
+
+	count, err := h.queries.CountAnalysisResults(r.Context(), analysisID)
+	if err != nil {
+		log.Error().Err(err).Str("analysis_id", analysisID).Msg("Failed to count results")
+		respondError(w, http.StatusInternalServerError, "Failed to check results")
+		return
+	}
+	if count == 0 {
+		respondError(w, http.StatusBadRequest,
+			"Cannot complete analysis: no results have been uploaded")
+		return
+	}
+
+	if err := h.queries.CompleteExternalAnalysis(r.Context(), analysisID, req.StatusDetail); err != nil {
+		if err == pgx.ErrNoRows {
+			// Race: status changed between our check and the UPDATE.
+			respondError(w, http.StatusConflict,
+				"Analysis is no longer in importing status")
+			return
+		}
+		log.Error().Err(err).Str("analysis_id", analysisID).Msg("Failed to complete analysis")
+		respondError(w, http.StatusInternalServerError, "Failed to complete analysis")
+		return
+	}
+
+	log.Info().
+		Str("analysis_id", analysisID).
+		Str("project_id", projectID).
+		Int("result_count", count).
+		Msg("External analysis completed")
+
+	respondJSON(w, http.StatusOK, map[string]string{
+		"analysis_id": analysisID,
+		"status":      "completed",
+	})
 }
