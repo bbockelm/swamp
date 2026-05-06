@@ -59,7 +59,7 @@ function ElapsedTime({ since }: { since: string }) {
   return <>{m}m {rem}s</>;
 }
 
-type StatusFilter = 'all' | 'running' | 'pending' | 'completed' | 'failed' | 'cancelled' | 'timed_out';
+type StatusFilter = 'all' | 'running' | 'pending' | 'importing' | 'completed' | 'failed' | 'cancelled' | 'timed_out';
 
 export default function AnalysesPage() {
   const queryClient = useQueryClient();
@@ -72,7 +72,7 @@ export default function AnalysesPage() {
     queryFn: api.analyses.listAll,
   });
 
-  const hasActive = analyses?.some((a) => a.status === 'running' || a.status === 'pending');
+  const hasActive = analyses?.some((a) => a.status === 'running' || a.status === 'pending' || a.status === 'importing');
   useEffect(() => {
     const interval = setInterval(
       () => queryClient.invalidateQueries({ queryKey: ['analyses', 'all'] }),
@@ -93,6 +93,7 @@ export default function AnalysesPage() {
     all: analyses?.length ?? 0,
     running: analyses?.filter((a) => a.status === 'running').length ?? 0,
     pending: analyses?.filter((a) => a.status === 'pending').length ?? 0,
+    importing: analyses?.filter((a) => a.status === 'importing').length ?? 0,
     completed: analyses?.filter((a) => a.status === 'completed').length ?? 0,
     failed: analyses?.filter((a) => a.status === 'failed').length ?? 0,
     cancelled: analyses?.filter((a) => a.status === 'cancelled').length ?? 0,
@@ -157,7 +158,7 @@ function AnalysisCard({ analysis: a, expanded, onToggle }: { analysis: Analysis;
   const { data: results } = useQuery({
     queryKey: ['analysis-results', a.id],
     queryFn: () => api.analyses.listResults(a.project_id, a.id),
-    enabled: expanded && (a.status === 'completed' || a.status === 'failed' || a.status === 'timed_out'),
+    enabled: expanded && (a.status === 'completed' || a.status === 'failed' || a.status === 'timed_out' || a.status === 'importing'),
   });
 
   const resubmit = useMutation({

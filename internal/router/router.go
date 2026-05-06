@@ -562,7 +562,19 @@ func New(cfg *config.Config, pool *pgxpool.Pool, store *storage.Store) (*chi.Mux
 		// --- API key + session auth (for programmatic access) ---
 		r.Group(func(r chi.Router) {
 			r.Use(h.RequireAuthOrAPIKey)
-			// Programmatic endpoints go here in the future
+			r.Route("/projects/{projectID}", func(r chi.Router) {
+				// Write-access endpoints.
+				r.Group(func(r chi.Router) {
+					r.Use(h.RequireProjectAccess("write"))
+					r.Post("/analyses/external", h.CreateExternalAnalysis)
+				})
+				// Read-access endpoints.
+				r.Group(func(r chi.Router) {
+					r.Use(h.RequireProjectAccess("read"))
+					r.Post("/analyses/{analysisID}/results", h.UploadAnalysisResult)
+					r.Post("/analyses/{analysisID}/complete", h.CompleteAnalysis)
+				})
+			})
 		})
 
 		// --- Internal worker endpoints (authenticated via worker session tokens) ---

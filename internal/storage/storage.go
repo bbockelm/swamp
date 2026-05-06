@@ -140,6 +140,16 @@ func (s *Store) Bucket() string {
 	return s.bucket
 }
 
+// Storer is the interface used by HTTP handlers for object storage operations.
+// *Store satisfies this interface automatically.
+type Storer interface {
+	Upload(ctx context.Context, key string, reader io.Reader, size int64, contentType string) error
+	Download(ctx context.Context, key string) (io.ReadCloser, error)
+	Delete(ctx context.Context, key string) error
+	GenerateKey(analysisID, filename string) string
+	ListKeys(ctx context.Context, prefix string) ([]string, error)
+}
+
 // Client returns the underlying S3 client.
 func (s *Store) Client() *s3.Client {
 	return s.client

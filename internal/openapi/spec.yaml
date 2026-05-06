@@ -619,6 +619,50 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /api/v1/projects/{projectID}/analyses/external:
+    parameters:
+      - $ref: "#/components/parameters/projectID"
+    post:
+      tags: [analyses]
+      summary: Create an externally-uploaded analysis (write access)
+      description: |
+        Creates an analysis record in "importing" status. No agent is launched.
+        Use POST /analyses/{analysisID}/results to upload result files and
+        POST /analyses/{analysisID}/complete to mark it finished.
+        Accepts session cookie or API key.
+      operationId: createExternalAnalysis
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                git_commit:
+                  type: string
+                  description: Git commit SHA associated with this analysis
+                environment:
+                  type: string
+                  description: Environment label (defaults to "import")
+                status_detail:
+                  type: string
+                  description: Optional human-readable status note
+                trigger_meta:
+                  type: object
+                  additionalProperties: true
+                  description: Arbitrary JSON metadata (workflow key is reserved)
+      responses:
+        "201":
+          description: Analysis created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Analysis"
+        "503":
+          description: Encryption not configured
+
   /api/v1/projects/{projectID}/analyses/{analysisID}/cancel:
     parameters:
       - $ref: "#/components/parameters/projectID"
@@ -632,6 +676,50 @@ paths:
       responses:
         "200":
           description: Analysis cancelled
+
+  /api/v1/projects/{projectID}/analyses/{analysisID}/complete:
+    parameters:
+      - $ref: "#/components/parameters/projectID"
+      - $ref: "#/components/parameters/analysisID"
+    post:
+      tags: [analyses]
+      summary: Complete an externally-uploaded analysis
+      description: |
+        Transitions an "importing" analysis to "completed". Requires at least
+        one result to have been uploaded. Accepts session cookie or API key.
+      operationId: completeExternalAnalysis
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                status_detail:
+                  type: string
+                  description: Optional human-readable completion note
+      responses:
+        "200":
+          description: Analysis completed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  analysis_id:
+                    type: string
+                    format: uuid
+                  status:
+                    type: string
+                    example: completed
+        "400":
+          description: No results uploaded yet
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: Analysis is not in importing status
 
   /api/v1/projects/{projectID}/analyses/{analysisID}/results:
     parameters:
@@ -652,6 +740,52 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/AnalysisResult"
+    post:
+      tags: [results]
+      summary: Upload a result file to an importing analysis
+      description: |
+        Uploads a single result artifact (SARIF, markdown, log, etc.) to an
+        analysis in "importing" status. SARIF files are validated and parsed
+        for findings. Duplicate filenames return HTTP 409.
+        Accepts session cookie or API key.
+      operationId: uploadAnalysisResult
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: The result file to upload
+                filename:
+                  type: string
+                  description: Override filename (defaults to the uploaded file's name)
+      responses:
+        "201":
+          description: Result uploaded and stored
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  result:
+                    $ref: "#/components/schemas/AnalysisResult"
+                  findings:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Finding"
+                    description: Parsed findings (only non-empty for SARIF uploads)
+        "409":
+          description: A result with this filename already exists
+        "400":
+          description: Bad request (invalid SARIF, analysis not in importing status, etc.)
 
   /api/v1/projects/{projectID}/analyses/{analysisID}/results/{resultID}:
     parameters:
@@ -1210,7 +1344,7 @@ components:
           format: uuid
         status:
           type: string
-          enum: [pending, running, completed, failed, cancelled]
+          enum: [pending, running, completed, failed, cancelled, timed_out, importing]
         status_detail:
           type: string
         agent_model:
@@ -1246,7 +1380,7 @@ components:
           format: uuid
         result_type:
           type: string
-          enum: [sarif, markdown, log, archive]
+          enum: [sarif, markdown_report, agent_log, analysis_notes, analysis_prompt, analysis_context, exploit_tarball, other]
         s3_key:
           type: string
         filename:
@@ -1269,6 +1403,45 @@ components:
               type: integer
             low:
               type: integer
+        created_at:
+          type: string
+          format: date-time
+
+    Finding:
+      type: object
+      description: A single security finding parsed from a SARIF result
+      properties:
+        id:
+          type: string
+          format: uuid
+        project_id:
+          type: string
+          format: uuid
+        analysis_id:
+          type: string
+          format: uuid
+        result_id:
+          type: string
+          format: uuid
+        rule_id:
+          type: string
+        level:
+          type: string
+          enum: [none, note, warning, error]
+        message:
+          type: string
+        file_path:
+          type: string
+        start_line:
+          type: integer
+        end_line:
+          type: integer
+        snippet:
+          type: string
+        fingerprint:
+          type: string
+        git_commit:
+          type: string
         created_at:
           type: string
           format: date-time

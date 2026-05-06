@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -13,6 +14,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/rs/zerolog/log"
 
 	"github.com/bbockelm/swamp/internal/agent"
@@ -522,6 +524,13 @@ func (wh *WorkerHandler) UploadResult(w http.ResponseWriter, r *http.Request) {
 
 	filename = sanitizeFilename(filename)
 
+	// Idempotency pre-check: if this (analysis_id, filename) was already
+	// uploaded, return the existing row so the caller can safely retry.
+	if existing, err := wh.h.queries.GetAnalysisResultByFilename(r.Context(), analysisID, filename); err == nil {
+		respondJSON(w, http.StatusOK, existing)
+		return
+	}
+
 	file, _, err := r.FormFile("file")
 	if err != nil {
 		respondError(w, http.StatusBadRequest, "File is required")
@@ -595,6 +604,17 @@ func (wh *WorkerHandler) UploadResult(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := wh.h.queries.CreateAnalysisResult(r.Context(), result); err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			// Lost a race with a concurrent retry. The worker uses a
+			// deterministic S3 key so both sides uploaded the same bytes;
+			// return the existing row for idempotent success.
+			existing, fetchErr := wh.h.queries.GetAnalysisResultByFilename(r.Context(), analysisID, filename)
+			if fetchErr == nil {
+				respondJSON(w, http.StatusOK, existing)
+				return
+			}
+		}
 		log.Error().Err(err).Str("filename", filename).Msg("Failed to insert analysis result row")
 		respondError(w, http.StatusInternalServerError, "Failed to record result")
 		return

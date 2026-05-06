@@ -23,7 +23,7 @@ import (
 type Handler struct {
 	cfg       *config.Config
 	queries   *db.Queries
-	store     *storage.Store
+	store     storage.Storer
 	encryptor *crypto.Encryptor
 	backupSvc *backup.Service
 	executor  agent.AnalysisExecutor
@@ -32,7 +32,7 @@ type Handler struct {
 }
 
 // New creates a Handler with all dependencies.
-func New(cfg *config.Config, queries *db.Queries, store *storage.Store, enc *crypto.Encryptor) *Handler {
+func New(cfg *config.Config, queries *db.Queries, store storage.Storer, enc *crypto.Encryptor) *Handler {
 	return &Handler{cfg: cfg, queries: queries, store: store, encryptor: enc}
 }
 

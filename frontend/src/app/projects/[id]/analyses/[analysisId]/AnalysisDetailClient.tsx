@@ -89,7 +89,7 @@ export default function AnalysisDetailClient() {
     queryFn: () => api.analyses.get(projectId, analysisId),
     refetchInterval: (query) => {
       const status = query.state.data?.status;
-      return status === "pending" || status === "running" ? 3000 : false;
+      return status === "pending" || status === "running" || status === "importing" ? 3000 : false;
     },
   });
 
@@ -101,6 +101,8 @@ export default function AnalysisDetailClient() {
     analysis?.status === "failed" ||
     analysis?.status === "cancelled" ||
     analysis?.status === "timed_out";
+
+  const isImporting = analysis?.status === "importing";
 
   // Poll executor liveness for active jobs to detect stale states.
   const { data: liveness } = useQuery({
@@ -126,7 +128,8 @@ export default function AnalysisDetailClient() {
   const { data: results } = useQuery({
     queryKey: ["results", projectId, analysisId],
     queryFn: () => api.analyses.listResults(projectId, analysisId),
-    enabled: isTerminal,
+    enabled: isTerminal || isImporting,
+    refetchInterval: isImporting ? 5000 : false,
   });
 
   const cancelMutation = useMutation({
@@ -267,7 +270,7 @@ export default function AnalysisDetailClient() {
                 {analysis.status_detail}
               </span>
             )}
-            {(analysis.status === "pending" || analysis.status === "running") && (
+            {(analysis.status === "pending" || analysis.status === "running" || analysis.status === "importing") && (
               <span className="text-sm text-gray-500 inline-flex items-center gap-1.5">
                 <svg className="w-4 h-4 animate-spin text-brand-500" viewBox="0 0 24 24" fill="none">
                   <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
