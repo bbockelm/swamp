@@ -522,6 +522,13 @@ func (wh *WorkerHandler) UploadResult(w http.ResponseWriter, r *http.Request) {
 
 	filename = sanitizeFilename(filename)
 
+	// Idempotency pre-check: if this (analysis_id, filename) was already
+	// uploaded, return the existing row so the caller can safely retry.
+	if existing, err := wh.h.queries.GetAnalysisResultByFilename(r.Context(), analysisID, filename); err == nil {
+		respondJSON(w, http.StatusOK, existing)
+		return
+	}
+
 	file, _, err := r.FormFile("file")
 	if err != nil {
 		respondError(w, http.StatusBadRequest, "File is required")
