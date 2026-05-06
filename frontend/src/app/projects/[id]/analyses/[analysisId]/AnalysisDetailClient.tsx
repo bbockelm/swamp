@@ -129,6 +129,7 @@ export default function AnalysisDetailClient() {
     queryKey: ["results", projectId, analysisId],
     queryFn: () => api.analyses.listResults(projectId, analysisId),
     enabled: isTerminal || isImporting,
+    refetchInterval: isImporting ? 5000 : false,
   });
 
   const cancelMutation = useMutation({

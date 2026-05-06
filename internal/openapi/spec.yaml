@@ -784,8 +784,8 @@ paths:
                     description: Parsed findings (only non-empty for SARIF uploads)
         "409":
           description: A result with this filename already exists
-        "422":
-          description: SARIF validation failed (invalid SARIF)
+        "400":
+          description: Bad request (invalid SARIF, analysis not in importing status, etc.)
 
 
     parameters:
@@ -1380,7 +1380,7 @@ components:
           format: uuid
         result_type:
           type: string
-          enum: [sarif, markdown, log, archive]
+          enum: [sarif, markdown_report, agent_log, analysis_notes, analysis_prompt, analysis_context, exploit_tarball, other]
         s3_key:
           type: string
         filename:

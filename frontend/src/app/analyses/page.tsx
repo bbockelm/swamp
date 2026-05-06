@@ -72,7 +72,7 @@ export default function AnalysesPage() {
     queryFn: api.analyses.listAll,
   });
 
-  const hasActive = analyses?.some((a) => a.status === 'running' || a.status === 'pending');
+  const hasActive = analyses?.some((a) => a.status === 'running' || a.status === 'pending' || a.status === 'importing');
   useEffect(() => {
     const interval = setInterval(
       () => queryClient.invalidateQueries({ queryKey: ['analyses', 'all'] }),

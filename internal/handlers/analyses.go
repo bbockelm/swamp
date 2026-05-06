@@ -3,11 +3,13 @@ package handlers
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/rs/zerolog/log"
 
 	"github.com/bbockelm/swamp/internal/agent"
@@ -590,7 +592,15 @@ func (h *Handler) UploadAnalysisResult(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.queries.CreateAnalysisResult(r.Context(), result); err != nil {
-		// Attempt S3 cleanup on DB failure; ignore cleanup error.
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			// Lost a race with a concurrent identical upload. The S3 key is
+			// shared, so do NOT delete it — the winning row owns it.
+			respondError(w, http.StatusConflict,
+				"A result with filename '"+filename+"' already exists for this analysis")
+			return
+		}
+		// Genuine DB failure: clean up the orphaned S3 object.
 		_ = h.store.Delete(r.Context(), s3Key)
 		log.Error().Err(err).Str("filename", filename).Msg("Failed to insert analysis result")
 		respondError(w, http.StatusInternalServerError, "Failed to record result")
