@@ -597,7 +597,7 @@ func (h *Handler) UploadAnalysisResult(w http.ResponseWriter, r *http.Request) {
 		result.ContentType = "application/json"
 	}
 
-	if err := h.queries.CreateAnalysisResult(r.Context(), result); err != nil {
+	if err := h.queries.CreateAnalysisResultIfImporting(r.Context(), result); err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
 			// Lost a race with a concurrent upload. Our temp S3 key is not
@@ -605,6 +605,13 @@ func (h *Handler) UploadAnalysisResult(w http.ResponseWriter, r *http.Request) {
 			_ = h.store.Delete(r.Context(), s3Key)
 			respondError(w, http.StatusConflict,
 				"A result with filename '"+filename+"' already exists for this analysis")
+			return
+		}
+		if errors.Is(err, pgx.ErrNoRows) {
+			// /complete raced ahead: the analysis is no longer 'importing'.
+			_ = h.store.Delete(r.Context(), s3Key)
+			respondError(w, http.StatusBadRequest,
+				"Analysis is not in 'importing' status")
 			return
 		}
 		// Genuine DB failure: clean up the orphaned S3 object.

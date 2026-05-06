@@ -1274,8 +1274,26 @@ func (q *Queries) CreateAnalysisResult(ctx context.Context, r *models.AnalysisRe
 		r.ContentType, r.FileSize, r.Summary, r.FindingCount, r.SeverityCounts).Scan(&r.ID, &r.CreatedAt)
 }
 
-// UpdateAnalysisResultMetadata updates the summary, finding_count, and severity_counts
-// for an existing analysis result (used after SARIF parsing).
+// CreateAnalysisResultIfImporting atomically inserts a result row only when
+// the analysis is currently in "importing" status. Returns pgx.ErrNoRows if the
+// analysis was not in "importing" status (e.g., /complete raced ahead of this call).
+func (q *Queries) CreateAnalysisResultIfImporting(ctx context.Context, r *models.AnalysisResult) error {
+	var pkgID any
+	if r.PackageID != nil && *r.PackageID != "" {
+		pkgID = *r.PackageID
+	}
+	return q.pool.QueryRow(ctx, `
+		INSERT INTO analysis_results (analysis_id, package_id, result_type, s3_key, filename,
+		       content_type, file_size, summary, finding_count, severity_counts)
+		SELECT $1, $2, $3, $4, $5, $6, $7, COALESCE($8, ''), COALESCE($9, 0), COALESCE($10, '{}'::jsonb)
+		FROM analyses
+		WHERE analyses.id = $1 AND analyses.status = 'importing'
+		RETURNING id, created_at`,
+		r.AnalysisID, pkgID, r.ResultType, r.S3Key, r.Filename,
+		r.ContentType, r.FileSize, r.Summary, r.FindingCount, r.SeverityCounts).Scan(&r.ID, &r.CreatedAt)
+}
+
+
 func (q *Queries) UpdateAnalysisResultMetadata(ctx context.Context, id, summary string, findingCount int, severityCounts json.RawMessage) error {
 	_, err := q.pool.Exec(ctx, `
 		UPDATE analysis_results
