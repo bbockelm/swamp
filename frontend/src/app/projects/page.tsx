@@ -1779,7 +1779,7 @@ function AnalysisCard({
     queryFn: () => api.analyses.listResults(projectId, analysis.id),
     enabled:
       expanded &&
-      (analysis.status === "completed" || analysis.status === "failed" || analysis.status === "timed_out"),
+      (analysis.status === "completed" || analysis.status === "failed" || analysis.status === "timed_out" || analysis.status === "importing"),
   });
 
   const cancelMutation = useMutation({
@@ -1823,7 +1823,7 @@ function AnalysisCard({
                 ? new Date(analysis.started_at).toLocaleString()
                 : new Date(analysis.created_at).toLocaleString()}
           </span>
-          {(analysis.status === 'running' || analysis.status === 'pending') ? (
+          {(analysis.status === 'running' || analysis.status === 'pending' || analysis.status === 'importing') ? (
             <span className="text-xs text-gray-400 inline-flex items-center gap-1">
               <svg className="w-3 h-3 animate-spin text-brand-500" viewBox="0 0 24 24" fill="none">
                 <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />

@@ -157,7 +157,7 @@ function AnalysisCard({ analysis: a, expanded, onToggle }: { analysis: Analysis;
   const { data: results } = useQuery({
     queryKey: ['analysis-results', a.id],
     queryFn: () => api.analyses.listResults(a.project_id, a.id),
-    enabled: expanded && (a.status === 'completed' || a.status === 'failed' || a.status === 'timed_out'),
+    enabled: expanded && (a.status === 'completed' || a.status === 'failed' || a.status === 'timed_out' || a.status === 'importing'),
   });
 
   const resubmit = useMutation({

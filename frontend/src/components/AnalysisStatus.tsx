@@ -4,6 +4,7 @@ const statusConfig: Record<
 > = {
   pending: { label: 'Pending', color: 'text-yellow-800', bg: 'bg-yellow-100' },
   running: { label: 'Running', color: 'text-blue-800', bg: 'bg-blue-100' },
+  importing: { label: 'Importing', color: 'text-purple-800', bg: 'bg-purple-100' },
   completed: { label: 'Completed', color: 'text-green-800', bg: 'bg-green-100' },
   failed: { label: 'Failed', color: 'text-red-800', bg: 'bg-red-100' },
   timed_out: { label: 'Timed Out', color: 'text-orange-800', bg: 'bg-orange-100' },
@@ -27,8 +28,8 @@ export function AnalysisStatus({
     <span
       className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${config.bg} ${config.color} ${className}`}
     >
-      {status === 'running' && (
-        <span className="mr-1 h-2 w-2 rounded-full bg-blue-500 animate-pulse" />
+      {(status === 'running' || status === 'importing') && (
+        <span className="mr-1 h-2 w-2 rounded-full bg-current animate-pulse" />
       )}
       {config.label}
     </span>
